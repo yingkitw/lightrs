@@ -63,12 +63,12 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
-- `/help` — list commands (`/clear`, `/cwd`, `/status`, `/context`, `/quit`, …)
+- `/help` — list commands (`/clear`, `/cwd`, `/status`, `/context`, `/reload`, `/quit`, …)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
-- Transcript: **Markdown**, **syntect** fenced code, **Mermaid** ASCII previews, collapsible **tool** rows (mouse or `o`), and colorized **unified diff** on `write_file`
+- Transcript: **Markdown** (bold/links/blockquotes), **syntect** fenced code, **Mermaid** ASCII previews, collapsible **tool** rows (mouse or `o`), and colorized **unified diff** on `write_file`
 - Mouse wheel scrolls the transcript; left-click a tool block to expand/collapse
 
-The agent can **read/write files**, **list directories**, and **run shell commands** under the configured working directory (same privilege as your user).
+The agent can **read/write/patch files**, **list directories**, and **run shell commands** under the configured working directory (same privilege as your user).
 
 ### ACP (Agent Client Protocol)
 

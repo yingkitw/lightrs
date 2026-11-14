@@ -1,6 +1,7 @@
 mod file;
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -10,6 +11,11 @@ use crate::migrate::{self, format_scan_report, infer_provider_from_env, scan_loc
 use crate::tools::ShellPolicy;
 
 pub use file::config_path;
+
+/// Last modification time of `config.toml`, if present.
+pub fn config_file_mtime() -> Option<SystemTime> {
+    std::fs::metadata(config_path()).ok()?.modified().ok()
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -115,8 +121,46 @@ impl AppConfig {
             base_url,
             api_key,
             workdir,
-            shell_policy: ShellPolicy::new(allowlist, require_approval),
+            shell_policy: shell_policy_from_parts(allowlist, require_approval),
         })
+    }
+
+    /// Re-read `~/.config/lightrs/config.toml` and apply `[shell]` (model/provider need restart).
+    pub fn reload_shell_from_file(&mut self) -> Result<String> {
+        let path = config_path();
+        let file = file::load_config_file()?;
+        let (allowlist, require_approval) = file
+            .as_ref()
+            .and_then(|f| f.shell.as_ref())
+            .map(|s| (s.allowlist.clone(), s.require_approval))
+            .unwrap_or((Vec::new(), false));
+        self.shell_policy = shell_policy_from_parts(allowlist, require_approval);
+        Ok(format!(
+            "Reloaded [shell] from {} — allowlist {} · require_approval={}",
+            path.display(),
+            if self.shell_policy.is_restrictive() {
+                "on"
+            } else {
+                "off"
+            },
+            self.shell_policy.requires_all_commands_approved()
+        ))
+    }
+}
+
+fn shell_policy_from_parts(allowlist: Vec<String>, require_approval: bool) -> ShellPolicy {
+    ShellPolicy::new(allowlist, require_approval)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_policy_from_parts_matches_shell_policy_new() {
+        let a = shell_policy_from_parts(vec!["cargo ".into()], true);
+        let b = ShellPolicy::new(vec!["cargo ".into()], true);
+        assert_eq!(a, b);
     }
 }
 

@@ -20,6 +20,15 @@ pub struct WriteFileArgs {
 }
 
 #[derive(Deserialize)]
+pub struct PatchFileArgs {
+    pub path: String,
+    pub old_string: String,
+    pub new_string: String,
+    #[serde(default)]
+    pub replace_all: bool,
+}
+
+#[derive(Deserialize)]
 pub struct ListDirArgs {
     pub path: Option<String>,
 }
@@ -44,25 +53,58 @@ pub struct WriteFileOutcome {
     pub file_diff: FileDiffUi,
 }
 
-pub fn write_file(workdir: &Path, args: WriteFileArgs) -> Result<WriteFileOutcome> {
-    let path = if Path::new(&args.path).is_absolute() {
-        validate_work_path(workdir, Path::new(&args.path))?
+pub fn patch_file(workdir: &Path, args: PatchFileArgs) -> Result<WriteFileOutcome> {
+    let path = resolve_write_path(workdir, &args.path)?;
+    let prior = std::fs::read_to_string(&path)
+        .with_context(|| format!("read {} for patch", path.display()))?;
+    let matches = prior.matches(&args.old_string).count();
+    if matches == 0 {
+        anyhow::bail!("old_string not found in {}", args.path);
+    }
+    if !args.replace_all && matches > 1 {
+        anyhow::bail!(
+            "old_string matched {matches} times in {}; make the snippet unique or set replace_all",
+            args.path
+        );
+    }
+    let content = if args.replace_all {
+        prior.replace(&args.old_string, &args.new_string)
     } else {
-        let target = workdir.join(&args.path);
+        prior.replacen(&args.old_string, &args.new_string, 1)
+    };
+    commit_write(&path, &args.path, Some(prior.as_str()), &content)
+}
+
+pub fn write_file(workdir: &Path, args: WriteFileArgs) -> Result<WriteFileOutcome> {
+    let path = resolve_write_path(workdir, &args.path)?;
+    let prior = std::fs::read_to_string(&path).ok();
+    commit_write(&path, &args.path, prior.as_deref(), &args.content)
+}
+
+fn resolve_write_path(workdir: &Path, rel: &str) -> Result<std::path::PathBuf> {
+    if Path::new(rel).is_absolute() {
+        Ok(validate_work_path(workdir, Path::new(rel))?)
+    } else {
+        let target = workdir.join(rel);
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create dirs for {}", target.display()))?;
         }
-        target
-    };
-    let prior = std::fs::read_to_string(&path).ok();
-    std::fs::write(&path, &args.content)
-        .with_context(|| format!("write {}", path.display()))?;
-    let rel = args.path.clone();
-    let file_diff = build_file_diff(prior.as_deref(), &args.content, &rel);
+        Ok(target)
+    }
+}
+
+fn commit_write(
+    path: &Path,
+    rel: &str,
+    prior: Option<&str>,
+    content: &str,
+) -> Result<WriteFileOutcome> {
+    std::fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
+    let file_diff = build_file_diff(prior, content, rel);
     let summary = format!(
         "wrote {} bytes to {} (+{} −{})",
-        args.content.len(),
+        content.len(),
         path.display(),
         file_diff.lines_added,
         file_diff.lines_removed,

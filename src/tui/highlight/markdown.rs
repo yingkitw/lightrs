@@ -6,7 +6,7 @@ use crate::tui::theme::{self, palette};
 
 use super::mermaid;
 use super::syntect::{highlight_code, normalize_lang};
-use super::wrap::{wrap_plain_lines, wrap_styled_lines};
+use super::wrap::wrap_styled_lines;
 
 fn code_block_lines(code: &str, lang: &str, width: usize) -> Vec<Line<'static>> {
     let trimmed = code.trim_end_matches('\n');
@@ -15,7 +15,10 @@ fn code_block_lines(code: &str, lang: &str, width: usize) -> Vec<Line<'static>> 
 }
 
 pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<Line<'static>> {
-    let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
+    let opts = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_SMART_PUNCTUATION;
     let parser = Parser::new_ext(content, opts);
     let mut out = MdLines::new(width, base);
 
@@ -57,19 +60,32 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
             }
             Event::Start(Tag::Paragraph) => out.flush_paragraph(),
             Event::End(TagEnd::Paragraph) => out.flush_paragraph(),
+            Event::Start(Tag::BlockQuote(_)) => {
+                out.flush_paragraph();
+                out.blockquote_depth += 1;
+            }
+            Event::End(TagEnd::BlockQuote(_)) => {
+                out.flush_paragraph();
+                out.blockquote_depth = out.blockquote_depth.saturating_sub(1);
+            }
             Event::Start(Tag::List(_)) => out.list_depth += 1,
             Event::End(TagEnd::List(_)) => {
                 out.list_depth = out.list_depth.saturating_sub(1);
             }
             Event::Start(Tag::Item) => {
                 out.flush_paragraph();
-                out.para_prefix = "  ".repeat(out.list_depth.saturating_sub(1)) + "• ";
+                let pad = "  ".repeat(out.list_depth.saturating_sub(1));
+                out.para_prefix = format!("{pad}• ");
             }
             Event::End(TagEnd::Item) => out.flush_paragraph(),
             Event::Start(Tag::Strong) => out.strong_depth += 1,
             Event::End(TagEnd::Strong) => out.strong_depth = out.strong_depth.saturating_sub(1),
             Event::Start(Tag::Emphasis) => out.emph_depth += 1,
             Event::End(TagEnd::Emphasis) => out.emph_depth = out.emph_depth.saturating_sub(1),
+            Event::Start(Tag::Strikethrough) => out.strike_depth += 1,
+            Event::End(TagEnd::Strikethrough) => {
+                out.strike_depth = out.strike_depth.saturating_sub(1);
+            }
             Event::Code(code) => {
                 out.flush_paragraph();
                 out.out.push(Line::from(Span::styled(
@@ -79,13 +95,23 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
             }
             Event::Start(Tag::Link { .. }) => in_link = true,
             Event::End(TagEnd::Link) => in_link = false,
-            Event::SoftBreak | Event::HardBreak => {
+            Event::SoftBreak => {
                 if in_code_block {
                     code_body.push('\n');
                 } else if in_heading {
                     heading_buf.push(' ');
                 } else {
-                    out.para.push('\n');
+                    out.push_span(Span::styled(" ".to_string(), out.inline_style(false)));
+                }
+            }
+            Event::HardBreak => {
+                if in_code_block {
+                    code_body.push('\n');
+                } else if in_heading {
+                    heading_buf.push(' ');
+                } else {
+                    out.flush_paragraph();
+                    out.out.push(Line::from(""));
                 }
             }
             Event::Text(text) => {
@@ -95,7 +121,7 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
                     heading_buf.push_str(&text);
                 } else {
                     let style = out.inline_style(in_link);
-                    out.push_styled_text(&text, style);
+                    out.push_span(Span::styled(text.to_string(), style));
                 }
             }
             Event::Rule => {
@@ -116,11 +142,13 @@ struct MdLines {
     width: usize,
     base: Style,
     out: Vec<Line<'static>>,
-    para: String,
+    para_spans: Vec<Span<'static>>,
     para_prefix: String,
     strong_depth: usize,
     emph_depth: usize,
+    strike_depth: usize,
     list_depth: usize,
+    blockquote_depth: usize,
 }
 
 impl MdLines {
@@ -129,21 +157,30 @@ impl MdLines {
             width,
             base,
             out: Vec::new(),
-            para: String::new(),
+            para_spans: Vec::new(),
             para_prefix: String::new(),
             strong_depth: 0,
             emph_depth: 0,
+            strike_depth: 0,
             list_depth: 0,
+            blockquote_depth: 0,
         }
     }
 
     fn inline_style(&self, link: bool) -> Style {
-        let mut s = self.base;
+        let mut s = if self.blockquote_depth > 0 {
+            theme::body_muted()
+        } else {
+            self.base
+        };
         if self.strong_depth > 0 {
             s = s.add_modifier(Modifier::BOLD);
         }
         if self.emph_depth > 0 {
             s = s.add_modifier(Modifier::ITALIC);
+        }
+        if self.strike_depth > 0 {
+            s = s.add_modifier(Modifier::CROSSED_OUT);
         }
         if link {
             s = theme::link();
@@ -151,22 +188,46 @@ impl MdLines {
         s
     }
 
-    fn push_styled_text(&mut self, text: &str, style: Style) {
-        self.para.push_str(text);
-        let _ = style;
+    fn push_span(&mut self, span: Span<'static>) {
+        if span.content.is_empty() {
+            return;
+        }
+        if let Some(last) = self.para_spans.last_mut() {
+            if last.style == span.style
+                && !span.content.starts_with('\n')
+                && !last.content.ends_with('\n')
+            {
+                let mut merged = last.content.to_string();
+                merged.push_str(&span.content);
+                last.content = merged.into();
+                return;
+            }
+        }
+        self.para_spans.push(span);
     }
 
     fn flush_paragraph(&mut self) {
-        if self.para.is_empty() && self.para_prefix.is_empty() {
+        if self.para_spans.is_empty() && self.para_prefix.is_empty() {
             return;
         }
-        let text = format!("{}{}", self.para_prefix, self.para);
-        self.para.clear();
-        self.para_prefix.clear();
-        let style = self.inline_style(false);
-        for line in wrap_plain_lines(&text, self.width, style) {
-            self.out.push(line);
+        let mut spans = Vec::new();
+        if !self.para_prefix.is_empty() {
+            spans.push(Span::styled(self.para_prefix.clone(), self.base));
+            self.para_prefix.clear();
         }
+        if self.blockquote_depth > 0 {
+            spans.insert(
+                0,
+                Span::styled(
+                    "▏ ",
+                    Style::default().fg(palette::BORDER),
+                ),
+            );
+        }
+        spans.append(&mut self.para_spans);
+        self.para_spans.clear();
+        self.out
+            .extend(wrap_styled_lines(vec![Line::from(spans)], self.width));
     }
 
     fn push_heading(&mut self, text: &str, level: HeadingLevel) {

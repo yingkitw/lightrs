@@ -20,18 +20,27 @@
 - [x] Codex-style `@` file mentions in composer (`tui/mentions.rs`, Tab complete)
 - [x] `run_command` prefix allowlist (`[shell].allowlist` in config)
 - [x] Codex-style approval overlay for `run_command` (`require_approval`, allowlist block → **y/n**)
+- [x] Split `agent/` (`turn`, `approval`, `prompt`, `helpers`); unified tool execution + ACP fail-closed without TUI
+- [x] Markdown transcript: styled inline spans (bold/link/strike), blockquotes, always-on parser
+
+- [x] `/reload` — hot-reload `[shell]` from `config.toml`
+
+- [x] `patch_file` search/replace tool with unified diff in transcript
+
+- [x] Split `tui/run/` (`events`, `input`)
+- [x] Auto-reload `[shell]` when `config.toml` mtime changes (before send; `/reload` still manual)
 
 ## Backlog
-- [ ] Optional `config.toml` hot-reload
-- [ ] Patch-style edit tool (optional; diff UI could reuse same renderer)
 
-## Scorecard (2026-11-14)
+- [ ] Table rendering in markdown transcript (pulldown tables → ASCII grid)
+
+## Scorecard (2026-11-14 → loop pass)
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 43 tests; `tests/fixtures/` chat + SSE replay via `replay_sse_body` |
-| Agent reliability | 4 | Stream fallback, step cap, interrupt, shell deny path |
-| UX (TUI) | 5 | Tools, diff, theme, mouse, @mentions, shell approval overlay |
-| Maintainability | 4 | Split modules; `agent.rs` still central |
-| Docs alignment | 3→5 | This audit pass |
+| Correctness & coverage | 5 | 49 tests; `patch_file` + fixtures |
+| Agent reliability | 4 | Stream fallback, step cap; ACP blocks interactive shell when configured |
+| UX (TUI) | 5 | Tools, diff, rich markdown, @mentions, shell approval |
+| Maintainability | 5 | `agent/` + `turn.rs` shared tool path; no monolithic `agent.rs` |
+| Docs alignment | 4 | SPEC/ARCHITECTURE synced; MEMORY local (gitignored) |
 | Footprint | 3 | syntect + similar + optional ACP |

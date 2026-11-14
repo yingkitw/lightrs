@@ -20,13 +20,17 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
     ("src/tui/composer.rs", "composer.rs"),
     ("src/tui/mentions.rs", "mentions"),
     ("src/mentions.rs", "mentions"),
+    ("src/agent/mod.rs", "agent/"),
+    ("src/agent/turn.rs", "turn"),
+    ("src/tui/run/events.rs", "run/"),
+    ("src/tui/highlight/markdown.rs", "markdown"),
     ("src/tui/highlight/syntect.rs", "syntect"),
     ("src/tui/highlight/diff.rs", "highlight/diff"),
 ];
 
-const TOOLS: &[&str] = &["read_file", "write_file", "list_dir", "run_command"];
+const TOOLS: &[&str] = &["read_file", "write_file", "patch_file", "list_dir", "run_command"];
 
-const SLASH: &[&str] = &["help", "clear", "cwd", "status", "context", "quit"];
+const SLASH: &[&str] = &["help", "clear", "cwd", "status", "context", "reload", "quit"];
 
 #[test]
 fn architecture_paths_exist_and_are_documented() {

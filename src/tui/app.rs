@@ -1,10 +1,13 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Instant, SystemTime};
 
 use ratatui::layout::Rect;
+use tokio::sync::Mutex;
 
-use crate::config::AppConfig;
+use crate::agent::Agent;
+use crate::config::{self, AppConfig};
 use crate::tui::composer::Composer;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,6 +55,8 @@ pub struct App {
     /// `(first_line, last_line_exclusive, ui_message_index)` per tool block.
     pub tool_hit_spans: Vec<(usize, usize, usize)>,
     pub pending_approval: Option<CommandApproval>,
+    /// Detect `config.toml` changes for auto `[shell]` reload before each send.
+    config_mtime: Option<SystemTime>,
 }
 
 impl App {
@@ -72,6 +77,29 @@ impl App {
             transcript_visible_start: 0,
             tool_hit_spans: Vec::new(),
             pending_approval: None,
+            config_mtime: None,
+        }
+    }
+
+    pub fn refresh_config_mtime(&mut self) {
+        self.config_mtime = config::config_file_mtime();
+    }
+
+    pub fn maybe_reload_shell(&mut self, agent: &Arc<Mutex<Agent>>) {
+        let Some(mtime) = config::config_file_mtime() else {
+            return;
+        };
+        if self.config_mtime == Some(mtime) {
+            return;
+        }
+        self.config_mtime = Some(mtime);
+        let mut guard = agent.blocking_lock();
+        match self.config.reload_shell_from_file() {
+            Ok(msg) => {
+                guard.set_shell_policy(self.config.shell_policy.clone());
+                guard.push_system(format!("{msg} (auto on send)"));
+            }
+            Err(e) => guard.push_error(format!("config reload: {e:#}")),
         }
     }
 

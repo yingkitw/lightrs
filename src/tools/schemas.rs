@@ -35,6 +35,23 @@ pub fn tool_schemas() -> Vec<serde_json::Value> {
         json!({
             "type": "function",
             "function": {
+                "name": "patch_file",
+                "description": "Replace exact text in an existing file (search/replace). Fails if old_string is missing or matches more than once unless replace_all is true.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "old_string": { "type": "string", "description": "Exact snippet to find in the file" },
+                        "new_string": { "type": "string" },
+                        "replace_all": { "type": "boolean", "description": "Replace every match (default false)" }
+                    },
+                    "required": ["path", "old_string", "new_string"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
                 "name": "list_dir",
                 "description": "List directory entries (non-recursive).",
                 "parameters": {

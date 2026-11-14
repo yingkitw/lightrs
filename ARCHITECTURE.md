@@ -9,12 +9,12 @@ session.rs              Per-workdir JSON session save/load
 paths.rs                ~/.config/lightrs paths (no directories crate)
 provider.rs             HTTP client
 provider/stream.rs      SSE reassembly for streaming + tool_calls
-agent.rs, agent/tokens.rs  Tool loop (max 16), token estimates for header
+agent/                  mod, turn, approval, prompt, helpers, tokens — tool loop (max 16)
 tools/                  schemas, fs/shell, diff (similar), ToolOutcome
 opencode/, migrate/    Import + auto-migrate scanners
 acp/                    Optional ACP v1/v2 server (feature `acp`)
 tui/
-  run.rs, app.rs, composer.rs, mentions.rs, slash.rs, info.rs, theme.rs
+  run/ (mod, events, input), app.rs, composer.rs, mentions.rs, slash.rs, info.rs, theme.rs
   highlight/            markdown (pulldown), syntect, mermaid ASCII, diff render, wrap
   ui/                   chrome (header/input/status), transcript (tools + diff + markdown)
 ```
@@ -34,7 +34,7 @@ URLs omit trailing slashes; paths are joined as `{base}/chat/completions`. Strea
 ## Concurrency
 
 - UI thread: `crossterm::event::read` + `ratatui::draw` (+ mouse scroll / tool click)
-- `mpsc` carries `AgentEvent` (`Done`, `Failed`, `Interrupted`, `Refresh`) from `tokio::spawn` agent runs
+- `mpsc` carries `AgentEvent` (`Done`, `Failed`, `Interrupted`, `Refresh`, `CommandApproval`) from `tokio::spawn` agent runs
 - One in-flight agent turn (`Busy`); interrupt via `watch` cancel during SSE
 - Agent `tokio::Mutex` is **not** held across SSE reads; UI transcript is `Arc<Mutex<Vec<UiMessage>>>` for live streaming redraws
 

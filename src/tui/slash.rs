@@ -11,6 +11,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("quit", "exit (same as q)"),
     ("status", "show model, path, and context"),
     ("context", "message count and token usage"),
+    ("reload", "re-read config.toml [shell] policy"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +122,17 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             agent.push_system(context_details(&app.config, n, &usage, "context"));
             SlashAction::Handled
         }
+        "reload" => match app.config.reload_shell_from_file() {
+            Ok(msg) => {
+                agent.set_shell_policy(app.config.shell_policy.clone());
+                agent.push_system(format!("{msg}\n(model/provider/base URL still need restart)"));
+                SlashAction::Handled
+            }
+            Err(e) => {
+                agent.push_error(format!("reload failed: {e:#}"));
+                SlashAction::Handled
+            }
+        },
         "quit" | "exit" => SlashAction::Quit,
         other => {
             agent.push_system(format!(

@@ -26,12 +26,12 @@
 ### Transcript
 
 - Roles: user, assistant, tool, system, error
-- **Markdown**: headings, lists, inline code, tables/strikethrough (pulldown-cmark)
+- **Markdown**: full pulldown pass on message bodies — headings, lists, **bold** / *italic* / ~~strike~~, links (styled), blockquotes (`▏`), rules; tables/strikethrough/task lists enabled
 - **Fenced code**: syntect highlight + wrap
 - **Mermaid** (`mermaid` / `mmd`): ASCII flow/sequence preview + source
 - **Tool blocks**: single row per call; collapsed shows short args + truncated result; expanded shows full args/result
 - **Tokens**: muted `[sys]` lines per turn — `send · ~N ctx` after your message (estimate), `model · N in + M out` after each API step when the provider reports usage
-- **`write_file`**: colorized unified diff (`+`/`-`/`@@`); `+N −M` in collapsed header; full diff when expanded; API tool body remains a one-line summary
+- **`write_file`** / **`patch_file`**: colorized unified diff (`+`/`-`/`@@`); `+N −M` in collapsed header; full diff when expanded; API tool body remains a one-line summary
 - **Mouse**: wheel scroll; left-click toggles tool expand (with `o` when input empty)
 - **Busy**: spinner + optional “waiting for model…” when streaming has not started
 
@@ -59,6 +59,7 @@
 | `/cwd` | Print working directory |
 | `/status` | Session / model details |
 | `/context` | Message count + token usage |
+| `/reload` | Re-read `config.toml` `[shell]` (allowlist, `require_approval`); refresh agent system prompt |
 | `/quit` | Exit (same as `q` when idle) |
 
 `Tab` completes unique slash prefix.
@@ -72,7 +73,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - System prompt: concise coding helper; must use tools for filesystem/shell facts
 - Loop: user message → model → (optional) tool calls → tool results → model until text reply or step cap (**16**)
 - **Streaming**: assistant text appended live when supported; tool calls assembled from stream deltas before execution
-- Tools: `read_file`, `write_file`, `list_dir`, `run_command` (schemas in `tools/schemas.rs`)
+- Tools: `read_file`, `write_file`, `patch_file`, `list_dir`, `run_command` (schemas in `tools/schemas.rs`)
 
 ## Configuration
 
@@ -94,4 +95,4 @@ When non-empty, `run_command` only runs if the command string equals or starts w
 require_approval = true
 ```
 
-When `require_approval` is true, the TUI prompts **y/n** before every `run_command`. When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command string and other keys are ignored.
+When `require_approval` is true, the TUI prompts **y/n** before every `run_command`. When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command string and other keys are ignored. **ACP / headless** runs without a TUI return an error to the model when approval would be required (fail closed).

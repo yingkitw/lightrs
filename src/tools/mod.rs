@@ -32,6 +32,10 @@ pub fn execute_tool(
             Ok(out) => ToolOutcome::with_diff(out.summary, out.file_diff),
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },
+        "patch_file" => match parse::<fs::PatchFileArgs>(arguments).and_then(|a| fs::patch_file(workdir, a)) {
+            Ok(out) => ToolOutcome::with_diff(out.summary, out.file_diff),
+            Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
+        },
         "list_dir" => match parse::<fs::ListDirArgs>(arguments).and_then(|a| fs::list_dir(workdir, a)) {
             Ok(s) => ToolOutcome::ok(s),
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
@@ -67,6 +71,20 @@ mod tests {
         let args = r#"{"command":"curl http://evil"}"#;
         let out = execute_tool(Path::new("."), "run_command", args, &policy, false);
         assert!(out.body.contains("allowlist"));
+    }
+
+    #[test]
+    fn patch_replaces_unique_snippet() {
+        let dir = std::env::temp_dir().join(format!("lightrs-patch-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.txt"), "alpha\nbeta\n").unwrap();
+        let args = r#"{"path":"a.txt","old_string":"beta\n","new_string":"gamma\n"}"#;
+        let out = execute_tool(&dir, "patch_file", args, &ShellPolicy::default(), false);
+        assert!(out.file_diff.is_some());
+        let text = fs::read_to_string(dir.join("a.txt")).unwrap();
+        assert_eq!(text, "alpha\ngamma\n");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
