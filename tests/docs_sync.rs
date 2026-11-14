@@ -33,7 +33,13 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
 ];
 
 const TOOLS: &[&str] = &[
-    "read_file", "write_file", "patch_file", "list_dir", "grep", "run_command",
+    "read_file",
+    "write_file",
+    "patch_file",
+    "list_dir",
+    "grep",
+    "glob_file_search",
+    "run_command",
 ];
 
 const SLASH: &[&str] = &[

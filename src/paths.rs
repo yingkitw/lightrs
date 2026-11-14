@@ -13,6 +13,10 @@ pub fn config_file(app: &str, name: &str) -> PathBuf {
     config_dir(app).join(name)
 }
 
+pub fn lightrs_config_dir() -> PathBuf {
+    config_dir("lightrs")
+}
+
 pub fn lightrs_config_toml() -> PathBuf {
     config_file("lightrs", "config.toml")
 }

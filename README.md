@@ -35,6 +35,14 @@ lightrs --model kimi-k2-0905-preview
 
 # See what would migrate
 lightrs migrate --dry-run
+
+# Setup health (keys, workdir, rg)
+lightrs doctor --check
+
+# One-shot prompt (no TUI); add --approve-shell for scripts with shell tools
+lightrs exec -p "summarize this repo in one paragraph"
+lightrs exec -p "run cargo test" --approve-shell --json
+
 # same as: lightrs tui --provider kimi
 
 # GLM

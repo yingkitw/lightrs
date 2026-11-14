@@ -53,7 +53,7 @@ pub fn tool_schemas() -> Vec<serde_json::Value> {
             "type": "function",
             "function": {
                 "name": "grep",
-                "description": "Search for a literal string in UTF-8 text files under workdir (recursive). Returns path:line:col previews.",
+                "description": "Search for a literal string in UTF-8 text files under workdir (recursive). Uses ripgrep when on PATH. Returns path:line previews.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -61,6 +61,21 @@ pub fn tool_schemas() -> Vec<serde_json::Value> {
                         "path": { "type": "string", "description": "Subdirectory under workdir; default '.'" },
                         "case_insensitive": { "type": "boolean" },
                         "max_matches": { "type": "integer", "description": "Default 80, max 200" }
+                    },
+                    "required": ["pattern"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "glob_file_search",
+                "description": "Find file paths under workdir matching a glob pattern (e.g. **/*.rs). Max 200 paths.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string" },
+                        "path": { "type": "string", "description": "Subdirectory under workdir; default '.'" }
                     },
                     "required": ["pattern"]
                 }

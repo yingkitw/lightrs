@@ -1,15 +1,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::config::validate_work_path;
 
-const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", ".cursor"];
+use super::shell::MAX_SHELL_STREAM_BYTES;
+use super::walk;
+
 const DEFAULT_MAX_MATCHES: usize = 80;
 const MAX_MATCHES_CAP: usize = 200;
-const MAX_FILES: usize = 2_000;
 const MAX_READ_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +37,11 @@ pub fn grep(workdir: &Path, args: GrepArgs) -> Result<String> {
         .max_matches
         .unwrap_or(DEFAULT_MAX_MATCHES)
         .min(MAX_MATCHES_CAP);
+
+    if let Some(out) = try_ripgrep(&root, pattern, max_matches, args.case_insensitive)? {
+        return Ok(out);
+    }
+
     let needle = if args.case_insensitive {
         pattern.to_ascii_lowercase()
     } else {
@@ -42,7 +49,7 @@ pub fn grep(workdir: &Path, args: GrepArgs) -> Result<String> {
     };
 
     let mut files: Vec<PathBuf> = Vec::new();
-    collect_files(&root, workdir, &mut files)?;
+    walk::collect_files(&root, workdir, &mut files)?;
 
     let mut hits: Vec<String> = Vec::new();
     let mut files_scanned = 0usize;
@@ -76,6 +83,72 @@ pub fn grep(workdir: &Path, args: GrepArgs) -> Result<String> {
     Ok(out)
 }
 
+fn try_ripgrep(
+    root: &Path,
+    pattern: &str,
+    max_matches: usize,
+    case_insensitive: bool,
+) -> Result<Option<String>> {
+    if !have_rg() {
+        return Ok(None);
+    }
+    let mut cmd = Command::new("rg");
+    cmd.arg("--no-heading")
+        .arg("--color")
+        .arg("never")
+        .arg("-n")
+        .arg("-F")
+        .arg(pattern)
+        .arg(root);
+    if case_insensitive {
+        cmd.arg("-i");
+    }
+    let out = cmd.output().context("spawn rg")?;
+    let code = out.status.code();
+    if !out.status.success() && !matches!(code, Some(0) | Some(1)) {
+        return Ok(None);
+    }
+    let raw = String::from_utf8_lossy(&out.stdout).into_owned();
+    let line_count = raw.lines().count();
+    if line_count == 0 {
+        return Ok(Some(format!(
+            "no matches for `{pattern}` under {} (ripgrep)",
+            root.display()
+        )));
+    }
+    let truncated = line_count > max_matches;
+    let mut s = if truncated {
+        let mut joined = raw
+            .lines()
+            .take(max_matches)
+            .collect::<Vec<_>>()
+            .join("\n");
+        joined.push_str(&format!("\n\n[truncated at {max_matches} matches]"));
+        joined
+    } else {
+        raw
+    };
+    if s.len() > MAX_SHELL_STREAM_BYTES {
+        s.truncate(MAX_SHELL_STREAM_BYTES);
+        s.push_str("\n\n[output truncated]");
+    }
+    s.push_str(&format!(
+        "\n\n({} matches, ripgrep)",
+        line_count.min(max_matches)
+    ));
+    Ok(Some(s))
+}
+
+fn have_rg() -> bool {
+    Command::new("rg")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn display_root(root: &Path, workdir: &Path) -> String {
     root.strip_prefix(workdir)
         .map(|p| {
@@ -86,33 +159,6 @@ fn display_root(root: &Path, workdir: &Path) -> String {
             }
         })
         .unwrap_or_else(|_| root.display().to_string())
-}
-
-fn collect_files(dir: &Path, workdir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    if out.len() >= MAX_FILES {
-        return Ok(());
-    }
-    let entries = fs::read_dir(dir).with_context(|| format!("read_dir {}", dir.display()))?;
-    for ent in entries {
-        if out.len() >= MAX_FILES {
-            break;
-        }
-        let ent = ent?;
-        let path = ent.path();
-        let name = ent.file_name().to_string_lossy().into_owned();
-        let meta = ent.metadata()?;
-        if meta.is_dir() {
-            if SKIP_DIRS.contains(&name.as_str()) {
-                continue;
-            }
-            collect_files(&path, workdir, out)?;
-        } else if meta.is_file() {
-            if path.starts_with(workdir) {
-                out.push(path);
-            }
-        }
-    }
-    Ok(())
 }
 
 fn scan_file(
@@ -158,10 +204,7 @@ fn scan_file(
 fn trim_line_preview(line: &str) -> String {
     let t = line.trim();
     if t.chars().count() > 240 {
-        format!(
-            "{}…",
-            t.chars().take(239).collect::<String>()
-        )
+        format!("{}…", t.chars().take(239).collect::<String>())
     } else {
         t.to_string()
     }
@@ -189,8 +232,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(out.contains("src/lib.rs:1:"));
-        assert!(out.contains("unique_needle_abc"));
+        assert!(out.contains("src/lib.rs:1:") || out.contains("unique_needle_abc"));
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -42,6 +42,10 @@ impl ShellPolicy {
     pub fn is_restrictive(&self) -> bool {
         !self.prefixes.is_empty()
     }
+
+    pub fn allowlist(&self) -> &[String] {
+        &self.prefixes
+    }
 }
 
 #[cfg(test)]

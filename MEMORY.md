@@ -24,7 +24,10 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 - `tools/grep.rs`: recursive literal search under `validate_work_path`; skip `.git`, `target`, `node_modules`, `.cursor`.
 - Limits: 80 matches default (200 max), 2000 files, 256 KiB read per file; `path:line:col:text` output.
-- Not regex — use distinctive literals; full ripgrep remains non-goal unless scoped later.
+- Uses **`rg -F`** when `rg` is on PATH (literal fixed string); else in-tree walk (`tools/walk.rs`).
+- **`glob_file_search`**: `glob` crate, max 200 paths, same skip dirs as grep.
+- **Backups**: `write_file`/`patch_file` snapshot prior bytes to `.lightrs/backups/<rel>_<ts>.bak` under workdir.
+- **CLI**: `lightrs exec -p` (optional `--json`, `--approve-shell`); `lightrs doctor --check` for setup health.
 
 ## Tools & security
 

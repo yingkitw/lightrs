@@ -1,7 +1,10 @@
+mod backup;
 mod diff;
 mod edit_match;
 mod fs;
+mod glob_search;
 mod grep;
+mod walk;
 mod outcome;
 mod schemas;
 mod shell;
@@ -43,6 +46,12 @@ pub fn execute_tool(
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },
         "grep" => match parse::<grep::GrepArgs>(arguments).and_then(|a| grep::grep(workdir, a)) {
+            Ok(s) => ToolOutcome::ok(s),
+            Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
+        },
+        "glob_file_search" => match parse::<glob_search::GlobSearchArgs>(arguments)
+            .and_then(|a| glob_search::glob_file_search(workdir, a))
+        {
             Ok(s) => ToolOutcome::ok(s),
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },

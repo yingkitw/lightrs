@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use crate::chat::FileDiffUi;
 use crate::config::{resolve_work_output_path, validate_work_path};
+use crate::tools::backup;
 use crate::tools::diff::build_file_diff;
 use crate::tools::edit_match;
 
@@ -78,13 +79,13 @@ pub fn patch_file(workdir: &Path, args: PatchFileArgs) -> Result<WriteFileOutcom
     } else {
         anyhow::bail!("old_string not found in {}", args.path);
     };
-    commit_write(&path, &args.path, Some(prior.as_str()), &content)
+    commit_write(workdir, &path, &args.path, Some(prior.as_str()), &content)
 }
 
 pub fn write_file(workdir: &Path, args: WriteFileArgs) -> Result<WriteFileOutcome> {
     let path = resolve_write_path(workdir, &args.path)?;
     let prior = std::fs::read_to_string(&path).ok();
-    commit_write(&path, &args.path, prior.as_deref(), &args.content)
+    commit_write(workdir, &path, &args.path, prior.as_deref(), &args.content)
 }
 
 fn resolve_write_path(workdir: &Path, rel: &str) -> Result<std::path::PathBuf> {
@@ -97,15 +98,24 @@ fn resolve_write_path(workdir: &Path, rel: &str) -> Result<std::path::PathBuf> {
 }
 
 fn commit_write(
+    workdir: &Path,
     path: &Path,
     rel: &str,
     prior: Option<&str>,
     content: &str,
 ) -> Result<WriteFileOutcome> {
+    let backup_note = if let Some(prior_text) = prior {
+        match backup::snapshot_prior(workdir, path, prior_text) {
+            Ok(Some(b)) => format!(" (backup: {})", b.display()),
+            _ => String::new(),
+        }
+    } else {
+        String::new()
+    };
     std::fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
     let file_diff = build_file_diff(prior, content, rel);
     let summary = format!(
-        "wrote {} bytes to {} (+{} −{})",
+        "wrote {} bytes to {} (+{} −{}){backup_note}",
         content.len(),
         path.display(),
         file_diff.lines_added,

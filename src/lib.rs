@@ -4,6 +4,8 @@ pub mod agent;
 pub mod chat;
 pub mod cli;
 pub mod config;
+pub mod doctor;
+pub mod exec;
 pub mod mentions;
 pub mod migrate;
 pub mod opencode;
@@ -40,6 +42,25 @@ pub fn run() -> Result<()> {
         Command::Import { source } => match source {
             ImportSource::Opencode { config, project } => opencode::import(config, project),
         },
-        Command::Migrate { dry_run, from } => migrate::run_migrate(dry_run, from.as_deref()),
+        Command::Migrate {
+            dry_run,
+            from,
+            check,
+        } => {
+            if check {
+                let cfg = AppConfig::load(&cli.model, cli.auto_migrate)?;
+                doctor::run_check(&cfg)
+            } else {
+                migrate::run_migrate(dry_run, from.as_deref())
+            }
+        }
+        Command::Exec {
+            prompt,
+            json,
+            approve_shell,
+        } => {
+            let cfg = AppConfig::load(&cli.model, cli.auto_migrate)?;
+            exec::run_prompt_blocking(cfg, prompt, json, approve_shell)
+        }
     }
 }

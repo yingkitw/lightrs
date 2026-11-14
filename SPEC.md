@@ -78,12 +78,16 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - System prompt: concise coding helper; must use tools for filesystem/shell facts
 - Loop: user message → model → (optional) tool calls → tool results → model until text reply or step cap (**16**)
 - **Streaming**: assistant text appended live when supported; tool calls assembled from stream deltas before execution
-- Tools: `read_file`, `write_file`, `patch_file`, `list_dir`, `grep`, `run_command` (schemas in `tools/schemas.rs`)
+- Tools: `read_file`, `write_file`, `patch_file`, `list_dir`, `grep`, `glob_file_search`, `run_command` (schemas in `tools/schemas.rs`)
 - **`patch_file`**: exact match first; single-occurrence edits fall back to whitespace/indent-tolerant match (`tools/edit_match.rs`). **`replace_all`** requires exact `old_string` matches.
 - **`run_command`**: stdout and stderr each capped at **64 KiB** with a truncation note in the tool result.
 - **HTTP**: chat requests use 120s timeout, 30s connect timeout, up to **3** retries on 429/5xx and transient transport errors (`provider/http.rs`).
 - **Context pressure**: when estimated API context exceeds **~20k tokens**, the TUI shows a `[sys]` hint to use `/clear` (respects `/quiet`).
-- **`grep`**: literal substring search under workdir; skips `.git` / `target` / `node_modules`; capped matches/files/bytes (`tools/grep.rs`)
+- **`grep`**: literal substring search under workdir; uses **`rg`** when on PATH else in-tree walk; skips `.git` / `target` / `node_modules`; capped matches/files/bytes (`tools/grep.rs`)
+- **`glob_file_search`**: glob under workdir (max **200** paths); skips same dirs as grep (`tools/glob_search.rs`)
+- **Backups**: before overwriting an existing file, prior content is saved under **`.lightrs/backups/`** in the workdir (`tools/backup.rs`)
+- **CLI `exec`**: `lightrs exec -p "…"` one-shot agent turn to stdout; `--json` for scripting; `--approve-shell` skips TUI approval (allowlist still applies)
+- **CLI `doctor --check`**: health report (config, keys, workdir, `rg`, rustc, local agent configs) without importing
 - **Skills**: `skills/mod.rs` scans `SKILL.md` directories (OpenCode import tree, Cursor, Claude Code, pi, Codex, optional `[skills].paths`). Catalog appended to system prompt; `$skill-id` in the user message attaches skill body to the API payload (UI unchanged). `@path` file attach unchanged (`mentions.rs`). Rules from `~/.config/lightrs/rules/*.md` merge into system prompt.
 
 ## Configuration

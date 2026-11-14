@@ -51,8 +51,23 @@ pub enum Command {
     Migrate {
         #[arg(long)]
         dry_run: bool,
+        /// Print setup health (config, keys, workdir, rg) without importing
+        #[arg(long, conflicts_with_all = ["dry_run", "from"])]
+        check: bool,
         #[arg(long, help = "Only migrate from this tool (opencode, claude-code, aider, pi, cursor)")]
         from: Option<String>,
+    },
+    /// Run one prompt without the TUI (stdout or JSON)
+    Exec {
+        /// Prompt text (non-interactive agent turn)
+        #[arg(short)]
+        prompt: String,
+        /// Print `{"text":...}` instead of plain text
+        #[arg(long)]
+        json: bool,
+        /// Auto-approve shell commands (no TUI); allowlist still applies
+        #[arg(long)]
+        approve_shell: bool,
     },
 }
 

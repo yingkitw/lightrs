@@ -27,6 +27,7 @@ agent-client-protocol = { version = "5", features = ["stdio"], optional = true }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 crossterm = "0.29"
+glob = "0.3"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
 serde = { version = "1", features = ["derive"] }
