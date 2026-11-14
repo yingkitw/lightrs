@@ -229,19 +229,17 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                         }
                     }
                     KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if app.state == RunState::Ready {
-                            if let Some(prev) =
-                                app.composer.recall_older(&app.input)
-                            {
-                                app.input = prev;
-                            }
+                        if app.state == RunState::Ready
+                            && let Some(prev) = app.composer.recall_older(&app.input)
+                        {
+                            app.input = prev;
                         }
                     }
                     KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if app.state == RunState::Ready {
-                            if let Some(next) = app.composer.recall_newer() {
-                                app.input = next;
-                            }
+                        if app.state == RunState::Ready
+                            && let Some(next) = app.composer.recall_newer()
+                        {
+                            app.input = next;
                         }
                     }
                     KeyCode::Enter if app.state == RunState::Ready => {
