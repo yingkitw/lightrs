@@ -1,0 +1,162 @@
+use crate::chat::{ApiMessage, ApiRole};
+
+/// Max chars per tool result in API history (UI may show more).
+pub(crate) const TOOL_API_MAX: usize = 6_144;
+
+const LEGACY_OMIT: &str = "\n[attachments omitted from history]";
+
+/// Suffix appended to the active turn's composer (`\n\n[attached]…`, `\n\n[skills]…`).
+pub(crate) fn user_expansion_suffix(full: &str, composer: &str) -> Option<String> {
+    if full == composer {
+        return None;
+    }
+    if full.len() <= composer.len() {
+        return None;
+    }
+    let tail = &full[composer.len()..];
+    if tail.starts_with("\n\n[attached]")
+        || tail.starts_with("\n\n[skills]")
+        || tail.starts_with("\n[attached]")
+        || tail.starts_with("\n[skills]")
+    {
+        return Some(tail.to_string());
+    }
+    if tail.trim_start().starts_with("[attached]") || tail.trim_start().starts_with("[skills]") {
+        return Some(tail.to_string());
+    }
+    Some(tail.to_string())
+}
+
+/// Build the message list actually sent on the wire (lean history + one-turn expansions).
+pub(crate) fn messages_for_api(
+    history: &[ApiMessage],
+    active_user_expansion: Option<&str>,
+) -> Vec<ApiMessage> {
+    let last_user = history.iter().rposition(|m| m.role == ApiRole::User);
+    let mut out = Vec::with_capacity(history.len());
+    for (i, msg) in history.iter().enumerate() {
+        if msg.role != ApiRole::User {
+            out.push(msg.clone());
+            continue;
+        }
+        let Some(text) = msg.text_content() else {
+            out.push(msg.clone());
+            continue;
+        };
+        let text = if Some(i) == last_user {
+            if let Some(suffix) = active_user_expansion.filter(|s| !s.is_empty()) {
+                format!("{text}{suffix}")
+            } else {
+                text
+            }
+        } else {
+            strip_legacy_user_expansions(&text)
+        };
+        out.push(ApiMessage::user(text));
+    }
+    out
+}
+
+/// Remove `@` / `$` attachment blocks from older user turns (legacy sessions stored full API text).
+/// Drop attachment blocks for persisted API history (session save / restore migration).
+pub(crate) fn slim_stored_user_content(text: &str) -> String {
+    let mut s = text.to_string();
+    for marker in ["\n\n[attached]", "\n[attached]", "\n\n[skills]", "\n[skills]"] {
+        if let Some(i) = s.find(marker) {
+            s.truncate(i);
+        }
+    }
+    s.trim_end().to_string()
+}
+
+pub(crate) fn slim_api_history_for_storage(history: &mut [ApiMessage]) {
+    for msg in history.iter_mut() {
+        if msg.role != ApiRole::User {
+            continue;
+        }
+        let Some(text) = msg.text_content() else {
+            continue;
+        };
+        let slim = slim_stored_user_content(&text);
+        if slim != text {
+            *msg = ApiMessage::user(slim);
+        }
+    }
+}
+
+pub(crate) fn strip_legacy_user_expansions(text: &str) -> String {
+    let mut s = text.to_string();
+    if let Some(i) = s.find("\n\n[attached]") {
+        s.truncate(i);
+    } else if let Some(i) = s.find("\n[attached]") {
+        s.truncate(i);
+    }
+    if let Some(i) = s.find("\n\n[skills]") {
+        s.truncate(i);
+    } else if let Some(i) = s.find("\n[skills]") {
+        s.truncate(i);
+    }
+    let trimmed = s.trim_end();
+    if trimmed != text.trim_end()
+        && (text.contains("[attached]") || text.contains("[skills]"))
+    {
+        return format!("{trimmed}{LEGACY_OMIT}");
+    }
+    trimmed.to_string()
+}
+
+pub(crate) fn truncate_tool_api(body: &str) -> String {
+    if body.len() <= TOOL_API_MAX {
+        return body.to_string();
+    }
+    let mut end = TOOL_API_MAX;
+    while !body.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    format!(
+        "{}\n\n[tool result truncated at {TOOL_API_MAX} chars]",
+        &body[..end]
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_old_attachments_from_history() {
+        let raw = "fix bug\n\n[attached]\n--- @a.rs (10B) ---\nfn main(){}";
+        let lean = strip_legacy_user_expansions(raw);
+        assert!(!lean.contains("@a.rs"));
+        assert!(lean.contains(LEGACY_OMIT));
+    }
+
+    #[test]
+    fn active_expansion_only_on_last_user() {
+        let history = vec![
+            ApiMessage::system("sys"),
+            ApiMessage::user("first\n\n[attached]\nold"),
+            ApiMessage::user("second"),
+        ];
+        let wire = messages_for_api(&history, Some("\n\n[skills]\nbody"));
+        assert!(wire[1].text_content().unwrap().contains(LEGACY_OMIT));
+        assert_eq!(wire[2].text_content().unwrap(), "second\n\n[skills]\nbody");
+    }
+
+    #[test]
+    fn expansion_suffix_detects_blocks() {
+        let full = "hi\n\n[attached]\n--- @x ---\ndata";
+        assert_eq!(
+            user_expansion_suffix(full, "hi").as_deref(),
+            Some("\n\n[attached]\n--- @x ---\ndata")
+        );
+    }
+
+    #[test]
+    fn tool_api_truncates() {
+        let big = "x".repeat(TOOL_API_MAX + 100);
+        let t = truncate_tool_api(&big);
+        assert!(t.len() < big.len());
+        assert!(t.contains("truncated"));
+    }
+}

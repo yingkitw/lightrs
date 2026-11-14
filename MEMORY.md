@@ -112,6 +112,14 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - System prompt: compact skill catalog + `rules/*.md` (skip `INDEX.md`). User invokes with `$skill-id`; API message gets `[skills]` blocks + existing `@` attachments (`skills::api_user_content` wraps `mentions::api_user_content`).
 - Rescan on send, `/reload`, `/skills` via `App::refresh_skill_catalog`.
 
+## API context trimming (2026-11-15)
+
+- `agent/context.rs` builds wire messages via `messages_for_request`: composer-only user rows in `api_history`; `@` / `$` expansions live in `active_user_expansion` for the **current turn only** (re-sent on each tool step until the assistant replies).
+- Older user turns (and legacy sessions): attachment blocks stripped on send; note `[attachments omitted from history]`.
+- Tool bodies to API capped at **6144** chars (`truncate_tool_api`); UI tool blocks may show up to **8000**.
+- Session save / restore slims user messages with `slim_api_history_for_storage`.
+- Skills system appendix: catalog **3500** chars, rules summary **4096** chars; shorter system prompt line.
+
 ## Token UX (2026-11-14)
 
 - Per-turn `[sys]` lines: `send · ~N ctx` and model in/out from `agent/turn.rs` via `record_send_estimate` / `record_model_usage`.

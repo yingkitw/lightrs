@@ -5,7 +5,7 @@ use crate::tools::ShellPolicy;
 
 pub(crate) fn system_prompt(workdir: &Path, shell: &ShellPolicy, skills: &SkillCatalog) -> String {
     let mut text = format!(
-        "lightrs agent. Workdir: {}. Use tools; do not invent file contents. Use grep or glob_file_search to locate files; prefer patch_file for small edits; brief replies.",
+        "lightrs agent. Workdir: {}. Use tools for filesystem facts; grep/glob to find paths; patch_file for small edits; concise replies.",
         workdir.display()
     );
     if shell.is_restrictive() {

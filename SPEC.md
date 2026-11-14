@@ -77,6 +77,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 
 - System prompt: concise coding helper; must use tools for filesystem/shell facts
 - Loop: user message → model → (optional) tool calls → tool results → model until text reply or step cap (**16**)
+- **Lean API context**: persisted user rows are composer text only; `@` file bodies and `$skill` bodies attach for the **active turn** only. Prior turns omit attachments when resent. Tool results in API history are capped (**6 KiB**); full output may still appear in the TUI.
 - **Streaming**: assistant text appended live when supported; tool calls assembled from stream deltas before execution
 - Tools: `read_file`, `write_file`, `patch_file`, `list_dir`, `grep`, `glob_file_search`, `run_command` (schemas in `tools/schemas.rs`)
 - **`patch_file`**: exact match first; single-occurrence edits fall back to whitespace/indent-tolerant match (`tools/edit_match.rs`). **`replace_all`** requires exact `old_string` matches.

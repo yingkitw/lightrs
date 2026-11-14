@@ -1,4 +1,5 @@
 mod approval;
+mod context;
 mod helpers;
 mod prompt;
 mod tokens;
@@ -48,6 +49,8 @@ pub struct Agent {
     pub(crate) skill_catalog: SkillCatalog,
     /// Last `estimated_context_tokens` at which a context-pressure `[sys]` was shown.
     pub(crate) context_warned_above: u32,
+    /// `@` / `$` expansion for the in-flight user turn only (not persisted in `api_history`).
+    pub(crate) active_user_expansion: Option<String>,
 }
 
 impl Agent {
@@ -70,13 +73,25 @@ impl Agent {
             quiet_token_sys: false,
             skill_catalog,
             context_warned_above: 0,
+            active_user_expansion: None,
         };
         agent.refresh_context_estimate();
         agent
     }
 
+    pub(crate) fn messages_for_request(&self) -> Vec<ApiMessage> {
+        context::messages_for_api(&self.api_history, self.active_user_expansion.as_deref())
+    }
+
+    pub(crate) fn finish_user_turn_api(&mut self) {
+        self.active_user_expansion = None;
+    }
+
     pub fn restore_session(&mut self, saved: SessionFile) {
-        self.api_history = saved.api_history;
+        self.active_user_expansion = None;
+        let mut api_history = saved.api_history;
+        context::slim_api_history_for_storage(&mut api_history);
+        self.api_history = api_history;
         self.ensure_system_prompt();
         *self.ui_history.lock().unwrap() =
             crate::session::conversation_ui_history(saved.ui_history);
@@ -95,7 +110,9 @@ impl Agent {
     }
 
     pub fn export_api_history(&self) -> Vec<ApiMessage> {
-        self.api_history.clone()
+        let mut h = self.api_history.clone();
+        context::slim_api_history_for_storage(&mut h);
+        h
     }
 
     pub fn export_ui_history(&self) -> Vec<UiMessage> {
@@ -126,7 +143,8 @@ impl Agent {
     }
 
     pub(crate) fn refresh_context_estimate(&mut self) {
-        self.estimated_context_tokens = estimate_context_tokens(&self.api_history);
+        self.estimated_context_tokens =
+            estimate_context_tokens(&self.messages_for_request());
     }
 
     /// Show a `[sys]` hint when API history is large (`/quiet` suppresses).
@@ -202,6 +220,7 @@ impl Agent {
 
     pub fn finish_interrupt(&mut self) {
         remove_trailing_empty_assistant(&self.ui_history);
+        self.finish_user_turn_api();
         self.push_system("Turn interrupted.");
     }
 
@@ -220,6 +239,7 @@ impl Agent {
     }
 
     pub fn clear_conversation(&mut self) {
+        self.active_user_expansion = None;
         self.api_history.clear();
         self.api_history.push(ApiMessage::system(system_prompt(
             &self.workdir,

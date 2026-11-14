@@ -10,8 +10,8 @@ use crate::paths::config_dir;
 
 const SKILL_FILE: &str = "SKILL.md";
 const MAX_SKILLS: usize = 64;
-const CATALOG_MAX_CHARS: usize = 6_000;
-const RULES_MAX_CHARS: usize = 8_192;
+const CATALOG_MAX_CHARS: usize = 3_500;
+const RULES_MAX_CHARS: usize = 4_096;
 const ATTACH_PER_SKILL: usize = 12 * 1024;
 const ATTACH_TOTAL_MAX: usize = 48 * 1024;
 
@@ -89,9 +89,7 @@ pub fn default_skill_roots() -> Vec<PathBuf> {
 pub fn system_appendix(catalog: &SkillCatalog) -> String {
     let mut out = String::new();
     if !catalog.skills.is_empty() {
-        out.push_str(
-            "\n\nSkills (Cursor/OpenCode-style SKILL.md). User may invoke with `$id` in the message; follow attached `$skill` blocks when present:\n",
-        );
+        out.push_str("\n\nSkills — invoke with `$id` (body attaches only on that message):\n");
         let mut used = out.len();
         for s in &catalog.skills {
             let line = format!("- {} — {}\n", s.id, trim_line(&s.description, 160));
@@ -104,7 +102,7 @@ pub fn system_appendix(catalog: &SkillCatalog) -> String {
         }
     }
     if !catalog.rules.trim().is_empty() {
-        out.push_str("\n\nImported rules / instructions:\n");
+        out.push_str("\n\nProject rules (summary; use read_file on `rules/` if needed):\n");
         let rules = if catalog.rules.len() > RULES_MAX_CHARS {
             format!("{}\n[rules truncated]", &catalog.rules[..RULES_MAX_CHARS])
         } else {

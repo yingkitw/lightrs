@@ -22,9 +22,12 @@ impl Agent {
             .lock()
             .unwrap()
             .push(UiMessage::with_role(UiRole::User, user_text.clone()));
-        let api_text = crate::skills::api_user_content(&self.workdir, &user_text, &self.skill_catalog);
-        self.api_history.push(ApiMessage::user(api_text.clone()));
-        self.record_send_estimate(&api_text);
+        let api_full =
+            crate::skills::api_user_content(&self.workdir, &user_text, &self.skill_catalog);
+        self.active_user_expansion =
+            super::context::user_expansion_suffix(&api_full, &user_text);
+        self.api_history.push(ApiMessage::user(user_text));
+        self.record_send_estimate(&api_full);
         self.refresh_context_estimate();
         self.maybe_context_pressure_sys();
     }
@@ -97,7 +100,9 @@ impl Agent {
         }
 
         let msg = format!("Stopped after {MAX_TOOL_STEPS} tool steps.");
-        agent.lock().await.push_error(msg.clone());
+        let mut g = agent.lock().await;
+        g.push_error(msg.clone());
+        g.finish_user_turn_api();
         Ok(msg)
     }
 
@@ -127,13 +132,14 @@ impl Agent {
 
         let msg = format!("Stopped after {MAX_TOOL_STEPS} tool steps.");
         self.push_error(msg.clone());
+        self.finish_user_turn_api();
         Ok(msg)
     }
 
     fn build_chat_request(&self) -> ChatRequest {
         ChatRequest {
             model: self.client.model().to_string(),
-            messages: self.api_history.clone(),
+            messages: self.messages_for_request(),
             tools: Some(tool_schemas()),
             tool_choice: Some(serde_json::json!("auto")),
             stream: None,
@@ -243,6 +249,7 @@ impl Agent {
                 text.clone(),
             ));
         }
+        self.finish_user_turn_api();
         Ok(Some(text))
     }
 }
@@ -270,9 +277,11 @@ async fn execute_one_tool(
                 truncate_tool_ui(&msg),
                 None,
             ));
-            agent
-                .api_history
-                .push(ApiMessage::tool_result(call_id, name, msg));
+            agent.api_history.push(ApiMessage::tool_result(
+                call_id,
+                name,
+                super::context::truncate_tool_api(&msg),
+            ));
             return Ok(());
         }
         ShellGate::NotShell => false,
@@ -291,7 +300,7 @@ async fn execute_one_tool(
     agent.api_history.push(ApiMessage::tool_result(
         call_id,
         name,
-        outcome.body,
+        super::context::truncate_tool_api(&outcome.body),
     ));
     Ok(())
 }
