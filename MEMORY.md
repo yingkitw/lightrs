@@ -37,8 +37,13 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - `patch_file` single replace: `tools/edit_match.rs` after exact match fails (`replace_all` stays exact-only).
 - Provider HTTP: `provider/http.rs` — 120s / 30s connect, 3× retry with backoff on 429/5xx and transport errors.
 - Context pressure: `CONTEXT_WARN_TOKENS` (= 20_000 est.) → `[sys]` hint via `maybe_context_pressure_sys` (re-warn every +4k est.; `/quiet` skips).
+- **Tier 3 (minicode)**: `shell_deny` (hard block), `redact` in `truncate_tool_api`, workdir `AGENTS.md`/`AIDER.md` in system prompt, `multi_edit` (≤16 patches).
 - `read_file` default cap 64 KiB (max 512 KiB per request).
 - Optional `[shell].allowlist` in config → `ShellPolicy` prefix match on `run_command` (empty list = allow all). Not a substitute for OS sandboxing; blocks obvious out-of-policy commands.
+- **Shell deny** (`shell_deny.rs`): catastrophic patterns always rejected before spawn (not approval-bypassable).
+- **Redaction** (`redact.rs`): tool API bodies scrubbed in `agent/context::truncate_tool_api`.
+- **Workdir prompt**: `AGENTS.md` / `AIDER.md` / `.lightrs/AGENTS.md` in `agent/prompt.rs`.
+- **`multi_edit`**: up to 16 `patch_file` ops in one tool call.
 - `[shell].require_approval` or allowlist block → TUI **y/n** before `execute_tool`; `agent/approval.rs` + `agent/turn.rs::execute_one_tool`; `AgentEvent::CommandApproval` + oneshot. No `ui_tx` (ACP) → tool error *requires TUI approval*. Approve on blocked allowlist sets `bypass_shell_allowlist` for that call only.
 
 ## Session persistence (2026-03-19)

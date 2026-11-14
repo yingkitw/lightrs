@@ -69,6 +69,32 @@ pub fn tool_schemas() -> Vec<serde_json::Value> {
         json!({
             "type": "function",
             "function": {
+                "name": "multi_edit",
+                "description": "Apply up to 16 patch_file edits in one call (same args as patch_file per item).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "edits": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "path": { "type": "string" },
+                                    "old_string": { "type": "string" },
+                                    "new_string": { "type": "string" },
+                                    "replace_all": { "type": "boolean" }
+                                },
+                                "required": ["path", "old_string", "new_string"]
+                            }
+                        }
+                    },
+                    "required": ["edits"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
                 "name": "glob_file_search",
                 "description": "Find file paths under workdir matching a glob pattern (e.g. **/*.rs). Max 200 paths.",
                 "parameters": {

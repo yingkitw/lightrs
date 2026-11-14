@@ -85,8 +85,9 @@ pub(crate) fn strip_legacy_user_expansions(text: &str) -> String {
 }
 
 pub(crate) fn truncate_tool_api(body: &str) -> String {
+    let body = crate::tools::redact::scrub_tool_output(body);
     if body.len() <= TOOL_API_MAX {
-        return body.to_string();
+        return body;
     }
     let mut end = TOOL_API_MAX;
     while !body.is_char_boundary(end) && end > 0 {

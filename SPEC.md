@@ -79,7 +79,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - Loop: user message → model → (optional) tool calls → tool results → model until text reply or step cap (**16**)
 - **Lean API context**: persisted user rows are composer text only; `@` file bodies and `$skill` bodies attach for the **active turn** only. Prior turns omit attachments when resent. Tool results in API history are capped (**6 KiB**); full output may still appear in the TUI.
 - **Streaming**: assistant text appended live when supported; tool calls assembled from stream deltas before execution
-- Tools: `read_file`, `write_file`, `patch_file`, `list_dir`, `grep`, `glob_file_search`, `run_command` (schemas in `tools/schemas.rs`)
+- Tools: `read_file`, `write_file`, `patch_file`, `multi_edit`, `list_dir`, `grep`, `glob_file_search`, `run_command` (schemas in `tools/schemas.rs`)
 - **`patch_file`**: exact match first; single-occurrence edits fall back to whitespace/indent-tolerant match (`tools/edit_match.rs`). **`replace_all`** requires exact `old_string` matches.
 - **`run_command`**: stdout and stderr each capped at **64 KiB** with a truncation note in the tool result.
 - **HTTP**: chat requests use 120s timeout, 30s connect timeout, up to **3** retries on 429/5xx and transient transport errors (`provider/http.rs`).
@@ -89,6 +89,9 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - **Backups**: before overwriting an existing file, prior content is saved under **`.lightrs/backups/`** in the workdir (`tools/backup.rs`)
 - **CLI `exec`**: `lightrs exec -p "…"` one-shot agent turn to stdout; `--json` for scripting; `--approve-shell` skips TUI approval (allowlist still applies)
 - **CLI `doctor --check`**: health report (config, keys, workdir, `rg`, rustc, local agent configs) without importing
+- **Shell deny list** (`tools/shell_deny.rs`): hard-block catastrophic commands (e.g. `rm -rf /`, fork bomb, `curl | sh`); not bypassed by TUI approval
+- **Secret redaction**: tool results scrubbed for common key/token shapes before API history (`tools/redact.rs`, via `truncate_tool_api`)
+- **Workdir context**: `AGENTS.md`, `AIDER.md`, or `.lightrs/AGENTS.md` in workdir merged into system prompt (4 KiB cap each)
 - **Skills**: `skills/mod.rs` scans `SKILL.md` directories (OpenCode import tree, Cursor, Claude Code, pi, Codex, optional `[skills].paths`). Catalog appended to system prompt; `$skill-id` in the user message attaches skill body to the API payload (UI unchanged). `@path` file attach unchanged (`mentions.rs`). Rules from `~/.config/lightrs/rules/*.md` merge into system prompt.
 
 ## Configuration

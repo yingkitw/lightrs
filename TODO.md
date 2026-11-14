@@ -34,6 +34,7 @@
 - [x] Tier 1 sibling carry: shell 64 KiB cap, HTTP retry/timeouts, flexible `patch_file`, context pressure `[sys]`
 - [x] Tier 2: `glob_file_search`, grep→`rg` fallback, `exec`, `doctor --check`, `.lightrs/backups`
 - [x] Lean API context — composer-only history, one-turn `@`/`$` attach, tool API cap, slimmer skills/rules system block
+- [x] Tier 3 (minicode): shell deny, secret redaction, workdir `AGENTS.md`, `multi_edit`
 
 ## Backlog
 

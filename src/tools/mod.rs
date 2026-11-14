@@ -4,11 +4,14 @@ mod edit_match;
 mod fs;
 mod glob_search;
 mod grep;
+mod multi_edit;
+pub(crate) mod redact;
+mod shell;
+mod shell_deny;
+mod shell_policy;
 mod walk;
 mod outcome;
 mod schemas;
-mod shell;
-mod shell_policy;
 
 pub use shell::RunCommandArgs;
 pub use shell_policy::ShellPolicy;
@@ -21,7 +24,25 @@ use serde::Deserialize;
 pub use outcome::ToolOutcome;
 pub use schemas::tool_schemas;
 
+fn finish_body(body: String) -> String {
+    redact::redact_secrets(&body)
+}
+
 pub fn execute_tool(
+    workdir: &Path,
+    name: &str,
+    arguments: &str,
+    shell_policy: &ShellPolicy,
+    bypass_shell_allowlist: bool,
+) -> ToolOutcome {
+    let outcome = execute_tool_raw(workdir, name, arguments, shell_policy, bypass_shell_allowlist);
+    ToolOutcome {
+        body: finish_body(outcome.body),
+        file_diff: outcome.file_diff,
+    }
+}
+
+fn execute_tool_raw(
     workdir: &Path,
     name: &str,
     arguments: &str,
@@ -39,6 +60,19 @@ pub fn execute_tool(
         },
         "patch_file" => match parse::<fs::PatchFileArgs>(arguments).and_then(|a| fs::patch_file(workdir, a)) {
             Ok(out) => ToolOutcome::with_diff(out.summary, out.file_diff),
+            Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
+        },
+        "multi_edit" => match parse::<multi_edit::MultiEditArgs>(arguments)
+            .and_then(|a| multi_edit::multi_edit(workdir, a))
+        {
+            Ok(out) => {
+                let diff = out.diffs.last().and_then(|d| d.file_diff.clone());
+                if let Some(fd) = diff {
+                    ToolOutcome::with_diff(out.summary, fd)
+                } else {
+                    ToolOutcome::ok(out.summary)
+                }
+            }
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },
         "list_dir" => match parse::<fs::ListDirArgs>(arguments).and_then(|a| fs::list_dir(workdir, a)) {
@@ -114,6 +148,29 @@ mod tests {
         let text = fs::read_to_string(dir.join("a.rs")).unwrap();
         assert!(text.contains("baz();"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn multi_edit_applies_two() {
+        let dir = std::env::temp_dir().join(format!("lightrs-multi-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.txt"), "one\n").unwrap();
+        fs::write(dir.join("b.txt"), "two\n").unwrap();
+        let args = r#"{"edits":[{"path":"a.txt","old_string":"one\n","new_string":"ONE\n"},{"path":"b.txt","old_string":"two\n","new_string":"TWO\n"}]}"#;
+        let out = execute_tool(&dir, "multi_edit", args, &ShellPolicy::default(), false);
+        assert!(out.body.contains("1."));
+        assert!(out.body.contains("2."));
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "ONE\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shell_deny_blocks_root_rm() {
+        let dir = std::env::temp_dir();
+        let args = r#"{"command":"rm -rf /"}"#;
+        let out = execute_tool(&dir, "run_command", args, &ShellPolicy::default(), false);
+        assert!(out.body.contains("denied"));
     }
 
     #[test]

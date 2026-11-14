@@ -4,6 +4,7 @@ mod helpers;
 mod prompt;
 mod tokens;
 mod turn;
+mod workdir_context;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};

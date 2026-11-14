@@ -21,7 +21,7 @@ pub struct WriteFileArgs {
     pub content: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct PatchFileArgs {
     pub path: String,
     pub old_string: String,

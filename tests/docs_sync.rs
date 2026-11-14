@@ -40,6 +40,7 @@ const TOOLS: &[&str] = &[
     "list_dir",
     "grep",
     "glob_file_search",
+    "multi_edit",
     "run_command",
 ];
 

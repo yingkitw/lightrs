@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use super::shell_deny;
 use super::shell_policy::ShellPolicy;
 
 /// Per stream cap for `run_command` stdout/stderr (bytes).
@@ -23,6 +24,9 @@ pub fn run_command(
     policy: &ShellPolicy,
     bypass_allowlist: bool,
 ) -> Result<String> {
+    if let Some(reason) = shell_deny::deny_reason(&args.command) {
+        bail!("command denied ({reason}): {}", args.command.trim());
+    }
     if !bypass_allowlist && !policy.is_allowed(&args.command) {
         bail!(
             "command blocked by shell allowlist (configure [shell].allowlist in ~/.config/lightrs/config.toml): {}",
