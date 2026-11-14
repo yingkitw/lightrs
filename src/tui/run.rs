@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+    MouseEventKind,
 };
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -280,6 +281,13 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => app.scroll_up(3),
                     MouseEventKind::ScrollDown => app.scroll_down(3),
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if let Some(idx) =
+                            app.tool_msg_at_transcript_click(mouse.column, mouse.row)
+                        {
+                            app.toggle_tool_expand(idx);
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}

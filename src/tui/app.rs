@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use ratatui::layout::Rect;
+
 use crate::config::AppConfig;
 use crate::tui::composer::Composer;
 
@@ -36,6 +38,12 @@ pub struct App {
     pub expanded_tools: HashSet<usize>,
     /// Tool message index closest to the bottom of the visible transcript (for `o`).
     pub focus_tool_msg_idx: Option<usize>,
+    /// Last rendered transcript widget area (for mouse hit-testing).
+    pub transcript_rect: Rect,
+    /// First visible line index in the full transcript layout.
+    pub transcript_visible_start: usize,
+    /// `(first_line, last_line_exclusive, ui_message_index)` per tool block.
+    pub tool_hit_spans: Vec<(usize, usize, usize)>,
 }
 
 impl App {
@@ -52,7 +60,28 @@ impl App {
             busy_since: None,
             expanded_tools: HashSet::new(),
             focus_tool_msg_idx: None,
+            transcript_rect: Rect::default(),
+            transcript_visible_start: 0,
+            tool_hit_spans: Vec::new(),
         }
+    }
+
+    /// Map a terminal mouse position to a tool-call message index when clicked inside the transcript.
+    pub fn tool_msg_at_transcript_click(&self, x: u16, y: u16) -> Option<usize> {
+        let area = self.transcript_rect;
+        if area.width < 3 || area.height < 3 {
+            return None;
+        }
+        if x < area.x || y < area.y || x >= area.x + area.width || y >= area.y + area.height {
+            return None;
+        }
+        let inner_y = y.saturating_sub(area.y + 1);
+        let view_h = usize::from(self.transcript_viewport);
+        if usize::from(inner_y) >= view_h {
+            return None;
+        }
+        let abs_line = self.transcript_visible_start + usize::from(inner_y);
+        tool_msg_index_at_line(abs_line, &self.tool_hit_spans)
     }
 
     pub fn toggle_tool_expand(&mut self, msg_idx: usize) {
@@ -154,4 +183,14 @@ impl App {
     pub fn workdir(&self) -> &PathBuf {
         &self.config.workdir
     }
+}
+
+pub fn tool_msg_index_at_line(
+    abs_line: usize,
+    spans: &[(usize, usize, usize)],
+) -> Option<usize> {
+    spans
+        .iter()
+        .find(|(start, end, _)| abs_line >= *start && abs_line < *end)
+        .map(|(_, _, idx)| *idx)
 }

@@ -47,6 +47,10 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
     let end = (start + viewport).min(total);
     let visible = lines[start..end].to_vec();
 
+    app.transcript_rect = area;
+    app.transcript_visible_start = start;
+    app.tool_hit_spans = tool_spans;
+
     let mut title = " chat ".to_string();
     if app.scroll > 0 {
         title.push_str(&format!(" ↑{} ", app.scroll));
@@ -138,7 +142,11 @@ fn render_tool_block(
         ));
     }
     header.push(Span::styled(
-        if expanded { "  (o collapse)" } else { "  (o expand)" },
+        if expanded {
+            "  (click or o collapse)"
+        } else {
+            "  (click or o expand)"
+        },
         Style::default().fg(Color::Rgb(80, 80, 80)),
     ));
     lines.push(Line::from(header));
@@ -234,5 +242,14 @@ mod tests {
     fn tool_block_detection() {
         let m = UiMessage::tool_result("read_file", "{}", "ok");
         assert!(m.is_tool_block());
+    }
+
+    #[test]
+    fn line_hit_maps_to_tool_message() {
+        use crate::tui::app::tool_msg_index_at_line;
+        let spans = vec![(10, 20, 3), (30, 45, 7)];
+        assert_eq!(tool_msg_index_at_line(12, &spans), Some(3));
+        assert_eq!(tool_msg_index_at_line(9, &spans), None);
+        assert_eq!(tool_msg_index_at_line(30, &spans), Some(7));
     }
 }

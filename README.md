@@ -56,7 +56,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Esc` — clear input; while busy, **interrupt** the current turn
 - `Esc` / `Ctrl+C` / `Ctrl+Q` while busy — stop streaming (does not quit)
 - `↑` / `↓` — scroll transcript when input is empty
-- `o` — expand/collapse tool call detail (name + args always visible; full args/result when expanded)
+- `o` or **click** a tool block — expand/collapse tool call detail (name + short args when collapsed; full args/result when expanded)
 - `Ctrl+U` — clear input line
 - `PgUp` / `PgDn` — scroll by screen
 - `Home` / `End` — oldest / newest messages
