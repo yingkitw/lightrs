@@ -171,7 +171,7 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
             }
             Event::Rule => {
                 out.flush_paragraph();
-                let rule = "─".repeat(width.max(8).min(48));
+                let rule = "─".repeat(width.clamp(8, 48));
                 out.out.push(Line::styled(rule, theme::border()));
             }
             Event::Html(_) | Event::InlineHtml(_) => {}
@@ -237,8 +237,8 @@ impl MdLines {
         if span.content.is_empty() {
             return;
         }
-        if let Some(last) = self.para_spans.last_mut() {
-            if last.style == span.style
+        if let Some(last) = self.para_spans.last_mut()
+            && last.style == span.style
                 && !span.content.starts_with('\n')
                 && !last.content.ends_with('\n')
             {
@@ -247,7 +247,6 @@ impl MdLines {
                 last.content = merged.into();
                 return;
             }
-        }
         self.para_spans.push(span);
     }
 

@@ -10,12 +10,11 @@ use crate::migrate::{self, ModelProfile, config_lines, write_config};
 pub fn extract_model_profile(doc: &Value) -> ModelProfile {
     let mut profile = ModelProfile::default();
 
-    if let Some(model_ref) = doc.get("model").and_then(Value::as_str) {
-        if let Some((p, m)) = model_ref.split_once('/') {
+    if let Some(model_ref) = doc.get("model").and_then(Value::as_str)
+        && let Some((p, m)) = model_ref.split_once('/') {
             profile.provider = migrate::map_opencode_provider_id(p);
             profile.model = Some(m.to_string());
         }
-    }
 
     let provider_map = doc
         .get("providers")
@@ -27,30 +26,26 @@ pub fn extract_model_profile(doc: &Value) -> ModelProfile {
             if profile.provider.is_none() {
                 profile.provider = migrate::map_opencode_provider_id(id);
             }
-            if let Some(options) = cfg.get("options").and_then(Value::as_object) {
-                if let Some(key) = options
+            if let Some(options) = cfg.get("options").and_then(Value::as_object)
+                && let Some(key) = options
                     .get("apiKey")
                     .or_else(|| options.get("api_key"))
                     .and_then(Value::as_str)
-                {
-                    if let Some(p) = migrate::map_opencode_provider_id(id) {
+                    && let Some(p) = migrate::map_opencode_provider_id(id) {
                         match p {
                             Provider::Glm => profile.keys.glm = Some(key.to_string()),
                             Provider::Kimi => profile.keys.kimi = Some(key.to_string()),
                             Provider::Minimax => profile.keys.minimax = Some(key.to_string()),
                         }
                     }
-                }
-            }
-            if let Some(settings) = cfg.get("settings").and_then(Value::as_object) {
-                if let Some(url) = settings
+            if let Some(settings) = cfg.get("settings").and_then(Value::as_object)
+                && let Some(url) = settings
                     .get("baseURL")
                     .or_else(|| settings.get("base_url"))
                     .and_then(Value::as_str)
                 {
                     profile.base_url = Some(url.trim_end_matches('/').to_string());
                 }
-            }
         }
     }
 

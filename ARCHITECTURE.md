@@ -9,7 +9,7 @@ session/                Per-workdir JSON save/load; `export.rs` markdown transcr
 paths.rs                ~/.config/lightrs paths (no directories crate)
 provider.rs             HTTP client
 provider/stream.rs      SSE reassembly for streaming + tool_calls
-agent/                  mod, turn, approval, prompt, helpers, tokens — tool loop (max 16)
+agent/                  mod, turn, context, approval, prompt, helpers, tokens — tool loop (max 16)
 skills/                 SKILL.md discovery + rules; `$id` attach + system catalog
 mentions.rs             @file attach for API user messages (workdir-scoped)
 tools/                  schemas, fs/shell/grep, diff (similar), ToolOutcome

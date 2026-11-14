@@ -162,7 +162,7 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             SlashAction::Handled
         }
         "export" => {
-            let rest = line.trim().split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+            let rest = line.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
             let rel = if rest.is_empty() {
                 None
             } else {

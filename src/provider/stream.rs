@@ -39,12 +39,11 @@ impl StreamAccumulator {
             if let Some(reason) = choice.finish_reason {
                 self.finish_reason = Some(reason);
             }
-            if let Some(text) = choice.delta.content {
-                if !text.is_empty() {
+            if let Some(text) = choice.delta.content
+                && !text.is_empty() {
                     self.content.push_str(&text);
                     applied.push(StreamApply::ContentDelta(text));
                 }
-            }
             if let Some(calls) = choice.delta.tool_calls {
                 for part in calls {
                     let slot = self.tool_parts.entry(part.index).or_default();
@@ -58,15 +57,14 @@ impl StreamAccumulator {
                         if let Some(name) = function.name {
                             slot.name = Some(name);
                         }
-                        if let Some(args) = function.arguments {
-                            if !args.is_empty() {
+                        if let Some(args) = function.arguments
+                            && !args.is_empty() {
                                 slot.arguments.push_str(&args);
                                 applied.push(StreamApply::ToolArgumentsDelta {
                                     index: part.index,
                                     delta: args,
                                 });
                             }
-                        }
                     }
                 }
             }
@@ -79,9 +77,7 @@ impl StreamAccumulator {
             None
         } else {
             let mut calls: Vec<ToolCall> = self
-                .tool_parts
-                .into_iter()
-                .map(|(_, p)| ToolCall {
+                .tool_parts.into_values().map(|p| ToolCall {
                     id: p.id.unwrap_or_else(|| "call_stream".into()),
                     call_type: p.call_type.unwrap_or_else(|| "function".into()),
                     function: FunctionCall {

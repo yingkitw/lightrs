@@ -33,11 +33,10 @@ pub(crate) fn append_assistant_delta(
 
 pub(crate) fn remove_trailing_empty_assistant(ui_history: &Arc<Mutex<Vec<UiMessage>>>) {
     let mut ui = ui_history.lock().unwrap();
-    if let Some(last) = ui.last() {
-        if last.role == UiRole::Assistant && last.content.is_empty() {
+    if let Some(last) = ui.last()
+        && last.role == UiRole::Assistant && last.content.is_empty() {
             ui.pop();
         }
-    }
 }
 
 pub(crate) fn is_interrupted(err: &anyhow::Error) -> bool {

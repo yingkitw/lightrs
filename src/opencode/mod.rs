@@ -18,11 +18,10 @@ pub fn import(global: Option<PathBuf>, project: Option<PathBuf>) -> Result<()> {
     let mut docs = Vec::new();
     if let Some(path) = global {
         docs.push(load_jsonc(&path)?);
-    } else if let Some(path) = default_opencode_global_config() {
-        if path.exists() {
+    } else if let Some(path) = default_opencode_global_config()
+        && path.exists() {
             docs.push(load_jsonc(&path)?);
         }
-    }
 
     if let Some(path) = project {
         docs.push(load_jsonc(&path)?);

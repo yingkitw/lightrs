@@ -7,22 +7,12 @@ const LEGACY_OMIT: &str = "\n[attachments omitted from history]";
 
 /// Suffix appended to the active turn's composer (`\n\n[attached]…`, `\n\n[skills]…`).
 pub(crate) fn user_expansion_suffix(full: &str, composer: &str) -> Option<String> {
-    if full == composer {
-        return None;
-    }
-    if full.len() <= composer.len() {
+    if full == composer || !full.starts_with(composer) {
         return None;
     }
     let tail = &full[composer.len()..];
-    if tail.starts_with("\n\n[attached]")
-        || tail.starts_with("\n\n[skills]")
-        || tail.starts_with("\n[attached]")
-        || tail.starts_with("\n[skills]")
-    {
-        return Some(tail.to_string());
-    }
-    if tail.trim_start().starts_with("[attached]") || tail.trim_start().starts_with("[skills]") {
-        return Some(tail.to_string());
+    if tail.is_empty() {
+        return None;
     }
     Some(tail.to_string())
 }
@@ -57,8 +47,7 @@ pub(crate) fn messages_for_api(
     out
 }
 
-/// Remove `@` / `$` attachment blocks from older user turns (legacy sessions stored full API text).
-/// Drop attachment blocks for persisted API history (session save / restore migration).
+/// Drop `@` / `$` attachment blocks (session save / restore migration).
 pub(crate) fn slim_stored_user_content(text: &str) -> String {
     let mut s = text.to_string();
     for marker in ["\n\n[attached]", "\n[attached]", "\n\n[skills]", "\n[skills]"] {
@@ -84,25 +73,15 @@ pub(crate) fn slim_api_history_for_storage(history: &mut [ApiMessage]) {
     }
 }
 
+/// Strip attachment blocks when resending older user turns (legacy sessions stored full API text).
 pub(crate) fn strip_legacy_user_expansions(text: &str) -> String {
-    let mut s = text.to_string();
-    if let Some(i) = s.find("\n\n[attached]") {
-        s.truncate(i);
-    } else if let Some(i) = s.find("\n[attached]") {
-        s.truncate(i);
-    }
-    if let Some(i) = s.find("\n\n[skills]") {
-        s.truncate(i);
-    } else if let Some(i) = s.find("\n[skills]") {
-        s.truncate(i);
-    }
-    let trimmed = s.trim_end();
+    let trimmed = slim_stored_user_content(text);
     if trimmed != text.trim_end()
         && (text.contains("[attached]") || text.contains("[skills]"))
     {
         return format!("{trimmed}{LEGACY_OMIT}");
     }
-    trimmed.to_string()
+    trimmed
 }
 
 pub(crate) fn truncate_tool_api(body: &str) -> String {
@@ -150,6 +129,11 @@ mod tests {
             user_expansion_suffix(full, "hi").as_deref(),
             Some("\n\n[attached]\n--- @x ---\ndata")
         );
+    }
+
+    #[test]
+    fn expansion_suffix_requires_prefix() {
+        assert!(user_expansion_suffix("other\n\n[attached]", "hi").is_none());
     }
 
     #[test]

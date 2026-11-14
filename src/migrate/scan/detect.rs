@@ -43,8 +43,8 @@ fn push_claude_code(out: &mut Vec<DetectedTool>) {
         return;
     }
     let mut profile = None;
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        if let Ok(v) = serde_json::from_str::<Value>(&text) {
+    if let Ok(text) = std::fs::read_to_string(&path)
+        && let Ok(v) = serde_json::from_str::<Value>(&text) {
             let mut p = ModelProfile::default();
             if let Some(m) = v.get("model").and_then(Value::as_str) {
                 p.model = Some(m.to_string());
@@ -70,7 +70,6 @@ fn push_claude_code(out: &mut Vec<DetectedTool>) {
                 profile = Some(p);
             }
         }
-    }
     out.push(DetectedTool {
         name: "claude-code",
         config_path: path,
@@ -94,11 +93,10 @@ fn push_aider(out: &mut Vec<DetectedTool>) {
         .unwrap_or(candidates[0].clone());
     let installed = has_binary("aider");
     let mut profile = None;
-    if path.is_file() {
-        if let Ok(text) = std::fs::read_to_string(&path) {
+    if path.is_file()
+        && let Ok(text) = std::fs::read_to_string(&path) {
             profile = parse_aider_config(&text, path.extension().and_then(|s| s.to_str()));
         }
-    }
     if path.is_file() || installed {
         out.push(DetectedTool {
             name: "aider",

@@ -309,11 +309,10 @@ fn slug_id(name: &str) -> String {
     for c in name.chars() {
         if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
             out.push(c);
-        } else if c.is_whitespace() || c == '/' {
-            if !out.ends_with('-') && !out.is_empty() {
+        } else if (c.is_whitespace() || c == '/')
+            && !out.ends_with('-') && !out.is_empty() {
                 out.push('-');
             }
-        }
     }
     while out.ends_with('-') {
         out.pop();

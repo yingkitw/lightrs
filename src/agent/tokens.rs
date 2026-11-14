@@ -44,12 +44,12 @@ pub fn estimate_context_tokens(messages: &[ApiMessage]) -> u32 {
             chars += name.chars().count();
         }
     }
-    ((chars + 3) / 4).max(1) as u32
+    chars.div_ceil(4).max(1) as u32
 }
 
 /// Rough token count from text length (~chars/4).
 pub fn estimate_text_tokens(text: &str) -> u32 {
-    ((text.chars().count() + 3) / 4).max(1) as u32
+    text.chars().count().div_ceil(4).max(1) as u32
 }
 
 /// One-line transcript hint after an API completion when usage is present.

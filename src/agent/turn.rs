@@ -211,8 +211,8 @@ impl Agent {
         on: &mut (impl FnMut(ObserveEvent<'_>) + Send),
         ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
     ) -> Result<Option<String>> {
-        if let Some(calls) = message.tool_calls.clone() {
-            if !calls.is_empty() {
+        if let Some(calls) = message.tool_calls.clone()
+            && !calls.is_empty() {
                 remove_trailing_empty_assistant(&self.ui_history);
                 self.api_history.push(message);
                 for call in calls {
@@ -231,7 +231,6 @@ impl Agent {
                 self.refresh_context_estimate();
                 return Ok(None);
             }
-        }
 
         let text = message
             .text_content()
@@ -254,6 +253,7 @@ impl Agent {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_one_tool(
     agent: &mut Agent,
     workdir: &Path,

@@ -116,11 +116,10 @@ pub fn import_hooks(doc: &Value, dest: &Path) -> Result<()> {
 }
 
 fn shellexpand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME") {
             return format!("{home}/{rest}");
         }
-    }
     path.to_string()
 }
 

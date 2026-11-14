@@ -129,7 +129,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 ## Export (2026-11-14)
 
 - `/export` [path] → `session::export_ui_markdown`; default `lightrs-transcript.md` under workdir; `[sys]` omitted (same as session save filter).
-- `session/export.rs` tests: markdown tool/diff sections; disk write; `validate_work_path` rejects `..` escapes (same sandbox as file tools).
+- `session/export.rs` tests: markdown tool/diff sections; disk write; `resolve_work_output_path` rejects `..` escapes (same sandbox as file tools).
 
 ## Provider SSE fixtures (2026-11-14)
 

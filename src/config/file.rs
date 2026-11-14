@@ -83,19 +83,16 @@ pub fn resolve_api_key(
         return Ok(k);
     }
 
-    if let Ok(k) = std::env::var(provider.env_var()) {
-        if !k.is_empty() {
+    if let Ok(k) = std::env::var(provider.env_var())
+        && !k.is_empty() {
             return Ok(k);
         }
-    }
 
-    if let Some(alt) = provider.alt_env_var() {
-        if let Ok(k) = std::env::var(alt) {
-            if !k.is_empty() {
+    if let Some(alt) = provider.alt_env_var()
+        && let Ok(k) = std::env::var(alt)
+            && !k.is_empty() {
                 return Ok(k);
             }
-        }
-    }
 
     bail!(
         "missing API key for {:?}; set {} or pass --*-api-key",

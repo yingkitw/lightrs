@@ -200,12 +200,11 @@ fn parse_edge(line: &str) -> Option<Edge> {
             let left = line[..pos].trim();
             let mut rest = line[pos + token.len()..].trim();
             let mut label = None;
-            if rest.starts_with('|') {
-                if let Some(end) = rest[1..].find('|') {
+            if rest.starts_with('|')
+                && let Some(end) = rest[1..].find('|') {
                     label = Some(rest[1..1 + end].trim().to_string());
                     rest = rest[1 + end + 1..].trim();
                 }
-            }
             let from = extract_node_id(left)?;
             let to = extract_node_id(rest)?;
             if from.is_empty() || to.is_empty() {

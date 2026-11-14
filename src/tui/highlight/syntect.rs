@@ -27,7 +27,7 @@ pub(crate) fn normalize_lang(lang: &str) -> String {
 pub(crate) fn highlight_code(code: &str, lang: &str) -> Vec<Line<'static>> {
     #[cfg(feature = "syntect")]
     {
-        return highlight_syntect(code, lang);
+        highlight_syntect(code, lang)
     }
     #[cfg(not(feature = "syntect"))]
     {

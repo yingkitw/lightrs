@@ -96,7 +96,7 @@ impl AppConfig {
             .or_else(|| file.as_ref().and_then(|f| f.base_url.clone()))
             .unwrap_or_else(|| provider.default_base_url().to_string());
 
-        let workdir = if flags.workdir == PathBuf::from(".") {
+        let workdir = if flags.workdir == *"." {
             file.as_ref()
                 .and_then(|f| f.workdir.clone())
                 .unwrap_or_else(|| flags.workdir.clone())
@@ -196,7 +196,28 @@ pub fn validate_work_path(workdir: &Path, user_path: &Path) -> Result<PathBuf> {
 /// Resolve a path for writing a new file (target may not exist yet).
 pub fn resolve_work_output_path(workdir: &Path, user_path: &Path) -> Result<PathBuf> {
     if user_path.is_absolute() {
-        return validate_work_path(workdir, user_path);
+        let work = workdir
+            .canonicalize()
+            .unwrap_or_else(|_| workdir.to_path_buf());
+        let target = user_path.to_path_buf();
+        if target.exists() {
+            let canon = target
+                .canonicalize()
+                .with_context(|| format!("path {}", target.display()))?;
+            if !canon.starts_with(&work) {
+                bail!("path escapes workdir: {}", user_path.display());
+            }
+            return Ok(canon);
+        }
+        if let Some(parent) = target.parent() {
+            let parent_canon = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
+            if !parent_canon.starts_with(&work) {
+                bail!("path escapes workdir: {}", user_path.display());
+            }
+        }
+        return Ok(target);
     }
     use std::path::Component;
     let mut acc = workdir.to_path_buf();
@@ -258,6 +279,17 @@ mod path_tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("escapes workdir"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_output_absolute_new_file_under_workdir() {
+        let dir = std::env::temp_dir().join(format!("lightrs-path-abs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("new.md");
+        let path = resolve_work_output_path(&dir, &target).unwrap();
+        assert_eq!(path, target);
         let _ = fs::remove_dir_all(&dir);
     }
 }
