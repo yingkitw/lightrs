@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -59,12 +59,12 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     loop {
         {
             let guard = agent.blocking_lock();
-            terminal.draw(|f| draw(f, &app, &guard))?;
+            terminal.draw(|f| draw(f, &mut app, &guard))?;
         }
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
+            match event::read()? {
+                Event::Key(key) => match key.code {
                     KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Char('q') if app.state == RunState::Ready => break,
@@ -75,6 +75,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                         }
                         if line == "/clear" {
                             agent.blocking_lock().clear_conversation();
+                            app.scroll_to_bottom();
                             continue;
                         }
                         if line == "/cwd" {
@@ -82,6 +83,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                             agent.blocking_lock().push_system(wd);
                             continue;
                         }
+                        app.scroll_to_bottom();
                         app.set_busy();
                         let _ = kick_tx.send(line);
                     }
@@ -90,8 +92,18 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                     KeyCode::Esc => app.clear_input(),
                     KeyCode::Up => app.scroll_up(1),
                     KeyCode::Down => app.scroll_down(1),
+                    KeyCode::PageUp => app.scroll_page_up(),
+                    KeyCode::PageDown => app.scroll_page_down(),
+                    KeyCode::Home => app.scroll_to_top(),
+                    KeyCode::End => app.scroll_to_bottom(),
                     _ => {}
-                }
+                },
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => app.scroll_up(3),
+                    MouseEventKind::ScrollDown => app.scroll_down(3),
+                    _ => {}
+                },
+                _ => {}
             }
         }
 

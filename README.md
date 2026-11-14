@@ -49,6 +49,9 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 
 - `Enter` — send message
 - `Esc` — clear input
+- `↑` / `↓` — scroll transcript (line by line)
+- `PgUp` / `PgDn` — scroll by screen
+- `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit
 - `/clear` — reset conversation
 - `/cwd` — print working directory
