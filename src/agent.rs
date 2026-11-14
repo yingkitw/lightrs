@@ -249,17 +249,18 @@ impl Agent {
                             name: &name,
                             arguments: &args,
                         });
-                        let result = execute_tool(&workdir, &name, &args);
-                        on(ObserveEvent::ToolEnd { body: &result });
+                        let outcome = execute_tool(&workdir, &name, &args);
+                        on(ObserveEvent::ToolEnd { body: &outcome.body });
                         self.ui_history.lock().unwrap().push(UiMessage::tool_result(
                             &name,
                             &args,
-                            truncate(&result, 8000),
+                            truncate(&outcome.body, 8000),
+                            outcome.file_diff.clone(),
                         ));
                         self.api_history.push(ApiMessage::tool_result(
                             call.id.clone(),
                             name,
-                            result,
+                            outcome.body,
                         ));
                     }
                     self.refresh_context_estimate();
@@ -393,17 +394,18 @@ impl Agent {
                             name: &name,
                             arguments: &args,
                         });
-                        let result = execute_tool(&workdir, &name, &args);
-                        on(ObserveEvent::ToolEnd { body: &result });
+                        let outcome = execute_tool(&workdir, &name, &args);
+                        on(ObserveEvent::ToolEnd { body: &outcome.body });
                         g.ui_history.lock().unwrap().push(UiMessage::tool_result(
                             &name,
                             &args,
-                            truncate(&result, 8000),
+                            truncate(&outcome.body, 8000),
+                            outcome.file_diff.clone(),
                         ));
                         g.api_history.push(ApiMessage::tool_result(
                             call.id.clone(),
                             name,
-                            result,
+                            outcome.body,
                         ));
                     }
                     g.refresh_context_estimate();

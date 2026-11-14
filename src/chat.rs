@@ -17,12 +17,24 @@ pub struct ToolCallUi {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FileDiffUi {
+    pub path: String,
+    pub unified: String,
+    pub lines_added: usize,
+    pub lines_removed: usize,
+    pub is_new_file: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UiMessage {
     pub role: UiRole,
     /// Tool output (or plain message body).
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call: Option<ToolCallUi>,
+    /// Unified diff for `write_file` (UI only; API tool body stays a short summary).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_diff: Option<FileDiffUi>,
 }
 
 impl UiMessage {
@@ -30,6 +42,7 @@ impl UiMessage {
         name: impl Into<String>,
         arguments: impl Into<String>,
         result: impl Into<String>,
+        file_diff: Option<FileDiffUi>,
     ) -> Self {
         Self {
             role: UiRole::Tool,
@@ -38,6 +51,7 @@ impl UiMessage {
                 name: name.into(),
                 arguments: arguments.into(),
             }),
+            file_diff,
         }
     }
 
@@ -50,6 +64,7 @@ impl UiMessage {
             role,
             content: content.into(),
             tool_call: None,
+            file_diff: None,
         }
     }
 }

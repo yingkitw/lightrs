@@ -35,6 +35,10 @@ pub mod palette {
     pub const MERMAID_ACCENT: Color = Color::Rgb(203, 166, 247);
     pub const MERMAID_EDGE: Color = Color::Rgb(166, 199, 236);
     pub const TOOL_ARGS: Color = Color::Rgb(186, 194, 216);
+
+    pub const DIFF_ADD: Color = Color::Rgb(166, 227, 161);
+    pub const DIFF_DEL: Color = Color::Rgb(243, 139, 168);
+    pub const DIFF_HUNK: Color = Color::Rgb(137, 180, 250);
 }
 
 pub fn body() -> Style {

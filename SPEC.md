@@ -22,7 +22,7 @@
 
 ## User interface
 
-- Scrollable transcript (user, assistant, tool results, errors) with Markdown layout, syntect-highlighted fenced code, and Mermaid (` ```mermaid `) as ASCII diagram preview + source
+- Scrollable transcript (user, assistant, tool results, errors) with Markdown layout, syntect-highlighted fenced code, Mermaid (` ```mermaid `) previews, and unified **diff view** for `write_file` edits
 - Header: version, provider, model, state, workdir, API context size, API host
 - Startup system message with full session details; `/status` repeats them
 - Single-line input with wrap; status bar shows slash/scroll hints (or busy/errors)

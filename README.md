@@ -66,7 +66,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
 - Transcript renders **Markdown** (headings, lists, inline `code`), **syntax-highlighted fenced code** (syntect), and **Mermaid** (` ```mermaid `) as ASCII flow/sequence previews plus source
 
-The agent can **read/write files**, **list directories**, and **run shell commands** in the current working directory (same scope as you launching the binary).
+The agent can **read/write files**, **list directories**, and **run shell commands** in the current working directory (same scope as you launching the binary). **`write_file`** tool calls show a colorized unified diff in the transcript (click/o to expand).
 
 ### ACP (Agent Client Protocol)
 

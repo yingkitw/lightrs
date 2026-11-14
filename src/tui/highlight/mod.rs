@@ -1,4 +1,7 @@
+mod diff;
 mod markdown;
+
+pub use diff::{collapse_diff_preview, render_unified_diff};
 mod mermaid;
 mod syntect;
 mod wrap;

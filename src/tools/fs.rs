@@ -3,7 +3,9 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::chat::FileDiffUi;
 use crate::config::validate_work_path;
+use crate::tools::diff::build_file_diff;
 
 #[derive(Deserialize)]
 pub struct ReadFileArgs {
@@ -37,7 +39,12 @@ pub fn read_file(workdir: &Path, args: ReadFileArgs) -> Result<String> {
     Ok(String::from_utf8_lossy(&data).into_owned())
 }
 
-pub fn write_file(workdir: &Path, args: WriteFileArgs) -> Result<String> {
+pub struct WriteFileOutcome {
+    pub summary: String,
+    pub file_diff: FileDiffUi,
+}
+
+pub fn write_file(workdir: &Path, args: WriteFileArgs) -> Result<WriteFileOutcome> {
     let path = if Path::new(&args.path).is_absolute() {
         validate_work_path(workdir, Path::new(&args.path))?
     } else {
@@ -48,13 +55,22 @@ pub fn write_file(workdir: &Path, args: WriteFileArgs) -> Result<String> {
         }
         target
     };
+    let prior = std::fs::read_to_string(&path).ok();
     std::fs::write(&path, &args.content)
         .with_context(|| format!("write {}", path.display()))?;
-    Ok(format!(
-        "wrote {} bytes to {}",
+    let rel = args.path.clone();
+    let file_diff = build_file_diff(prior.as_deref(), &args.content, &rel);
+    let summary = format!(
+        "wrote {} bytes to {} (+{} −{})",
         args.content.len(),
-        path.display()
-    ))
+        path.display(),
+        file_diff.lines_added,
+        file_diff.lines_removed,
+    );
+    Ok(WriteFileOutcome {
+        summary,
+        file_diff,
+    })
 }
 
 pub fn list_dir(workdir: &Path, args: ListDirArgs) -> Result<String> {

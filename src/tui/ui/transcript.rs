@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use crate::agent::Agent;
 use crate::chat::{UiMessage, UiRole};
 use crate::tui::app::{App, RunState};
-use crate::tui::highlight::render_message_body;
+use crate::tui::highlight::{collapse_diff_preview, render_message_body, render_unified_diff};
 use crate::tui::theme::{self, palette};
 
 const COLLAPSED_RESULT_CHARS: usize = 480;
@@ -135,10 +135,20 @@ fn render_tool_block(
         theme::tool_header(expanded),
     )];
     if !expanded {
-        header.push(Span::styled(
-            truncate_inline(&tc.arguments, 72),
-            Style::default().fg(palette::TOOL_ARGS),
-        ));
+        if let Some(fd) = &m.file_diff {
+            header.push(Span::styled(
+                format!(
+                    "{} +{} −{}",
+                    fd.path, fd.lines_added, fd.lines_removed
+                ),
+                Style::default().fg(palette::TOOL_ARGS),
+            ));
+        } else {
+            header.push(Span::styled(
+                truncate_inline(&tc.arguments, 72),
+                Style::default().fg(palette::TOOL_ARGS),
+            ));
+        }
     }
     header.push(Span::styled(
         if expanded {
@@ -160,16 +170,44 @@ fn render_tool_block(
             theme::body(),
         ));
     }
-    let body = if expanded {
-        m.content.clone()
+    if let Some(fd) = &m.file_diff {
+        let label = if fd.is_new_file {
+            format!("diff: {} (new file)", fd.path)
+        } else {
+            format!(
+                "diff: {} (+{} −{})",
+                fd.path, fd.lines_added, fd.lines_removed
+            )
+        };
+        lines.push(Line::from(Span::styled(
+            label,
+            theme::body_muted().add_modifier(Modifier::ITALIC),
+        )));
+        let diff_text = if expanded {
+            fd.unified.as_str()
+        } else {
+            &collapse_diff_preview(&fd.unified)
+        };
+        lines.extend(render_unified_diff(diff_text, width));
+        if expanded {
+            lines.push(Line::from(Span::styled(
+                "summary:",
+                theme::body_muted().add_modifier(Modifier::ITALIC),
+            )));
+            lines.extend(render_message_body(&m.content, width, theme::body_muted()));
+        }
     } else {
-        collapse_result(&m.content)
-    };
-    lines.push(Line::from(Span::styled(
-        "result:",
-        theme::body_muted().add_modifier(Modifier::ITALIC),
-    )));
-    lines.extend(render_message_body(&body, width, theme::body_muted()));
+        let body = if expanded {
+            m.content.clone()
+        } else {
+            collapse_result(&m.content)
+        };
+        lines.push(Line::from(Span::styled(
+            "result:",
+            theme::body_muted().add_modifier(Modifier::ITALIC),
+        )));
+        lines.extend(render_message_body(&body, width, theme::body_muted()));
+    }
     lines.push(Line::from(""));
 }
 
@@ -221,7 +259,7 @@ mod tests {
 
     #[test]
     fn tool_block_detection() {
-        let m = UiMessage::tool_result("read_file", "{}", "ok");
+        let m = UiMessage::tool_result("read_file", "{}", "ok", None);
         assert!(m.is_tool_block());
     }
 
