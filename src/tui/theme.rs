@@ -69,6 +69,18 @@ pub fn ready_accent() -> Style {
     Style::default().fg(palette::ACCENT)
 }
 
+pub fn system_tag() -> Style {
+    Style::default()
+        .fg(palette::SYSTEM)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub fn system_metric() -> Style {
+    Style::default()
+        .fg(palette::ACCENT)
+        .add_modifier(Modifier::BOLD)
+}
+
 pub fn role_tag(role: UiRole) -> (&'static str, Style) {
     let label = match role {
         UiRole::User => "you",

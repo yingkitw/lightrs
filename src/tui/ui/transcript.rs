@@ -7,7 +7,9 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use crate::agent::Agent;
 use crate::chat::{UiMessage, UiRole};
 use crate::tui::app::{App, RunState};
-use crate::tui::highlight::{collapse_diff_preview, render_message_body, render_unified_diff};
+use crate::tui::highlight::{
+    collapse_diff_preview, render_message_body, render_system_body, render_unified_diff,
+};
 use crate::tui::theme::{self, palette};
 
 const COLLAPSED_RESULT_CHARS: usize = 480;
@@ -89,9 +91,14 @@ fn transcript_lines(
             lines.push(Line::from(""));
             continue;
         }
+        if m.role == UiRole::System {
+            lines.extend(render_system_body(&m.content, width));
+            lines.push(Line::from(""));
+            continue;
+        }
         let (label, label_style) = theme::role_tag(m.role);
         let body_style = match m.role {
-            UiRole::System | UiRole::Tool => theme::body_muted(),
+            UiRole::Tool => theme::body_muted(),
             UiRole::Error => theme::error(),
             _ => theme::body(),
         };

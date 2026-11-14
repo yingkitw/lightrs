@@ -1,5 +1,6 @@
 mod diff;
 mod markdown;
+mod sys;
 
 pub use diff::{collapse_diff_preview, render_unified_diff};
 mod mermaid;
@@ -10,6 +11,8 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 
 /// Render message body as ratatui lines (Markdown + highlighted fenced code).
+pub use sys::render_system_body;
+
 pub fn render_message_body(content: &str, width: usize, base: Style) -> Vec<Line<'static>> {
     let lines = markdown::render_markdown(content, width, base);
     if lines.is_empty() {
