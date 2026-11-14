@@ -2,6 +2,7 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use super::mermaid;
 use super::wrap::{wrap_plain_lines, wrap_styled_lines};
 
 fn normalize_lang(lang: &str) -> String {
@@ -13,6 +14,7 @@ fn normalize_lang(lang: &str) -> String {
         "py" => "python".into(),
         "sh" | "shell" | "zsh" | "bash" => "bash".into(),
         "yml" => "yaml".into(),
+        "mmd" => "mermaid".into(),
         other => other.into(),
     }
 }
@@ -207,6 +209,11 @@ impl MdLines {
 
     fn push_code_block(&mut self, lang: &str, code: &str) {
         let lang_key = normalize_lang(lang);
+        if lang_key == "mermaid" {
+            self.out
+                .extend(mermaid::render_mermaid(code, self.width));
+            return;
+        }
         let header = if lang_key.is_empty() {
             "code".to_string()
         } else {

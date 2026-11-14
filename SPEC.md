@@ -22,7 +22,7 @@
 
 ## User interface
 
-- Scrollable transcript (user, assistant, tool results, errors) with Markdown layout and styled fenced code
+- Scrollable transcript (user, assistant, tool results, errors) with Markdown layout, styled fenced code blocks, and Mermaid (` ```mermaid `) as ASCII diagram preview + source
 - Header: version, provider, model, state, workdir, API context size, API host
 - Startup system message with full session details; `/status` repeats them
 - Single-line input with wrap; status bar shows slash/scroll hints (or busy/errors)

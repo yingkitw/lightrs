@@ -64,7 +64,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `/` — slash commands (not sent to the model); `Tab` completes
 - `/help` — list commands (`/clear`, `/cwd`, `/status`, `/quit`, …)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
-- Transcript renders **Markdown** (headings, lists, inline `code`) and styled fenced code blocks (lightweight, no syntect)
+- Transcript renders **Markdown** (headings, lists, inline `code`), styled **fenced code blocks**, and **Mermaid** (` ```mermaid `) as ASCII flow/sequence previews plus source
 
 The agent can **read/write files**, **list directories**, and **run shell commands** in the current working directory (same scope as you launching the binary).
 

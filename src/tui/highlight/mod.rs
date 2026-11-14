@@ -1,4 +1,5 @@
 mod markdown;
+mod mermaid;
 mod wrap;
 
 use ratatui::style::Style;
@@ -30,6 +31,18 @@ fn looks_rich(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mermaid_fence_renders_diagram_header() {
+        let src = "```mermaid\nflowchart LR\n  A[One] --> B[Two]\n```";
+        let lines = render_message_body(src, 80, Style::default());
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("mermaid"));
+        assert!(joined.contains("One"));
+    }
+
     #[test]
     fn rust_fence_renders_fence_header() {
         let lines = render_message_body("```rust\nfn main() {}\n```", 80, Style::default());
