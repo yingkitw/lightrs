@@ -10,6 +10,7 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::agent::Agent;
@@ -17,7 +18,10 @@ use crate::config::AppConfig;
 use crate::provider::LlmClient;
 use crate::tui::{AgentEvent, App, RunState, draw};
 
-pub async fn run(cfg: AppConfig) -> Result<()> {
+/// Sync TUI loop on the main thread; Tokio is only used on a background runtime for LLM calls.
+pub fn run(cfg: AppConfig) -> Result<()> {
+    let rt = Runtime::new()?;
+
     let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
     let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
     let agent = Arc::new(tokio::sync::Mutex::new(Agent::new(client, workdir)));
@@ -27,7 +31,7 @@ pub async fn run(cfg: AppConfig) -> Result<()> {
 
     let agent_bg = Arc::clone(&agent);
     let tx_bg = tx.clone();
-    tokio::spawn(async move {
+    rt.spawn(async move {
         while let Some(text) = kick_rx.recv().await {
             let result = {
                 let mut guard = agent_bg.lock().await;

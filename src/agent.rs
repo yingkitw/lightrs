@@ -109,6 +109,12 @@ impl Agent {
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("empty choices"))?;
             let message = choice.message;
+            if matches!(
+                choice.finish_reason.as_deref(),
+                Some("length" | "max_tokens")
+            ) {
+                self.push_system("Model stopped: output length limit.");
+            }
 
             if let Some(calls) = &message.tool_calls {
                 if !calls.is_empty() {

@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::cli::ModelFlags;
+use crate::migrate::{self, format_scan_report, infer_provider_from_env, scan_local_tools};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -72,14 +73,26 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn load(flags: &ModelFlags) -> Result<Self> {
+    pub fn load(flags: &ModelFlags, auto_migrate: bool) -> Result<Self> {
+        if auto_migrate {
+            let _ = migrate::bootstrap_if_needed();
+        }
         let file = load_config_file()?;
-        let provider = flags.provider;
+        let provider = flags
+            .provider
+            .or_else(|| file.as_ref().and_then(|f| f.provider))
+            .unwrap_or_else(infer_provider_from_env);
         let model = flags
             .model
             .clone()
-            .or_else(|| file.as_ref().and_then(|f| f.model.clone()))
-            .unwrap_or_else(|| provider.default_model().to_string());
+            .or_else(|| file.as_ref().and_then(|f| f.model.clone()));
+        let model = model.ok_or_else(|| {
+            let hint = provider.default_model();
+            anyhow::anyhow!(
+                "no model configured (pass --model e.g. `{hint}` or run `lightrs migrate`).\n\n{}",
+                format_scan_report(&scan_local_tools())
+            )
+        })?;
 
         let base_url = flags
             .base_url
@@ -87,17 +100,16 @@ impl AppConfig {
             .or_else(|| file.as_ref().and_then(|f| f.base_url.clone()))
             .unwrap_or_else(|| provider.default_base_url().to_string());
 
-        let workdir = flags
-            .workdir
-            .canonicalize()
-            .or_else(|_| std::env::current_dir())
-            .context("resolve working directory")?;
-
-        if let Some(ref f) = file {
-            if let Some(wd) = &f.workdir {
-                let _ = wd;
-            }
+        let workdir = if flags.workdir == PathBuf::from(".") {
+            file.as_ref()
+                .and_then(|f| f.workdir.clone())
+                .unwrap_or_else(|| flags.workdir.clone())
+        } else {
+            flags.workdir.clone()
         }
+        .canonicalize()
+        .or_else(|_| std::env::current_dir())
+        .context("resolve working directory")?;
 
         let api_key = resolve_api_key(flags, file.as_ref(), provider)?;
 

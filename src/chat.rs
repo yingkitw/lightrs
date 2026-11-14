@@ -59,16 +59,6 @@ impl ApiMessage {
         }
     }
 
-    pub fn assistant_text(text: impl Into<String>) -> Self {
-        Self {
-            role: ApiRole::Assistant,
-            content: Some(serde_json::Value::String(text.into())),
-            tool_calls: None,
-            tool_call_id: None,
-            name: None,
-        }
-    }
-
     pub fn tool_result(id: impl Into<String>, name: impl Into<String>, body: impl Into<String>) -> Self {
         Self {
             role: ApiRole::Tool,

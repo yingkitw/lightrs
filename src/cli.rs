@@ -23,6 +23,10 @@ pub struct Cli {
 
     #[command(flatten)]
     pub model: ModelFlags,
+
+    /// On startup, import from OpenCode / Claude Code / Aider if config.toml is missing
+    #[arg(long, default_value_t = true)]
+    pub auto_migrate: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -42,6 +46,14 @@ pub enum Command {
         #[command(subcommand)]
         source: ImportSource,
     },
+    /// Scan this machine for agent configs and import the best match
+    #[command(name = "migrate", visible_alias = "doctor")]
+    Migrate {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, help = "Only migrate from this tool (opencode, claude-code, aider, pi, cursor)")]
+        from: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -59,8 +71,8 @@ pub enum ImportSource {
 
 #[derive(Debug, Parser, Clone)]
 pub struct ModelFlags {
-    #[arg(long, value_enum, default_value = "kimi")]
-    pub provider: Provider,
+    #[arg(long, value_enum)]
+    pub provider: Option<Provider>,
 
     #[arg(long)]
     pub model: Option<String>,

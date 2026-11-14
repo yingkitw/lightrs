@@ -25,9 +25,12 @@ Optional config: `~/.config/lightrs/config.toml` (see `config.example.toml`).
 ## Usage
 
 ```bash
-# Kimi (default model kimi-k2-0905-preview)
-export MOONSHOT_API_KEY=...
-lightrs --provider kimi
+# First run: auto-imports from OpenCode / Claude Code / Aider on this machine
+export MOONSHOT_API_KEY=...   # if not already in imported config
+lightrs --model kimi-k2-0905-preview
+
+# See what would migrate
+lightrs migrate --dry-run
 # same as: lightrs tui --provider kimi
 
 # GLM
