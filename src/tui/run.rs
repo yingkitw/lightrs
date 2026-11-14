@@ -23,6 +23,47 @@ use crate::tui::info::{session_resume_message, session_start_message};
 use crate::tui::slash::{SlashAction, is_slash_input, run_slash, tab_complete};
 use crate::tui::{AgentEvent, App, RunState, draw};
 
+/// Returns `true` when the UI should redraw immediately (streaming chunk).
+fn handle_agent_event(
+    agent: &Arc<tokio::sync::Mutex<Agent>>,
+    app: &mut App,
+    ev: AgentEvent,
+) -> bool {
+    match ev {
+        AgentEvent::Done => {
+            let snapshot = app.config.clone();
+            {
+                let guard = agent.blocking_lock();
+                let _ = session::save(&guard, app.workdir());
+            }
+            app.set_ready(&snapshot);
+            if app.pin_bottom {
+                app.scroll_to_bottom();
+            }
+            false
+        }
+        AgentEvent::Failed(msg) => {
+            {
+                let mut guard = agent.blocking_lock();
+                guard.push_error(msg.clone());
+                let _ = session::save(&guard, app.workdir());
+            }
+            app.set_error_status(msg);
+            if app.pin_bottom {
+                app.scroll_to_bottom();
+            }
+            false
+        }
+        AgentEvent::Refresh => {
+            app.status = "streaming…".into();
+            if app.pin_bottom {
+                app.scroll_to_bottom();
+            }
+            true
+        }
+    }
+}
+
 /// Sync TUI loop on the main thread; Tokio is only used on a background runtime for LLM calls.
 pub fn run(cfg: AppConfig) -> Result<()> {
     let rt = Runtime::new()?;
@@ -45,16 +86,12 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     let tx_bg = tx.clone();
     rt.spawn(async move {
         while let Some(text) = kick_rx.recv().await {
-            let result = {
-                let mut guard = agent_bg.lock().await;
-                guard
-                    .run_user_turn_observed(text, |ev| {
-                        if matches!(ev, ObserveEvent::AssistantDelta { .. }) {
-                            let _ = tx_bg.send(AgentEvent::Refresh);
-                        }
-                    })
-                    .await
-            };
+            let result = Agent::run_user_turn_shared(agent_bg.clone(), text, |ev| {
+                if matches!(ev, ObserveEvent::AssistantDelta { .. }) {
+                    let _ = tx_bg.send(AgentEvent::Refresh);
+                }
+            })
+            .await;
             match result {
                 Ok(_reply) => {
                     let _ = tx_bg.send(AgentEvent::Done);
@@ -91,7 +128,17 @@ pub fn run(cfg: AppConfig) -> Result<()> {
             terminal.draw(|f| draw(f, &mut app, &guard))?;
         }
 
-        let poll_ms = if app.state == RunState::Busy { 50 } else { 100 };
+        let mut redraw_immediately = false;
+        while let Ok(ev) = rx.try_recv() {
+            if handle_agent_event(&agent, &mut app, ev) {
+                redraw_immediately = true;
+            }
+        }
+        if redraw_immediately {
+            continue;
+        }
+
+        let poll_ms = if app.state == RunState::Busy { 16 } else { 100 };
         if event::poll(Duration::from_millis(poll_ms))? {
             match event::read()? {
                 Event::Key(key) => match key.code {
@@ -159,36 +206,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
         }
 
         while let Ok(ev) = rx.try_recv() {
-            match ev {
-                AgentEvent::Done => {
-                    let snapshot = app.config.clone();
-                    {
-                        let guard = agent.blocking_lock();
-                        let _ = session::save(&guard, app.workdir());
-                    }
-                    app.set_ready(&snapshot);
-                    if app.pin_bottom {
-                        app.scroll_to_bottom();
-                    }
-                }
-                AgentEvent::Failed(msg) => {
-                    {
-                        let mut guard = agent.blocking_lock();
-                        guard.push_error(msg.clone());
-                        let _ = session::save(&guard, app.workdir());
-                    }
-                    app.set_error_status(msg);
-                    if app.pin_bottom {
-                        app.scroll_to_bottom();
-                    }
-                }
-                AgentEvent::Refresh => {
-                    app.status = "streaming…".into();
-                    if app.pin_bottom {
-                        app.scroll_to_bottom();
-                    }
-                }
-            }
+            let _ = handle_agent_event(&agent, &mut app, ev);
         }
     }
 

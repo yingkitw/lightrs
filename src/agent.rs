@@ -1,7 +1,7 @@
 mod tokens;
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
@@ -44,7 +44,8 @@ pub struct Agent {
     client: LlmClient,
     workdir: Arc<Path>,
     api_history: Vec<ApiMessage>,
-    ui_history: Vec<UiMessage>,
+    /// UI transcript; readable from the TUI thread while the worker streams LLM output.
+    ui_history: Arc<Mutex<Vec<UiMessage>>>,
     token_stats: TokenStats,
     estimated_context_tokens: u32,
 }
@@ -57,7 +58,7 @@ impl Agent {
             client,
             workdir,
             api_history,
-            ui_history: Vec::new(),
+            ui_history: Arc::new(Mutex::new(Vec::new())),
             token_stats: TokenStats::default(),
             estimated_context_tokens: 0,
         };
@@ -68,14 +69,20 @@ impl Agent {
     pub fn restore_session(&mut self, saved: SessionFile) {
         self.api_history = saved.api_history;
         self.ensure_system_prompt();
-        self.ui_history = saved.ui_history;
+        *self.ui_history.lock().unwrap() = saved.ui_history;
         self.token_stats = saved.token_stats;
         self.refresh_context_estimate();
     }
 
     /// True if there is conversation worth saving to disk.
     pub fn is_persistable(&self) -> bool {
-        self.api_history.len() > 1 || self.ui_history.iter().any(|m| m.role == UiRole::User)
+        self.api_history.len() > 1
+            || self
+                .ui_history
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|m| m.role == UiRole::User)
     }
 
     pub fn export_api_history(&self) -> Vec<ApiMessage> {
@@ -83,7 +90,11 @@ impl Agent {
     }
 
     pub fn export_ui_history(&self) -> Vec<UiMessage> {
-        self.ui_history.clone()
+        self.ui_history.lock().unwrap().clone()
+    }
+
+    pub fn ui_transcript(&self) -> Arc<Mutex<Vec<UiMessage>>> {
+        Arc::clone(&self.ui_history)
     }
 
     fn ensure_system_prompt(&mut self) {
@@ -105,8 +116,8 @@ impl Agent {
         self.estimated_context_tokens = estimate_context_tokens(&self.api_history);
     }
 
-    pub fn ui_messages(&self) -> &[UiMessage] {
-        &self.ui_history
+    pub fn ui_messages(&self) -> Vec<UiMessage> {
+        self.ui_history.lock().unwrap().clone()
     }
 
     /// Number of messages in the LLM API history (system + turns + tool results).
@@ -115,14 +126,14 @@ impl Agent {
     }
 
     pub fn push_system(&mut self, content: impl Into<String>) {
-        self.ui_history.push(UiMessage {
+        self.ui_history.lock().unwrap().push(UiMessage {
             role: UiRole::System,
             content: content.into(),
         });
     }
 
     pub fn push_error(&mut self, content: impl Into<String>) {
-        self.ui_history.push(UiMessage {
+        self.ui_history.lock().unwrap().push(UiMessage {
             role: UiRole::Error,
             content: content.into(),
         });
@@ -132,11 +143,13 @@ impl Agent {
         self.api_history.clear();
         self.api_history
             .push(ApiMessage::system(system_prompt(&self.workdir)));
-        self.ui_history.clear();
-        self.ui_history.push(UiMessage {
+        let mut ui = self.ui_history.lock().unwrap();
+        ui.clear();
+        ui.push(UiMessage {
             role: UiRole::System,
             content: "Conversation cleared.".into(),
         });
+        drop(ui);
         self.token_stats = TokenStats::default();
         self.refresh_context_estimate();
     }
@@ -148,9 +161,9 @@ impl Agent {
     pub async fn run_user_turn_observed(
         &mut self,
         user_text: String,
-        mut on: impl FnMut(ObserveEvent<'_>),
+        mut on: impl FnMut(ObserveEvent<'_>) + Send,
     ) -> Result<String> {
-        self.ui_history.push(UiMessage {
+        self.ui_history.lock().unwrap().push(UiMessage {
             role: UiRole::User,
             content: user_text.clone(),
         });
@@ -165,14 +178,15 @@ impl Agent {
                 tool_choice: Some(serde_json::json!("auto")),
                 stream: None,
             };
+            let client = self.client.clone();
+            let ui_history = self.ui_transcript();
+            let workdir = Arc::clone(&self.workdir);
 
-            let ui_history = &mut self.ui_history;
-            let client = &self.client;
             let mut stream_failed = false;
             let (message, finish_reason, usage) = match client
                 .chat_stream(request, |apply| {
                     if let crate::provider::StreamApply::ContentDelta(text) = apply {
-                        append_assistant_delta(ui_history, &text, &mut on);
+                        append_assistant_delta(&ui_history, &text, &mut on);
                     }
                 })
                 .await
@@ -192,9 +206,7 @@ impl Agent {
                         tool_choice: Some(serde_json::json!("auto")),
                         stream: None,
                     };
-                    let response = self.client.chat(request).await?;
-                    apply_usage(&mut self.token_stats, response.usage.as_ref());
-                    self.refresh_context_estimate();
+                    let response = client.chat(request).await?;
                     let choice = response
                         .choices
                         .into_iter()
@@ -208,10 +220,12 @@ impl Agent {
                 }
             };
 
-            if !stream_failed {
+            if stream_failed {
                 apply_usage(&mut self.token_stats, usage.as_ref());
-                self.refresh_context_estimate();
+            } else {
+                apply_usage(&mut self.token_stats, usage.as_ref());
             }
+            self.refresh_context_estimate();
 
             if matches!(finish_reason.as_deref(), Some("length" | "max_tokens")) {
                 self.push_system("Model stopped: output length limit.");
@@ -219,7 +233,7 @@ impl Agent {
 
             if let Some(calls) = &message.tool_calls {
                 if !calls.is_empty() {
-                    remove_trailing_empty_assistant(&mut self.ui_history);
+                    remove_trailing_empty_assistant(&self.ui_history);
                     self.api_history.push(message.clone());
                     for call in calls {
                         let name = call.function.name.clone();
@@ -228,13 +242,13 @@ impl Agent {
                             name: &name,
                             arguments: &args,
                         });
-                        self.ui_history.push(UiMessage {
+                        self.ui_history.lock().unwrap().push(UiMessage {
                             role: UiRole::Tool,
                             content: format!("→ {name}({})", truncate(&args, 120)),
                         });
-                        let result = execute_tool(&self.workdir, &name, &args);
+                        let result = execute_tool(&workdir, &name, &args);
                         on(ObserveEvent::ToolEnd { body: &result });
-                        self.ui_history.push(UiMessage {
+                        self.ui_history.lock().unwrap().push(UiMessage {
                             role: UiRole::Tool,
                             content: truncate(&result, 8000),
                         });
@@ -255,10 +269,12 @@ impl Agent {
             self.api_history.push(message);
             let streamed = self
                 .ui_history
+                .lock()
+                .unwrap()
                 .last()
                 .is_some_and(|m| m.role == UiRole::Assistant && !m.content.is_empty());
             if !streamed {
-                self.ui_history.push(UiMessage {
+                self.ui_history.lock().unwrap().push(UiMessage {
                     role: UiRole::Assistant,
                     content: text.clone(),
                 });
@@ -267,41 +283,176 @@ impl Agent {
         }
 
         let msg = format!("Stopped after {MAX_TOOL_STEPS} tool steps.");
-        self.ui_history.push(UiMessage {
-            role: UiRole::Error,
-            content: msg.clone(),
-        });
+        self.push_error(msg.clone());
+        Ok(msg)
+    }
+
+    /// Run a user turn without holding the async agent lock across HTTP I/O (enables live TUI updates).
+    pub async fn run_user_turn_shared(
+        agent: Arc<tokio::sync::Mutex<Self>>,
+        user_text: String,
+        mut on: impl FnMut(ObserveEvent<'_>) + Send,
+    ) -> Result<String> {
+        {
+            let mut g = agent.lock().await;
+            g.ui_history.lock().unwrap().push(UiMessage {
+                role: UiRole::User,
+                content: user_text.clone(),
+            });
+            g.api_history.push(ApiMessage::user(user_text));
+            g.refresh_context_estimate();
+        }
+
+        for _step in 0..MAX_TOOL_STEPS {
+            let (client, request, ui_history, workdir) = {
+                let g = agent.lock().await;
+                (
+                    g.client.clone(),
+                    ChatRequest {
+                        model: g.client.model().to_string(),
+                        messages: g.api_history.clone(),
+                        tools: Some(tool_schemas()),
+                        tool_choice: Some(serde_json::json!("auto")),
+                        stream: None,
+                    },
+                    g.ui_transcript(),
+                    Arc::clone(&g.workdir),
+                )
+            };
+
+            let (message, finish_reason, usage) = match client
+                .chat_stream(request, |apply| {
+                    if let crate::provider::StreamApply::ContentDelta(text) = apply {
+                        append_assistant_delta(&ui_history, &text, &mut on);
+                    }
+                })
+                .await
+            {
+                Ok(acc) => {
+                    let finish_reason = acc.finish_reason.clone();
+                    let usage = acc.usage;
+                    let message = acc.into_assistant_message();
+                    (message, finish_reason, usage)
+                }
+                Err(_) => {
+                    let request = {
+                        let g = agent.lock().await;
+                        ChatRequest {
+                            model: g.client.model().to_string(),
+                            messages: g.api_history.clone(),
+                            tools: Some(tool_schemas()),
+                            tool_choice: Some(serde_json::json!("auto")),
+                            stream: None,
+                        }
+                    };
+                    let response = client.chat(request).await?;
+                    let choice = response
+                        .choices
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("empty choices"))?;
+                    (
+                        choice.message,
+                        choice.finish_reason,
+                        response.usage,
+                    )
+                }
+            };
+
+            let mut g = agent.lock().await;
+            apply_usage(&mut g.token_stats, usage.as_ref());
+            g.refresh_context_estimate();
+
+            if matches!(finish_reason.as_deref(), Some("length" | "max_tokens")) {
+                g.push_system("Model stopped: output length limit.");
+            }
+
+            if let Some(calls) = &message.tool_calls {
+                if !calls.is_empty() {
+                    remove_trailing_empty_assistant(&g.ui_history);
+                    g.api_history.push(message.clone());
+                    for call in calls {
+                        let name = call.function.name.clone();
+                        let args = call.function.arguments.clone();
+                        on(ObserveEvent::ToolStart {
+                            name: &name,
+                            arguments: &args,
+                        });
+                        g.ui_history.lock().unwrap().push(UiMessage {
+                            role: UiRole::Tool,
+                            content: format!("→ {name}({})", truncate(&args, 120)),
+                        });
+                        let result = execute_tool(&workdir, &name, &args);
+                        on(ObserveEvent::ToolEnd { body: &result });
+                        g.ui_history.lock().unwrap().push(UiMessage {
+                            role: UiRole::Tool,
+                            content: truncate(&result, 8000),
+                        });
+                        g.api_history.push(ApiMessage::tool_result(
+                            call.id.clone(),
+                            name,
+                            result,
+                        ));
+                    }
+                    g.refresh_context_estimate();
+                    drop(g);
+                    continue;
+                }
+            }
+
+            let text = message
+                .text_content()
+                .unwrap_or_else(|| "(empty response)".to_string());
+            g.api_history.push(message);
+            let streamed = g
+                .ui_history
+                .lock()
+                .unwrap()
+                .last()
+                .is_some_and(|m| m.role == UiRole::Assistant && !m.content.is_empty());
+            if !streamed {
+                g.ui_history.lock().unwrap().push(UiMessage {
+                    role: UiRole::Assistant,
+                    content: text.clone(),
+                });
+            }
+            return Ok(text);
+        }
+
+        let msg = format!("Stopped after {MAX_TOOL_STEPS} tool steps.");
+        agent.lock().await.push_error(msg.clone());
         Ok(msg)
     }
 }
 
 fn append_assistant_delta(
-    ui_history: &mut Vec<UiMessage>,
+    ui_history: &Arc<Mutex<Vec<UiMessage>>>,
     chunk: &str,
     on: &mut impl FnMut(ObserveEvent<'_>),
 ) {
     if chunk.is_empty() {
         return;
     }
-    let needs_row = ui_history
-        .last()
-        .is_none_or(|m| m.role != UiRole::Assistant);
+    let mut ui = ui_history.lock().unwrap();
+    let needs_row = ui.last().is_none_or(|m| m.role != UiRole::Assistant);
     if needs_row {
-        ui_history.push(UiMessage {
+        ui.push(UiMessage {
             role: UiRole::Assistant,
             content: String::new(),
         });
     }
-    if let Some(last) = ui_history.last_mut() {
+    if let Some(last) = ui.last_mut() {
         last.content.push_str(chunk);
     }
+    drop(ui);
     on(ObserveEvent::AssistantDelta { text: chunk });
 }
 
-fn remove_trailing_empty_assistant(ui_history: &mut Vec<UiMessage>) {
-    if let Some(last) = ui_history.last() {
+fn remove_trailing_empty_assistant(ui_history: &Arc<Mutex<Vec<UiMessage>>>) {
+    let mut ui = ui_history.lock().unwrap();
+    if let Some(last) = ui.last() {
         if last.role == UiRole::Assistant && last.content.is_empty() {
-            ui_history.pop();
+            ui.pop();
         }
     }
 }

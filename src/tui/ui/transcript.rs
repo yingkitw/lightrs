@@ -14,12 +14,20 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
     app.transcript_viewport = area.height.saturating_sub(2).max(1);
     let viewport = usize::from(app.transcript_viewport);
 
-    let mut lines = transcript_lines(agent.ui_messages(), width);
+    let messages = agent.ui_messages();
+    let mut lines = transcript_lines(&messages, width);
     if app.state == RunState::Busy {
-        lines.push(Line::from(Span::styled(
-            "● waiting for model…",
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC),
-        )));
+        let tail = messages
+            .last()
+            .filter(|m| m.role == UiRole::Assistant && !m.content.is_empty());
+        if tail.is_none() {
+            lines.push(Line::from(Span::styled(
+                "● waiting for model…",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+        }
     }
 
     let total = lines.len();
