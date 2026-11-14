@@ -9,6 +9,16 @@ use crate::tools::{execute_tool, tool_schemas};
 
 const MAX_TOOL_STEPS: usize = 16;
 
+pub enum ObserveEvent<'a> {
+    ToolStart {
+        name: &'a str,
+        arguments: &'a str,
+    },
+    ToolEnd {
+        body: &'a str,
+    },
+}
+
 fn system_prompt(workdir: &Path) -> String {
     format!(
         r#"You are lightrs, a minimal terminal coding agent.
@@ -69,7 +79,15 @@ impl Agent {
         });
     }
 
-    pub async fn run_user_turn(&mut self, user_text: String) -> Result<()> {
+    pub async fn run_user_turn(&mut self, user_text: String) -> Result<String> {
+        self.run_user_turn_observed(user_text, |_| {}).await
+    }
+
+    pub async fn run_user_turn_observed(
+        &mut self,
+        user_text: String,
+        mut on: impl FnMut(ObserveEvent<'_>),
+    ) -> Result<String> {
         self.ui_history.push(UiMessage {
             role: UiRole::User,
             content: user_text.clone(),
@@ -98,11 +116,16 @@ impl Agent {
                     for call in calls {
                         let name = call.function.name.clone();
                         let args = call.function.arguments.clone();
+                        on(ObserveEvent::ToolStart {
+                            name: &name,
+                            arguments: &args,
+                        });
                         self.ui_history.push(UiMessage {
                             role: UiRole::Tool,
                             content: format!("→ {name}({})", truncate(&args, 120)),
                         });
                         let result = execute_tool(&self.workdir, &name, &args);
+                        on(ObserveEvent::ToolEnd { body: &result });
                         self.ui_history.push(UiMessage {
                             role: UiRole::Tool,
                             content: truncate(&result, 8000),
@@ -123,16 +146,17 @@ impl Agent {
             self.api_history.push(message);
             self.ui_history.push(UiMessage {
                 role: UiRole::Assistant,
-                content: text,
+                content: text.clone(),
             });
-            return Ok(());
+            return Ok(text);
         }
 
+        let msg = format!("Stopped after {MAX_TOOL_STEPS} tool steps.");
         self.ui_history.push(UiMessage {
             role: UiRole::Error,
-            content: format!("Stopped after {MAX_TOOL_STEPS} tool steps."),
+            content: msg.clone(),
         });
-        Ok(())
+        Ok(msg)
     }
 }
 

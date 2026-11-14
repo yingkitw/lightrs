@@ -9,7 +9,12 @@ license = "MIT"
 name = "lightrs"
 path = "src/main.rs"
 
+[features]
+default = ["acp-v2"]
+acp-v2 = ["agent-client-protocol/unstable_protocol_v2"]
+
 [dependencies]
+agent-client-protocol = { version = "5", features = ["stdio"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 crossterm = "0.28"

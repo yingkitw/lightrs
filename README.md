@@ -28,6 +28,7 @@ Optional config: `~/.config/lightrs/config.toml` (see `config.example.toml`).
 # Kimi (default model kimi-k2-0905-preview)
 export MOONSHOT_API_KEY=...
 lightrs --provider kimi
+# same as: lightrs tui --provider kimi
 
 # GLM
 export ZAI_API_KEY=...
@@ -50,6 +51,28 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `/cwd` — print working directory
 
 The agent can **read/write files**, **list directories**, and **run shell commands** in the current working directory (same scope as you launching the binary).
+
+### ACP (Agent Client Protocol)
+
+Run as an ACP **agent** on stdio for editors (Zed, JetBrains, etc.):
+
+```bash
+lightrs acp --provider kimi
+lightrs acp --protocol v2   # draft ACP v2 session lifecycle
+```
+
+Wire the binary in your client’s agent settings (command + same env vars as the TUI). Logs go to **stderr**; **stdout** is JSON-RPC only.
+
+### Import from OpenCode
+
+Copy model connection settings, MCP config, skills paths, instructions/rules, and hook metadata:
+
+```bash
+lightrs import opencode
+lightrs import opencode --config ~/.config/opencode/opencode.json --project ./opencode.json
+```
+
+Writes under `~/.config/lightrs/` (`config.toml` or `opencode-import.toml`, `mcp.json`, `skills/`, `rules/`, `hooks/`). API keys are copied into TOML locally — keep that directory private.
 
 ## Design
 

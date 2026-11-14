@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
 use serde::Deserialize;
+
+use crate::cli::ModelFlags;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -45,31 +46,6 @@ impl Provider {
     }
 }
 
-#[derive(Debug, Parser)]
-#[command(name = "lightrs", about = "Lightweight TUI coding agent")]
-pub struct Cli {
-    #[arg(long, value_enum, default_value = "kimi")]
-    pub provider: Provider,
-
-    #[arg(long)]
-    pub model: Option<String>,
-
-    #[arg(long)]
-    pub base_url: Option<String>,
-
-    #[arg(long, default_value = ".")]
-    pub workdir: PathBuf,
-
-    #[arg(long, env = "ZAI_API_KEY")]
-    pub glm_api_key: Option<String>,
-
-    #[arg(long, env = "MOONSHOT_API_KEY")]
-    pub kimi_api_key: Option<String>,
-
-    #[arg(long, env = "MINIMAX_API_KEY")]
-    pub minimax_api_key: Option<String>,
-}
-
 #[derive(Debug, Default, Deserialize)]
 struct FileConfig {
     provider: Option<Provider>,
@@ -96,22 +72,22 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn load(cli: Cli) -> Result<Self> {
+    pub fn load(flags: &ModelFlags) -> Result<Self> {
         let file = load_config_file()?;
-        let provider = cli.provider;
-        let model = cli
+        let provider = flags.provider;
+        let model = flags
             .model
             .clone()
             .or_else(|| file.as_ref().and_then(|f| f.model.clone()))
             .unwrap_or_else(|| provider.default_model().to_string());
 
-        let base_url = cli
+        let base_url = flags
             .base_url
             .clone()
             .or_else(|| file.as_ref().and_then(|f| f.base_url.clone()))
             .unwrap_or_else(|| provider.default_base_url().to_string());
 
-        let workdir = cli
+        let workdir = flags
             .workdir
             .canonicalize()
             .or_else(|_| std::env::current_dir())
@@ -123,7 +99,7 @@ impl AppConfig {
             }
         }
 
-        let api_key = resolve_api_key(&cli, file.as_ref(), provider)?;
+        let api_key = resolve_api_key(flags, file.as_ref(), provider)?;
 
         Ok(Self {
             provider,
@@ -152,11 +128,11 @@ pub fn config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("config.toml"))
 }
 
-fn resolve_api_key(cli: &Cli, file: Option<&FileConfig>, provider: Provider) -> Result<String> {
+fn resolve_api_key(flags: &ModelFlags, file: Option<&FileConfig>, provider: Provider) -> Result<String> {
     let from_cli = match provider {
-        Provider::Glm => cli.glm_api_key.clone(),
-        Provider::Kimi => cli.kimi_api_key.clone(),
-        Provider::Minimax => cli.minimax_api_key.clone(),
+        Provider::Glm => flags.glm_api_key.clone(),
+        Provider::Kimi => flags.kimi_api_key.clone(),
+        Provider::Minimax => flags.minimax_api_key.clone(),
     };
 
     let from_file = file.and_then(|f| match provider {

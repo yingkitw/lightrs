@@ -1,123 +1,29 @@
+mod acp;
 mod agent;
 mod chat;
+mod cli;
 mod config;
+mod opencode;
 mod provider;
 mod tools;
 mod tui;
 
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
-
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use crossterm::ExecutableCommand;
-use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
-use tokio::sync::mpsc;
 
-use crate::agent::Agent;
-use crate::config::{AppConfig, Cli};
-use crate::provider::LlmClient;
-use crate::tui::{AgentEvent, App, RunState, draw};
+use crate::cli::{Cli, Command, ImportSource};
+use crate::config::AppConfig;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = <Cli as clap::Parser>::parse();
-    let cfg = AppConfig::load(cli)?;
-
-    let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
-    let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
-    let agent = Arc::new(tokio::sync::Mutex::new(Agent::new(client, workdir)));
-
-    let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
-
-    let agent_bg = Arc::clone(&agent);
-    let tx_bg = tx.clone();
-    tokio::spawn(async move {
-        while let Some(text) = kick_rx.recv().await {
-            let result = {
-                let mut guard = agent_bg.lock().await;
-                guard.run_user_turn(text).await
-            };
-            match result {
-                Ok(()) => {
-                    let _ = tx_bg.send(AgentEvent::Done);
-                }
-                Err(e) => {
-                    let _ = tx_bg.send(AgentEvent::Failed(format!("{e:#}")));
-                }
-            }
+    match cli.command.unwrap_or(Command::Tui) {
+        Command::Tui => tui::run(AppConfig::load(&cli.model)?).await,
+        Command::Acp { protocol } => {
+            let cfg = AppConfig::load(&cli.model)?;
+            acp::serve(cfg, protocol).await.map_err(|e| anyhow::anyhow!("{e}"))
         }
-    });
-
-    let mut stdout = std::io::stdout();
-    enable_raw_mode()?;
-    stdout.execute(EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    let mut app = App::new(cfg);
-
-    loop {
-        {
-            let guard = agent.blocking_lock();
-            terminal.draw(|f| draw(f, &app, &guard))?;
-        }
-
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Char('q') if app.state == RunState::Ready => break,
-                    KeyCode::Enter if app.state == RunState::Ready => {
-                        let line = app.take_input().trim().to_string();
-                        if line.is_empty() {
-                            continue;
-                        }
-                        if line == "/clear" {
-                            agent.blocking_lock().clear_conversation();
-                            continue;
-                        }
-                        if line == "/cwd" {
-                            let wd = app.workdir().display().to_string();
-                            agent.blocking_lock().push_system(wd);
-                            continue;
-                        }
-                        app.set_busy();
-                        let _ = kick_tx.send(line);
-                    }
-                    KeyCode::Char(c) if app.state == RunState::Ready => app.push_char(c),
-                    KeyCode::Backspace if app.state == RunState::Ready => app.backspace(),
-                    KeyCode::Esc => app.clear_input(),
-                    KeyCode::Up => app.scroll_up(1),
-                    KeyCode::Down => app.scroll_down(1),
-                    _ => {}
-                }
-            }
-        }
-
-        while let Ok(ev) = rx.try_recv() {
-            match ev {
-                AgentEvent::Done => {
-                    let snapshot = app.config.clone();
-                    app.set_ready(&snapshot);
-                }
-                AgentEvent::Failed(msg) => {
-                    agent.blocking_lock().push_error(msg.clone());
-                    app.set_error_status(msg);
-                }
-            }
-        }
+        Command::Import { source } => match source {
+            ImportSource::Opencode { config, project } => opencode::import(config, project),
+        },
     }
-
-    disable_raw_mode()?;
-    terminal.backend_mut().execute(LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-    Ok(())
 }
