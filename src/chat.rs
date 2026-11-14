@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum UiRole {
     User,
     Assistant,
@@ -9,7 +10,7 @@ pub enum UiRole {
     Error,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UiMessage {
     pub role: UiRole,
     pub content: String,
@@ -96,11 +97,23 @@ pub struct ChatRequest {
     pub tools: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(default)]
+pub struct TokenUsage {
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
+    pub total_tokens: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ChatResponse {
     pub choices: Vec<ChatChoice>,
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,4 +131,19 @@ pub struct ApiErrorBody {
 #[derive(Debug, Deserialize)]
 pub struct ApiErrorDetail {
     pub message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_optional_usage() {
+        let json = r#"{"choices":[],"usage":{"prompt_tokens":1200,"completion_tokens":42,"total_tokens":1242}}"#;
+        let r: ChatResponse = serde_json::from_str(json).unwrap();
+        let usage = r.usage.expect("usage");
+        assert_eq!(usage.prompt_tokens, Some(1200));
+        assert_eq!(usage.completion_tokens, Some(42));
+        assert_eq!(usage.total_tokens, Some(1242));
+    }
 }

@@ -19,6 +19,25 @@ pub fn session_start_message(cfg: &AppConfig) -> String {
     )
 }
 
+pub fn session_resume_message(cfg: &AppConfig, ui_messages: usize, api_messages: usize) -> String {
+    format!(
+        "Resumed previous session — {} · {} · {} · {ui_messages} UI lines · {api_messages} API msgs · /clear starts fresh",
+        provider_name(cfg.provider),
+        cfg.model,
+        truncate_middle(&cfg.workdir.display().to_string(), 40),
+    )
+}
+
+pub fn context_details(
+    cfg: &AppConfig,
+    api_messages: usize,
+    context_usage: &str,
+    state: &str,
+) -> String {
+    let base = session_details(cfg, api_messages, state);
+    format!("{base}\ntokens: {context_usage}")
+}
+
 pub fn session_details(cfg: &AppConfig, api_messages: usize, state: &str) -> String {
     let config = config_path();
     let config_line = if config.is_file() {
@@ -50,7 +69,7 @@ pub fn session_details(cfg: &AppConfig, api_messages: usize, state: &str) -> Str
 /// Two-line header: identity + path/context (truncated to `width` chars per line).
 pub fn header_lines(
     cfg: &AppConfig,
-    api_messages: usize,
+    context_usage: &str,
     state: RunState,
     width: u16,
 ) -> [String; 2] {
@@ -73,9 +92,7 @@ pub fn header_lines(
     let path = cfg.workdir.display().to_string();
     let path_short = truncate_middle(&path, w.saturating_sub(24).max(16));
     let line2 = truncate_end(
-        &format!(
-            "path: {path_short} · ctx: {api_messages} msg · {api_host}",
-        ),
+        &format!("path: {path_short} · {context_usage} · {api_host}"),
         w,
     );
     [line1, line2]
@@ -83,7 +100,7 @@ pub fn header_lines(
 
 pub fn header_compact(
     cfg: &AppConfig,
-    api_messages: usize,
+    context_usage: &str,
     state: RunState,
     width: u16,
 ) -> String {
@@ -94,10 +111,11 @@ pub fn header_compact(
     };
     truncate_end(
         &format!(
-            "lightrs · {} · {} · {} · ctx {api_messages} · {}",
+            "lightrs · {} · {} · {} · {} · {}",
             provider_name(cfg.provider),
             cfg.model,
             state_label,
+            context_usage,
             truncate_middle(&cfg.workdir.display().to_string(), 20),
         ),
         w,

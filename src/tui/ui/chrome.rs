@@ -4,7 +4,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::agent::Agent;
+use crate::agent::{Agent, context_usage_text};
 use crate::tui::app::{App, RunState};
 use crate::tui::info::{header_compact, header_lines};
 use crate::tui::slash::{is_slash_input, slash_command_hint};
@@ -15,23 +15,14 @@ pub fn draw_header(frame: &mut Frame, area: Rect, app: &App, agent: &Agent, rows
     } else {
         Style::default().fg(Color::Cyan)
     };
+    let ctx = context_usage_text(agent.token_summary(), agent.api_context_len());
     let text = if rows == 1 {
         Text::from(Line::styled(
-            header_compact(
-                &app.config,
-                agent.api_context_len(),
-                app.state,
-                area.width,
-            ),
+            header_compact(&app.config, &ctx, app.state, area.width),
             state_style,
         ))
     } else {
-        let lines = header_lines(
-            &app.config,
-            agent.api_context_len(),
-            app.state,
-            area.width,
-        );
+        let lines = header_lines(&app.config, &ctx, app.state, area.width);
         Text::from(vec![
             Line::styled(lines[0].clone(), state_style),
             Line::styled(lines[1].clone(), Style::default().fg(Color::DarkGray)),

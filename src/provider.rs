@@ -1,5 +1,9 @@
+mod stream;
+
 use anyhow::{Context, Result, bail};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+
+pub use stream::{StreamAccumulator, StreamApply, post_chat_stream};
 
 use crate::chat::{ApiErrorBody, ChatRequest, ChatResponse};
 
@@ -55,5 +59,20 @@ impl LlmClient {
         }
 
         serde_json::from_str(&body).context("parse chat response")
+    }
+
+    pub async fn chat_stream(
+        &self,
+        request: ChatRequest,
+        on_apply: impl FnMut(StreamApply),
+    ) -> Result<StreamAccumulator> {
+        post_chat_stream(
+            &self.http,
+            &self.base_url,
+            &self.api_key,
+            request,
+            on_apply,
+        )
+        .await
     }
 }

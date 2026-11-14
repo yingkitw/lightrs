@@ -11,6 +11,8 @@ pub enum RunState {
 pub enum AgentEvent {
     Done,
     Failed(String),
+    /// Transcript changed while a turn is in progress (streaming).
+    Refresh,
 }
 
 pub struct App {

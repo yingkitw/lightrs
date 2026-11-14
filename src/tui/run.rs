@@ -15,10 +15,11 @@ use ratatui::Terminal;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
-use crate::agent::Agent;
+use crate::agent::{Agent, ObserveEvent};
 use crate::config::AppConfig;
 use crate::provider::LlmClient;
-use crate::tui::info::session_start_message;
+use crate::session;
+use crate::tui::info::{session_resume_message, session_start_message};
 use crate::tui::slash::{SlashAction, is_slash_input, run_slash, tab_complete};
 use crate::tui::{AgentEvent, App, RunState, draw};
 
@@ -28,7 +29,14 @@ pub fn run(cfg: AppConfig) -> Result<()> {
 
     let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
     let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
-    let agent = Arc::new(tokio::sync::Mutex::new(Agent::new(client, workdir)));
+    let mut agent_inner = Agent::new(client, Arc::clone(&workdir));
+    let resumed = if let Ok(Some(saved)) = session::load(&cfg.workdir) {
+        agent_inner.restore_session(saved);
+        true
+    } else {
+        false
+    };
+    let agent = Arc::new(tokio::sync::Mutex::new(agent_inner));
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
@@ -39,7 +47,13 @@ pub fn run(cfg: AppConfig) -> Result<()> {
         while let Some(text) = kick_rx.recv().await {
             let result = {
                 let mut guard = agent_bg.lock().await;
-                guard.run_user_turn(text).await
+                guard
+                    .run_user_turn_observed(text, |ev| {
+                        if matches!(ev, ObserveEvent::AssistantDelta { .. }) {
+                            let _ = tx_bg.send(AgentEvent::Refresh);
+                        }
+                    })
+                    .await
             };
             match result {
                 Ok(_reply) => {
@@ -59,10 +73,16 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.backend_mut().execute(EnableMouseCapture)?;
 
-    let mut app = App::new(cfg);
+    let mut app = App::new(cfg.clone());
     {
         let mut guard = agent.blocking_lock();
-        guard.push_system(session_start_message(&app.config));
+        if resumed {
+            let ui = guard.ui_messages().len();
+            let api = guard.api_context_len();
+            guard.push_system(session_resume_message(&app.config, ui, api));
+        } else {
+            guard.push_system(session_start_message(&app.config));
+        }
     }
 
     loop {
@@ -92,8 +112,12 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                         }
                         if is_slash_input(&line) {
                             let mut guard = agent.blocking_lock();
+                            let was_clear = line.trim() == "/clear";
                             match run_slash(&line, &mut guard, &app) {
                                 SlashAction::Handled => {
+                                    if !was_clear {
+                                        let _ = session::save(&guard, app.workdir());
+                                    }
                                     drop(guard);
                                     app.scroll_to_bottom();
                                 }
@@ -138,20 +162,39 @@ pub fn run(cfg: AppConfig) -> Result<()> {
             match ev {
                 AgentEvent::Done => {
                     let snapshot = app.config.clone();
+                    {
+                        let guard = agent.blocking_lock();
+                        let _ = session::save(&guard, app.workdir());
+                    }
                     app.set_ready(&snapshot);
                     if app.pin_bottom {
                         app.scroll_to_bottom();
                     }
                 }
                 AgentEvent::Failed(msg) => {
-                    agent.blocking_lock().push_error(msg.clone());
+                    {
+                        let mut guard = agent.blocking_lock();
+                        guard.push_error(msg.clone());
+                        let _ = session::save(&guard, app.workdir());
+                    }
                     app.set_error_status(msg);
+                    if app.pin_bottom {
+                        app.scroll_to_bottom();
+                    }
+                }
+                AgentEvent::Refresh => {
+                    app.status = "streaming…".into();
                     if app.pin_bottom {
                         app.scroll_to_bottom();
                     }
                 }
             }
         }
+    }
+
+    {
+        let guard = agent.blocking_lock();
+        let _ = session::save(&guard, app.workdir());
     }
 
     terminal.backend_mut().execute(DisableMouseCapture)?;

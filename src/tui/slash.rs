@@ -1,6 +1,7 @@
-use crate::agent::Agent;
+use crate::agent::{Agent, context_usage_text};
+use crate::session;
 use crate::tui::App;
-use crate::tui::info::session_details;
+use crate::tui::info::{context_details, session_details};
 
 /// Built-in TUI commands (leading `/`); never sent to the model.
 const COMMANDS: &[(&str, &str)] = &[
@@ -9,6 +10,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("cwd", "show working directory in transcript"),
     ("quit", "exit (same as q)"),
     ("status", "show model, path, and context"),
+    ("context", "message count and token usage"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +101,7 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &App) -> SlashAction {
         }
         "clear" => {
             agent.clear_conversation();
+            let _ = session::remove(app.workdir());
             SlashAction::Handled
         }
         "cwd" => {
@@ -109,6 +112,12 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &App) -> SlashAction {
         "status" => {
             let n = agent.api_context_len();
             agent.push_system(session_details(&app.config, n, "status"));
+            SlashAction::Handled
+        }
+        "context" => {
+            let n = agent.api_context_len();
+            let usage = context_usage_text(agent.token_summary(), n);
+            agent.push_system(context_details(&app.config, n, &usage, "context"));
             SlashAction::Handled
         }
         "quit" | "exit" => SlashAction::Quit,

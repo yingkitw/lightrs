@@ -17,7 +17,7 @@
 
 - In-process MCP server (imported MCP JSON is stored for future wiring)
 - LSP, ripgrep embedding, multi-agent orchestration
-- Streaming tokens in the TUI (may add later)
+- Streaming tokens in the TUI (enabled)
 - Sandboxed containers for shell execution
 
 ## User interface
@@ -27,6 +27,7 @@
 - Startup system message with full session details; `/status` repeats them
 - Single-line input with wrap; status bar shows slash/scroll hints (or busy/errors)
 - Lines starting with `/` are TUI slash commands (`/help`, `/clear`, `/cwd`, `/quit`); not forwarded to the model
+- **Session resume**: per workdir transcript persisted under `~/.config/lightrs/sessions/`; restored on next `lightrs` run; `/clear` wipes disk + memory
 
 ## Agent behavior
 

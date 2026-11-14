@@ -6,6 +6,7 @@ mod config;
 mod migrate;
 mod opencode;
 mod provider;
+mod session;
 mod tools;
 mod tui;
 
