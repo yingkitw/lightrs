@@ -3,7 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
+};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -16,6 +18,8 @@ use tokio::sync::mpsc;
 use crate::agent::Agent;
 use crate::config::AppConfig;
 use crate::provider::LlmClient;
+use crate::tui::info::session_start_message;
+use crate::tui::slash::{SlashAction, is_slash_input, run_slash, tab_complete};
 use crate::tui::{AgentEvent, App, RunState, draw};
 
 /// Sync TUI loop on the main thread; Tokio is only used on a background runtime for LLM calls.
@@ -53,8 +57,13 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     stdout.execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    terminal.backend_mut().execute(EnableMouseCapture)?;
 
     let mut app = App::new(cfg);
+    {
+        let mut guard = agent.blocking_lock();
+        guard.push_system(session_start_message(&app.config));
+    }
 
     loop {
         {
@@ -62,40 +71,58 @@ pub fn run(cfg: AppConfig) -> Result<()> {
             terminal.draw(|f| draw(f, &mut app, &guard))?;
         }
 
-        if event::poll(Duration::from_millis(100))? {
+        let poll_ms = if app.state == RunState::Busy { 50 } else { 100 };
+        if event::poll(Duration::from_millis(poll_ms))? {
             match event::read()? {
                 Event::Key(key) => match key.code {
                     KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Char('q') if app.state == RunState::Ready => break,
+                    KeyCode::Char('q')
+                        if app.state == RunState::Ready && app.input.is_empty() =>
+                    {
+                        break
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.clear_input();
+                    }
                     KeyCode::Enter if app.state == RunState::Ready => {
                         let line = app.take_input().trim().to_string();
                         if line.is_empty() {
                             continue;
                         }
-                        if line == "/clear" {
-                            agent.blocking_lock().clear_conversation();
-                            app.scroll_to_bottom();
+                        if is_slash_input(&line) {
+                            let mut guard = agent.blocking_lock();
+                            match run_slash(&line, &mut guard, &app) {
+                                SlashAction::Handled => {
+                                    drop(guard);
+                                    app.scroll_to_bottom();
+                                }
+                                SlashAction::Quit => break,
+                            }
                             continue;
                         }
-                        if line == "/cwd" {
-                            let wd = app.workdir().display().to_string();
-                            agent.blocking_lock().push_system(wd);
-                            continue;
-                        }
-                        app.scroll_to_bottom();
                         app.set_busy();
                         let _ = kick_tx.send(line);
                     }
+                    KeyCode::Char('/') if app.state == RunState::Ready && app.input.is_empty() => {
+                        app.push_char('/');
+                    }
                     KeyCode::Char(c) if app.state == RunState::Ready => app.push_char(c),
                     KeyCode::Backspace if app.state == RunState::Ready => app.backspace(),
-                    KeyCode::Esc => app.clear_input(),
-                    KeyCode::Up => app.scroll_up(1),
-                    KeyCode::Down => app.scroll_down(1),
-                    KeyCode::PageUp => app.scroll_page_up(),
-                    KeyCode::PageDown => app.scroll_page_down(),
-                    KeyCode::Home => app.scroll_to_top(),
-                    KeyCode::End => app.scroll_to_bottom(),
+                    KeyCode::Tab if app.state == RunState::Ready => {
+                        if let Some(completed) = tab_complete(&app.input) {
+                            app.input = completed;
+                        }
+                    }
+                    KeyCode::Esc => {
+                        app.clear_input();
+                    }
+                    KeyCode::Up if app.input.is_empty() => app.scroll_up(1),
+                    KeyCode::Down if app.input.is_empty() => app.scroll_down(1),
+                    KeyCode::PageUp if app.input.is_empty() => app.scroll_page_up(),
+                    KeyCode::PageDown if app.input.is_empty() => app.scroll_page_down(),
+                    KeyCode::Home if app.input.is_empty() => app.scroll_to_top(),
+                    KeyCode::End if app.input.is_empty() => app.scroll_to_bottom(),
                     _ => {}
                 },
                 Event::Mouse(mouse) => match mouse.kind {
@@ -112,15 +139,22 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                 AgentEvent::Done => {
                     let snapshot = app.config.clone();
                     app.set_ready(&snapshot);
+                    if app.pin_bottom {
+                        app.scroll_to_bottom();
+                    }
                 }
                 AgentEvent::Failed(msg) => {
                     agent.blocking_lock().push_error(msg.clone());
                     app.set_error_status(msg);
+                    if app.pin_bottom {
+                        app.scroll_to_bottom();
+                    }
                 }
             }
         }
     }
 
+    terminal.backend_mut().execute(DisableMouseCapture)?;
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;

@@ -22,22 +22,20 @@ pub struct App {
     pub transcript_viewport: u16,
     pub state: RunState,
     pub status: String,
+    /// When true, new output keeps the viewport pinned to the latest messages.
+    pub pin_bottom: bool,
 }
 
 impl App {
     pub fn new(config: AppConfig) -> Self {
         Self {
-            status: format!(
-                "{} · {} · {}",
-                format!("{:?}", config.provider).to_lowercase(),
-                config.model,
-                config.workdir.display()
-            ),
+            status: String::new(),
             config,
             input: String::new(),
             scroll: 0,
             transcript_viewport: 1,
             state: RunState::Ready,
+            pin_bottom: true,
         }
     }
 
@@ -59,10 +57,16 @@ impl App {
 
     pub fn scroll_up(&mut self, n: u16) {
         self.scroll = self.scroll.saturating_add(n);
+        if n > 0 {
+            self.pin_bottom = false;
+        }
     }
 
     pub fn scroll_down(&mut self, n: u16) {
         self.scroll = self.scroll.saturating_sub(n);
+        if self.scroll == 0 {
+            self.pin_bottom = true;
+        }
     }
 
     pub fn scroll_page_up(&mut self) {
@@ -77,10 +81,12 @@ impl App {
 
     pub fn scroll_to_bottom(&mut self) {
         self.scroll = 0;
+        self.pin_bottom = true;
     }
 
     pub fn scroll_to_top(&mut self) {
         self.scroll = u16::MAX;
+        self.pin_bottom = false;
     }
 
     pub fn clamp_scroll(&mut self, max_scroll: u16) {
@@ -91,17 +97,14 @@ impl App {
 
     pub fn set_busy(&mut self) {
         self.state = RunState::Busy;
-        self.status = "thinking…".into();
+        self.status = "waiting for model…".into();
+        self.pin_bottom = true;
+        self.scroll_to_bottom();
     }
 
-    pub fn set_ready(&mut self, config: &AppConfig) {
+    pub fn set_ready(&mut self, _config: &AppConfig) {
         self.state = RunState::Ready;
-        self.status = format!(
-            "{} · {} · {}",
-            format!("{:?}", config.provider).to_lowercase(),
-            config.model,
-            config.workdir.display()
-        );
+        self.status.clear();
     }
 
     pub fn set_error_status(&mut self, msg: String) {

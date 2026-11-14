@@ -1,5 +1,8 @@
 mod app;
+mod highlight;
+mod info;
 mod run;
+mod slash;
 mod ui;
 
 pub use app::{AgentEvent, App, RunState};

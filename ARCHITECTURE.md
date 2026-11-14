@@ -1,13 +1,18 @@
 # Architecture
 
 ```
-main.rs          CLI, Tokio runtime, TUI bootstrap
-config.rs        Provider presets, file + env resolution
-chat.rs          Message / role types for API + UI
-provider.rs      HTTP client → /v1/chat/completions
-tools.rs         Tool schema + local execution
-agent.rs         Tool-call loop
-tui/             Crossterm events + ratatui render
+main.rs              CLI, TUI / ACP bootstrap
+config/              Provider enum, AppConfig::load, file + env keys
+chat.rs              Message / role types for API + UI
+provider.rs          HTTP client → /v1/chat/completions
+tools/               schemas + fs/shell tool execution
+agent.rs             Tool-call loop
+opencode/            JSONC import (paths, profile, assets)
+migrate/             scan (detectors), profile, write
+acp/                 v1/v2 agent server + engine
+tui/                 run loop, app, slash, info
+  highlight/         markdown + syntect + wrap
+  ui/                chrome (header/input/status) + transcript
 ```
 
 ## Provider layer

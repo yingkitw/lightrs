@@ -1,3 +1,5 @@
+mod file;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -5,6 +7,8 @@ use serde::Deserialize;
 
 use crate::cli::ModelFlags;
 use crate::migrate::{self, format_scan_report, infer_provider_from_env, scan_local_tools};
+
+pub use file::config_path;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -47,22 +51,6 @@ impl Provider {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct FileConfig {
-    provider: Option<Provider>,
-    model: Option<String>,
-    base_url: Option<String>,
-    workdir: Option<PathBuf>,
-    keys: Option<FileKeys>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct FileKeys {
-    glm: Option<String>,
-    kimi: Option<String>,
-    minimax: Option<String>,
-}
-
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub provider: Provider,
@@ -77,7 +65,7 @@ impl AppConfig {
         if auto_migrate {
             let _ = migrate::bootstrap_if_needed();
         }
-        let file = load_config_file()?;
+        let file = file::load_config_file()?;
         let provider = flags
             .provider
             .or_else(|| file.as_ref().and_then(|f| f.provider))
@@ -111,7 +99,7 @@ impl AppConfig {
         .or_else(|_| std::env::current_dir())
         .context("resolve working directory")?;
 
-        let api_key = resolve_api_key(flags, file.as_ref(), provider)?;
+        let api_key = file::resolve_api_key(flags, file.as_ref(), provider)?;
 
         Ok(Self {
             provider,
@@ -121,61 +109,6 @@ impl AppConfig {
             workdir,
         })
     }
-}
-
-fn load_config_file() -> Result<Option<FileConfig>> {
-    let path = config_path();
-    if !path.exists() {
-        return Ok(None);
-    }
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?;
-    let cfg: FileConfig = toml::from_str(&text).context("parse config.toml")?;
-    Ok(Some(cfg))
-}
-
-pub fn config_path() -> PathBuf {
-    directories::ProjectDirs::from("", "", "lightrs")
-        .map(|d| d.config_dir().join("config.toml"))
-        .unwrap_or_else(|| PathBuf::from("config.toml"))
-}
-
-fn resolve_api_key(flags: &ModelFlags, file: Option<&FileConfig>, provider: Provider) -> Result<String> {
-    let from_cli = match provider {
-        Provider::Glm => flags.glm_api_key.clone(),
-        Provider::Kimi => flags.kimi_api_key.clone(),
-        Provider::Minimax => flags.minimax_api_key.clone(),
-    };
-
-    let from_file = file.and_then(|f| match provider {
-        Provider::Glm => f.keys.as_ref().and_then(|k| k.glm.clone()),
-        Provider::Kimi => f.keys.as_ref().and_then(|k| k.kimi.clone()),
-        Provider::Minimax => f.keys.as_ref().and_then(|k| k.minimax.clone()),
-    });
-
-    if let Some(k) = from_cli.or(from_file) {
-        return Ok(k);
-    }
-
-    if let Ok(k) = std::env::var(provider.env_var()) {
-        if !k.is_empty() {
-            return Ok(k);
-        }
-    }
-
-    if let Some(alt) = provider.alt_env_var() {
-        if let Ok(k) = std::env::var(alt) {
-            if !k.is_empty() {
-                return Ok(k);
-            }
-        }
-    }
-
-    bail!(
-        "missing API key for {:?}; set {} or pass --*-api-key",
-        provider,
-        provider.env_var()
-    );
 }
 
 pub fn validate_work_path(workdir: &Path, user_path: &Path) -> Result<PathBuf> {

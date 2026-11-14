@@ -49,12 +49,15 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 
 - `Enter` — send message
 - `Esc` — clear input
-- `↑` / `↓` — scroll transcript (line by line)
+- `↑` / `↓` — scroll transcript when input is empty
+- `Ctrl+U` — clear input line
 - `PgUp` / `PgDn` — scroll by screen
 - `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit
-- `/clear` — reset conversation
-- `/cwd` — print working directory
+- `/` — slash commands (not sent to the model); `Tab` completes
+- `/help` — list commands (`/clear`, `/cwd`, `/status`, `/quit`, …)
+- Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
+- Transcript renders **Markdown** (headings, lists, inline `code`) and **syntax-highlights** fenced blocks (Rust, Python, JS/TS, Go, Java, C/C++, SQL, Bash, YAML, JSON, Markdown, etc.) via RGB colors — use a truecolor terminal for best results
 
 The agent can **read/write files**, **list directories**, and **run shell commands** in the current working directory (same scope as you launching the binary).
 

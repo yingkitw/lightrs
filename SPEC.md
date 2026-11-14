@@ -22,8 +22,11 @@
 
 ## User interface
 
-- Scrollable transcript (user, assistant, tool results, errors)
-- Single-line input with wrap; status bar shows provider, model, cwd, state
+- Scrollable transcript (user, assistant, tool results, errors) with Markdown layout and syntect highlighting for fenced code
+- Header: version, provider, model, state, workdir, API context size, API host
+- Startup system message with full session details; `/status` repeats them
+- Single-line input with wrap; status bar shows slash/scroll hints (or busy/errors)
+- Lines starting with `/` are TUI slash commands (`/help`, `/clear`, `/cwd`, `/quit`); not forwarded to the model
 
 ## Agent behavior
 

@@ -3,54 +3,15 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::migrate::profile::{self, ModelProfile};
+use crate::migrate::scan::DetectedTool;
 use crate::opencode;
 
-#[derive(Clone, Debug)]
-pub struct DetectedTool {
-    pub name: &'static str,
-    pub config_path: PathBuf,
-    pub installed: bool,
-    pub profile: Option<ModelProfile>,
-    pub mcp_json: Option<Value>,
-}
-
-pub fn scan_local_tools() -> Vec<DetectedTool> {
-    let mut out = Vec::new();
-    push_opencode(&mut out);
-    push_claude_code(&mut out);
-    push_aider(&mut out);
-    push_pi(&mut out);
-    push_cursor_mcp(&mut out);
-    out.sort_by_key(|t| std::cmp::Reverse(t.profile.is_some()));
-    out
-}
-
-pub fn format_scan_report(tools: &[DetectedTool]) -> String {
-    if tools.is_empty() {
-        return "No known coding-agent configs found on this machine.".into();
-    }
-    let mut lines = vec!["Detected local agent tooling:".to_string()];
-    for t in tools {
-        let model = t
-            .profile
-            .as_ref()
-            .and_then(|p| p.model.as_deref())
-            .unwrap_or("—");
-        let prov = t
-            .profile
-            .as_ref()
-            .and_then(|p| p.provider)
-            .map(|p| format!("{p:?}"))
-            .unwrap_or_else(|| "—".into());
-        lines.push(format!(
-            "  - {} (installed={}): {} · provider={prov} model={model}",
-            t.name,
-            t.installed,
-            t.config_path.display()
-        ));
-    }
-    lines.push("Run `lightrs migrate` to import the highest-priority profile (OpenCode → Claude Code → Aider → Pi).".into());
-    lines.join("\n")
+pub(crate) fn push_all(out: &mut Vec<DetectedTool>) {
+    push_opencode(out);
+    push_claude_code(out);
+    push_aider(out);
+    push_pi(out);
+    push_cursor_mcp(out);
 }
 
 fn push_opencode(out: &mut Vec<DetectedTool>) {
@@ -126,7 +87,11 @@ fn push_aider(out: &mut Vec<DetectedTool>) {
         home.join(".aider.conf"),
         home.join(".aider.model.settings.yml"),
     ];
-    let path = candidates.iter().find(|p| p.is_file()).cloned().unwrap_or(candidates[0].clone());
+    let path = candidates
+        .iter()
+        .find(|p| p.is_file())
+        .cloned()
+        .unwrap_or(candidates[0].clone());
     let installed = has_binary("aider");
     let mut profile = None;
     if path.is_file() {
@@ -181,7 +146,7 @@ fn push_cursor_mcp(out: &mut Vec<DetectedTool>) {
     }
 }
 
-fn parse_aider_config(text: &str, ext: Option<&str>) -> Option<ModelProfile> {
+pub(crate) fn parse_aider_config(text: &str, ext: Option<&str>) -> Option<ModelProfile> {
     let mut p = ModelProfile::default();
     if ext == Some("yml") || ext == Some("yaml") || text.contains("model:") {
         for line in text.lines() {
@@ -235,15 +200,4 @@ fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn aider_yaml_model() {
-        let p = parse_aider_config("model: glm-4.6\n", Some("yml")).unwrap();
-        assert_eq!(p.model.as_deref(), Some("glm-4.6"));
-    }
 }

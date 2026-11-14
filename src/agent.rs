@@ -54,6 +54,11 @@ impl Agent {
         &self.ui_history
     }
 
+    /// Number of messages in the LLM API history (system + turns + tool results).
+    pub fn api_context_len(&self) -> usize {
+        self.api_history.len()
+    }
+
     pub fn push_system(&mut self, content: impl Into<String>) {
         self.ui_history.push(UiMessage {
             role: UiRole::System,
