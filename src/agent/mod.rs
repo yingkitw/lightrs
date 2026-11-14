@@ -16,7 +16,8 @@ use crate::skills::SkillCatalog;
 use crate::tools::ShellPolicy;
 use prompt::system_prompt;
 use tokens::{
-    estimate_context_tokens, estimate_text_tokens, format_token_count, step_usage_line,
+    CONTEXT_WARN_TOKENS, context_pressure_line, estimate_context_tokens, estimate_text_tokens,
+    format_token_count, step_usage_line,
 };
 use helpers::remove_trailing_empty_assistant;
 
@@ -45,6 +46,8 @@ pub struct Agent {
     /// When true, skip `send · ~N ctx` and per-step model usage lines in the UI transcript.
     pub(crate) quiet_token_sys: bool,
     pub(crate) skill_catalog: SkillCatalog,
+    /// Last `estimated_context_tokens` at which a context-pressure `[sys]` was shown.
+    pub(crate) context_warned_above: u32,
 }
 
 impl Agent {
@@ -66,6 +69,7 @@ impl Agent {
             estimated_context_tokens: 0,
             quiet_token_sys: false,
             skill_catalog,
+            context_warned_above: 0,
         };
         agent.refresh_context_estimate();
         agent
@@ -123,6 +127,27 @@ impl Agent {
 
     pub(crate) fn refresh_context_estimate(&mut self) {
         self.estimated_context_tokens = estimate_context_tokens(&self.api_history);
+    }
+
+    /// Show a `[sys]` hint when API history is large (`/quiet` suppresses).
+    pub(crate) fn maybe_context_pressure_sys(&mut self) {
+        if self.quiet_token_sys {
+            return;
+        }
+        let est = self.estimated_context_tokens;
+        if est < CONTEXT_WARN_TOKENS {
+            return;
+        }
+        const REWARN_DELTA: u32 = 4_000;
+        if self.context_warned_above > 0
+            && est < self.context_warned_above.saturating_add(REWARN_DELTA)
+        {
+            return;
+        }
+        if let Some(line) = context_pressure_line(est) {
+            self.context_warned_above = est;
+            self.push_system(line);
+        }
     }
 
     pub fn set_quiet_token_sys(&mut self, quiet: bool) {
@@ -209,6 +234,7 @@ impl Agent {
         ));
         drop(ui);
         self.token_stats = TokenStats::default();
+        self.context_warned_above = 0;
         self.refresh_context_estimate();
     }
 }

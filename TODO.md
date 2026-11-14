@@ -31,6 +31,7 @@
 - [x] `/export` — markdown transcript under workdir (`session/export.rs`)
 - [x] `/export` tests — tool/diff markdown, workdir write, path escape guard
 - [x] Fix `/export` default path — `resolve_work_output_path` (file need not exist pre-write)
+- [x] Tier 1 sibling carry: shell 64 KiB cap, HTTP retry/timeouts, flexible `patch_file`, context pressure `[sys]`
 
 ## Backlog
 

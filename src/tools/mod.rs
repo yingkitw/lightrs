@@ -1,4 +1,5 @@
 mod diff;
+mod edit_match;
 mod fs;
 mod grep;
 mod outcome;
@@ -89,6 +90,20 @@ mod tests {
         assert!(out.file_diff.is_some());
         let text = fs::read_to_string(dir.join("a.txt")).unwrap();
         assert_eq!(text, "alpha\ngamma\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn patch_flexible_indent() {
+        let dir = std::env::temp_dir().join(format!("lightrs-flex-patch-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.rs"), "    fn foo() {\n        bar();\n    }\n").unwrap();
+        let args = r#"{"path":"a.rs","old_string":"fn foo() {\n    bar();\n}\n","new_string":"fn foo() {\n    baz();\n}\n"}"#;
+        let out = execute_tool(&dir, "patch_file", args, &ShellPolicy::default(), false);
+        assert!(out.body.contains("wrote"));
+        let text = fs::read_to_string(dir.join("a.rs")).unwrap();
+        assert!(text.contains("baz();"));
         let _ = fs::remove_dir_all(&dir);
     }
 

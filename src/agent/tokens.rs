@@ -1,5 +1,8 @@
 use crate::chat::{ApiMessage, TokenUsage};
 
+/// Rough context size above which the TUI shows a `[sys]` pressure hint (~80k chars).
+pub const CONTEXT_WARN_TOKENS: u32 = 20_000;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TokenStats {
     pub last_prompt: u32,
@@ -87,6 +90,16 @@ pub fn format_token_count(n: u64) -> String {
     }
 }
 
+pub fn context_pressure_line(estimate: u32) -> Option<String> {
+    if estimate < CONTEXT_WARN_TOKENS {
+        return None;
+    }
+    Some(format!(
+        "context · ~{} est — large history; try /clear",
+        format_token_count(u64::from(estimate))
+    ))
+}
+
 pub fn context_usage_text(summary: TokenSummary, api_messages: usize) -> String {
     let TokenSummary { stats, estimate } = summary;
     let mut parts = vec![
@@ -117,6 +130,12 @@ mod tests {
     fn estimate_from_text() {
         let msgs = vec![ApiMessage::user("a".repeat(400))];
         assert!(estimate_context_tokens(&msgs) >= 100);
+    }
+
+    #[test]
+    fn context_pressure_threshold() {
+        assert!(context_pressure_line(CONTEXT_WARN_TOKENS).is_some());
+        assert!(context_pressure_line(CONTEXT_WARN_TOKENS - 1).is_none());
     }
 
     #[test]

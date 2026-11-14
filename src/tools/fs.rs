@@ -6,6 +6,7 @@ use serde::Deserialize;
 use crate::chat::FileDiffUi;
 use crate::config::{resolve_work_output_path, validate_work_path};
 use crate::tools::diff::build_file_diff;
+use crate::tools::edit_match;
 
 #[derive(Deserialize)]
 pub struct ReadFileArgs {
@@ -58,19 +59,24 @@ pub fn patch_file(workdir: &Path, args: PatchFileArgs) -> Result<WriteFileOutcom
     let prior = std::fs::read_to_string(&path)
         .with_context(|| format!("read {} for patch", path.display()))?;
     let matches = prior.matches(&args.old_string).count();
-    if matches == 0 {
-        anyhow::bail!("old_string not found in {}", args.path);
-    }
-    if !args.replace_all && matches > 1 {
+    let content = if args.replace_all {
+        if matches == 0 {
+            anyhow::bail!("old_string not found in {}", args.path);
+        }
+        prior.replace(&args.old_string, &args.new_string)
+    } else if matches > 1 {
         anyhow::bail!(
             "old_string matched {matches} times in {}; make the snippet unique or set replace_all",
             args.path
         );
-    }
-    let content = if args.replace_all {
-        prior.replace(&args.old_string, &args.new_string)
-    } else {
+    } else if matches == 1 {
         prior.replacen(&args.old_string, &args.new_string, 1)
+    } else if let Some(patched) =
+        edit_match::replace_once(&prior, &args.old_string, &args.new_string)
+    {
+        patched
+    } else {
+        anyhow::bail!("old_string not found in {}", args.path);
     };
     commit_write(&path, &args.path, Some(prior.as_str()), &content)
 }

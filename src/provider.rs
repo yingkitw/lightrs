@@ -1,12 +1,14 @@
+pub mod http;
 pub mod stream;
 
 use anyhow::{Context, Result, bail};
 use tokio::sync::watch;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
+pub use http::build_http_client;
 pub use stream::{StreamAccumulator, StreamApply, post_chat_stream, replay_sse_body};
 
 use crate::chat::{ApiErrorBody, ChatRequest, ChatResponse};
+use http::{HttpRetryOptions, auth_headers, post_json_with_retry};
 
 #[derive(Clone)]
 pub struct LlmClient {
@@ -19,7 +21,7 @@ pub struct LlmClient {
 impl LlmClient {
     pub fn new(base_url: String, api_key: String, model: String) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: build_http_client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
             model,
@@ -32,22 +34,17 @@ impl LlmClient {
 
     pub async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         let url = format!("{}/chat/completions", self.base_url);
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", self.api_key))
-                .context("invalid api key header")?,
-        );
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let headers = auth_headers(&self.api_key)?;
 
-        let response = self
-            .http
-            .post(url)
-            .headers(headers)
-            .json(&request)
-            .send()
-            .await
-            .context("http request")?;
+        let response = post_json_with_retry(
+            &self.http,
+            &url,
+            headers,
+            &request,
+            HttpRetryOptions::default(),
+        )
+        .await
+        .context("http request")?;
 
         let status = response.status();
         let body = response.text().await.context("read response body")?;

@@ -36,7 +36,7 @@ pub fn tool_schemas() -> Vec<serde_json::Value> {
             "type": "function",
             "function": {
                 "name": "patch_file",
-                "description": "Replace exact text in an existing file (search/replace). Fails if old_string is missing or matches more than once unless replace_all is true.",
+                "description": "Replace text in an existing file (search/replace). Tries exact match, then whitespace-tolerant match for a single occurrence. Fails if old_string is missing or matches more than once unless replace_all is true (replace_all requires exact matches).",
                 "parameters": {
                     "type": "object",
                     "properties": {

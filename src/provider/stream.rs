@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
-use tokio::sync::watch;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Deserialize;
+use tokio::sync::watch;
 
+use super::http::{HttpRetryOptions, auth_headers, post_json_with_retry};
 use crate::chat::{
     ApiMessage, ApiRole, ChatRequest, FunctionCall, TokenUsage, ToolCall,
 };
@@ -179,20 +179,17 @@ pub async fn post_chat_stream(
 ) -> Result<StreamAccumulator> {
     request.stream = Some(true);
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {api_key}")).context("invalid api key header")?,
-    );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    let headers = auth_headers(api_key)?;
 
-    let mut response = http
-        .post(url)
-        .headers(headers)
-        .json(&request)
-        .send()
-        .await
-        .context("http request")?;
+    let mut response = post_json_with_retry(
+        http,
+        &url,
+        headers,
+        &request,
+        HttpRetryOptions::default(),
+    )
+    .await
+    .context("http request")?;
 
     let status = response.status();
     if !status.is_success() {

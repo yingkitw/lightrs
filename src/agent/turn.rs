@@ -26,6 +26,7 @@ impl Agent {
         self.api_history.push(ApiMessage::user(api_text.clone()));
         self.record_send_estimate(&api_text);
         self.refresh_context_estimate();
+        self.maybe_context_pressure_sys();
     }
 
     pub async fn run_user_turn(&mut self, user_text: String) -> Result<String> {
@@ -190,6 +191,7 @@ impl Agent {
         super::tokens::apply_usage(&mut self.token_stats, usage);
         self.refresh_context_estimate();
         self.record_model_usage(usage);
+        self.maybe_context_pressure_sys();
         if matches!(finish_reason, Some("length" | "max_tokens")) {
             self.push_system("Model stopped: output length limit.");
         }

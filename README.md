@@ -69,7 +69,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** ASCII, collapsible **tool** rows (mouse or `o`), unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
 - Mouse wheel scrolls the transcript; left-click a tool block to expand/collapse
 
-The agent can **read/write/patch files**, **`grep`** (literal search in tree), **list directories**, and **run shell commands** under the configured working directory (same privilege as your user).
+The agent can **read/write/patch files** (patch tolerates minor whitespace drift), **`grep`** (literal search in tree), **list directories**, and **run shell commands** (64 KiB output cap per stream) under the configured working directory (same privilege as your user).
 
 ### ACP (Agent Client Protocol)
 
