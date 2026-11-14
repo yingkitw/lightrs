@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+.env
+.idea
+.DS_Store
+
+# Agent-local docs (not shipped with the repo)
+AGENTS.md
+MEMORY.md

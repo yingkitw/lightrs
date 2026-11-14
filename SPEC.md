@@ -1,0 +1,28 @@
+# Specification
+
+## Goals
+
+- Terminal UI coding assistant with low footprint and fast startup
+- Pluggable backends: GLM, Kimi, MiniMax via OpenAI Chat Completions + tools
+- Safe-by-scope: tools only affect configured working directory
+
+## Non-goals (v0.1)
+
+- MCP, LSP, ripgrep embedding, multi-agent orchestration
+- Streaming tokens in the TUI (may add later)
+- Sandboxed containers for shell execution
+
+## User interface
+
+- Scrollable transcript (user, assistant, tool results, errors)
+- Single-line input with wrap; status bar shows provider, model, cwd, state
+
+## Agent behavior
+
+- System prompt: concise coding helper; must use tools for filesystem/shell facts
+- Loop: user message → model → (optional) tool calls → tool results → model until text reply or step cap (16)
+- Tools: `read_file`, `write_file`, `list_dir`, `run_command`
+
+## Configuration
+
+Priority: CLI > environment > config file > defaults.

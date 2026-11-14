@@ -1,0 +1,11 @@
+# Copy to ~/.config/lightrs/config.toml
+
+provider = "kimi"           # glm | kimi | minimax
+model = ""                  # empty = provider default
+base_url = ""               # empty = built-in default
+workdir = "."               # agent file/shell scope
+
+[keys]
+# glm = "..."
+# kimi = "..."
+# minimax = "..."
