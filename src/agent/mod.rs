@@ -74,7 +74,8 @@ impl Agent {
     pub fn restore_session(&mut self, saved: SessionFile) {
         self.api_history = saved.api_history;
         self.ensure_system_prompt();
-        *self.ui_history.lock().unwrap() = saved.ui_history;
+        *self.ui_history.lock().unwrap() =
+            crate::session::conversation_ui_history(saved.ui_history);
         self.token_stats = saved.token_stats;
         self.refresh_context_estimate();
     }

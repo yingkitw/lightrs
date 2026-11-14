@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{Agent, TokenStats};
-use crate::chat::{ApiMessage, UiMessage};
+use crate::chat::{ApiMessage, UiMessage, UiRole};
 use crate::paths::lightrs_sessions_dir;
 
 const FORMAT_VERSION: u32 = 1;
@@ -71,13 +71,20 @@ pub fn save(agent: &Agent, workdir: &Path) -> Result<()> {
             .canonicalize()
             .unwrap_or_else(|_| workdir.to_path_buf()),
         api_history: agent.export_api_history(),
-        ui_history: agent.export_ui_history(),
+        ui_history: conversation_ui_history(agent.export_ui_history()),
         token_stats: agent.token_summary().stats,
     };
     let path = session_path(workdir);
     let json = serde_json::to_string_pretty(&file).context("serialize session")?;
     fs::write(&path, json).with_context(|| format!("write {}", path.display()))?;
     Ok(())
+}
+
+/// UI messages that belong in a resumed chat (excludes ephemeral `[sys]` lines).
+pub fn conversation_ui_history(ui: Vec<UiMessage>) -> Vec<UiMessage> {
+    ui.into_iter()
+        .filter(|m| m.role != UiRole::System)
+        .collect()
 }
 
 pub fn remove(workdir: &Path) -> Result<()> {
@@ -98,6 +105,18 @@ mod tests {
         let a = session_path(Path::new("/tmp/myproject"));
         let b = session_path(Path::new("/tmp/myproject"));
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn conversation_ui_omits_system() {
+        let ui = vec![
+            UiMessage::with_role(UiRole::User, "hi"),
+            UiMessage::with_role(UiRole::System, "send · ~1k ctx"),
+            UiMessage::with_role(UiRole::Assistant, "hello"),
+        ];
+        let kept = conversation_ui_history(ui);
+        assert_eq!(kept.len(), 2);
+        assert!(kept.iter().all(|m| m.role != UiRole::System));
     }
 
     #[test]
