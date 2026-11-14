@@ -22,7 +22,7 @@ impl Agent {
             .lock()
             .unwrap()
             .push(UiMessage::with_role(UiRole::User, user_text.clone()));
-        let api_text = crate::mentions::api_user_content(&self.workdir, &user_text);
+        let api_text = crate::skills::api_user_content(&self.workdir, &user_text, &self.skill_catalog);
         self.api_history.push(ApiMessage::user(api_text.clone()));
         self.record_send_estimate(&api_text);
         self.refresh_context_estimate();

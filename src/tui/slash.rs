@@ -13,6 +13,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("context", "message count and token usage"),
     ("reload", "re-read config.toml [shell] policy"),
     ("quiet", "toggle per-step token sys lines"),
+    ("skills", "list discovered agent skills"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,10 +133,40 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             ));
             SlashAction::Handled
         }
+        "skills" => {
+            app.refresh_skill_catalog(agent);
+            let n = agent.skill_catalog().skills.len();
+            if n == 0 {
+                agent.push_system(
+                    "No skills found. Paths: ~/.config/lightrs/skills, ~/.cursor/skills, ~/.claude/skills, ~/.agents/skills, ~/.pi/agent/skills, ~/.codex/skills — or `lightrs import opencode`.",
+                );
+            } else {
+                let mut lines: Vec<String> = agent
+                    .skill_catalog()
+                    .skills
+                    .iter()
+                    .map(|s| format!("  ${} — {}", s.id, s.description))
+                    .collect();
+                lines.truncate(24);
+                let extra = if agent.skill_catalog().skills.len() > 24 {
+                    "\n  … (use /skills after adding more)"
+                } else {
+                    ""
+                };
+                agent.push_system(format!(
+                    "{n} skill(s). Invoke with $id on your message:\n{}{extra}",
+                    lines.join("\n")
+                ));
+            }
+            SlashAction::Handled
+        }
         "reload" => match app.config.reload_shell_from_file() {
             Ok(msg) => {
                 agent.set_shell_policy(app.config.shell_policy.clone());
-                agent.push_system(format!("{msg}\n(model/provider/base URL still need restart)"));
+                app.refresh_skill_catalog(agent);
+                agent.push_system(format!(
+                    "{msg}\n(model/provider/base URL still need restart; skills rescanned)"
+                ));
                 SlashAction::Handled
             }
             Err(e) => {

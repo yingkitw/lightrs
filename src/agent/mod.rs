@@ -12,6 +12,7 @@ pub use tokens::{TokenStats, TokenSummary, context_usage_text};
 use crate::chat::{ApiMessage, ApiRole, TokenUsage, UiMessage, UiRole};
 use crate::session::SessionFile;
 use crate::provider::LlmClient;
+use crate::skills::SkillCatalog;
 use crate::tools::ShellPolicy;
 use prompt::system_prompt;
 use tokens::{
@@ -43,12 +44,18 @@ pub struct Agent {
     pub(crate) estimated_context_tokens: u32,
     /// When true, skip `send · ~N ctx` and per-step model usage lines in the UI transcript.
     pub(crate) quiet_token_sys: bool,
+    pub(crate) skill_catalog: SkillCatalog,
 }
 
 impl Agent {
     pub fn new(client: LlmClient, workdir: Arc<Path>, shell_policy: ShellPolicy) -> Self {
         let mut api_history = Vec::new();
-        api_history.push(ApiMessage::system(system_prompt(&workdir, &shell_policy)));
+        let skill_catalog = SkillCatalog::default();
+        api_history.push(ApiMessage::system(system_prompt(
+            &workdir,
+            &shell_policy,
+            &skill_catalog,
+        )));
         let mut agent = Self {
             client,
             workdir,
@@ -58,6 +65,7 @@ impl Agent {
             token_stats: TokenStats::default(),
             estimated_context_tokens: 0,
             quiet_token_sys: false,
+            skill_catalog,
         };
         agent.refresh_context_estimate();
         agent
@@ -94,7 +102,11 @@ impl Agent {
     }
 
     fn ensure_system_prompt(&mut self) {
-        let prompt = ApiMessage::system(system_prompt(&self.workdir, &self.shell_policy));
+        let prompt = ApiMessage::system(system_prompt(
+            &self.workdir,
+            &self.shell_policy,
+            &self.skill_catalog,
+        ));
         match self.api_history.first_mut() {
             Some(first) if matches!(first.role, ApiRole::System) => *first = prompt,
             _ => self.api_history.insert(0, prompt),
@@ -172,10 +184,22 @@ impl Agent {
         self.ensure_system_prompt();
     }
 
+    pub fn set_skill_catalog(&mut self, catalog: SkillCatalog) {
+        self.skill_catalog = catalog;
+        self.ensure_system_prompt();
+    }
+
+    pub fn skill_catalog(&self) -> &SkillCatalog {
+        &self.skill_catalog
+    }
+
     pub fn clear_conversation(&mut self) {
         self.api_history.clear();
-        self.api_history
-            .push(ApiMessage::system(system_prompt(&self.workdir, &self.shell_policy)));
+        self.api_history.push(ApiMessage::system(system_prompt(
+            &self.workdir,
+            &self.shell_policy,
+            &self.skill_catalog,
+        )));
         let mut ui = self.ui_history.lock().unwrap();
         ui.clear();
         ui.push(UiMessage::with_role(

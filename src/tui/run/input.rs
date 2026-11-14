@@ -6,6 +6,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::agent::Agent;
 use crate::session;
+use crate::skills::tab_complete_skill;
 use crate::tui::mentions::tab_complete_mention;
 use crate::tui::slash::{SlashAction, is_slash_input, run_slash, tab_complete};
 use crate::tui::{App, RunState};
@@ -133,6 +134,10 @@ fn handle_key(
                 return Ok(InputAction::Continue);
             }
             app.maybe_reload_shell(agent);
+            {
+                let mut guard = agent.blocking_lock();
+                app.refresh_skill_catalog(&mut guard);
+            }
             app.composer.commit(line.clone());
             app.set_busy();
             let _ = kick_tx.send(line);
@@ -145,6 +150,8 @@ fn handle_key(
         KeyCode::Tab if app.state == RunState::Ready => {
             let wd = app.workdir();
             if let Some(completed) = tab_complete_mention(&app.input, wd) {
+                app.input = completed;
+            } else if let Some(completed) = tab_complete_skill(&app.input, &app.skill_catalog) {
                 app.input = completed;
             } else if let Some(completed) = tab_complete(&app.input) {
                 app.input = completed;

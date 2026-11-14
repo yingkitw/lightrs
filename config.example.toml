@@ -14,3 +14,8 @@ workdir = "."               # agent file/shell scope
 # [shell]
 # allowlist = ["cargo ", "git ", "rustc ", "ls", "pwd"]  # empty = allow all prefixes
 # require_approval = true   # prompt y/n for every run_command (in addition to allowlist blocks)
+
+# Optional: agent skills (SKILL.md trees from OpenCode/Cursor/Claude/pi/Codex)
+# [skills]
+# enabled = true
+# paths = ["/extra/skill/root"]

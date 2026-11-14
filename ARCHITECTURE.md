@@ -10,6 +10,8 @@ paths.rs                ~/.config/lightrs paths (no directories crate)
 provider.rs             HTTP client
 provider/stream.rs      SSE reassembly for streaming + tool_calls
 agent/                  mod, turn, approval, prompt, helpers, tokens — tool loop (max 16)
+skills/                 SKILL.md discovery + rules; `$id` attach + system catalog
+mentions.rs             @file attach for API user messages (workdir-scoped)
 tools/                  schemas, fs/shell, diff (similar), ToolOutcome
 opencode/, migrate/    Import + auto-migrate scanners
 acp/                    Optional ACP v1/v2 server (feature `acp`)

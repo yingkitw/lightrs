@@ -8,6 +8,7 @@ use crate::agent::{Agent, context_usage_text};
 use crate::tui::app::{App, RunState};
 use crate::tui::theme::{self, palette};
 use crate::tui::info::{header_compact, header_lines};
+use crate::skills::skill_hint;
 use crate::tui::mentions::mention_hint;
 use crate::tui::slash::{is_slash_input, slash_command_hint};
 
@@ -61,7 +62,7 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
         Line::from(Span::styled(&ap.command, theme::busy()))
     } else if app.input.is_empty() && app.state == RunState::Ready {
         Line::from(vec![Span::styled(
-            "Message…  Enter send · @ file · Tab complete · Ctrl+P history · / commands",
+            "Message…  Enter send · @ file · $ skill · Tab · / commands",
             theme::hint(),
         )])
     } else {
@@ -103,6 +104,8 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
             slash
         } else if let Some(mention) = mention_hint(&app.input, app.workdir()) {
             mention
+        } else if let Some(skill) = skill_hint(&app.input, &app.skill_catalog) {
+            skill
         } else if !app.input.is_empty() {
             "Enter send · Esc clear · Ctrl+U clear".into()
         } else {

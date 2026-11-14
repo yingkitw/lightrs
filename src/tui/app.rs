@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::agent::Agent;
 use crate::config::{self, AppConfig};
+use crate::skills::{SkillCatalog, load, load_settings};
 use crate::tui::composer::Composer;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +58,7 @@ pub struct App {
     pub pending_approval: Option<CommandApproval>,
     /// Detect `config.toml` changes for auto `[shell]` reload before each send.
     config_mtime: Option<SystemTime>,
+    pub skill_catalog: SkillCatalog,
 }
 
 impl App {
@@ -78,7 +80,15 @@ impl App {
             tool_hit_spans: Vec::new(),
             pending_approval: None,
             config_mtime: None,
+            skill_catalog: SkillCatalog::default(),
         }
+    }
+
+    pub fn refresh_skill_catalog(&mut self, agent: &mut Agent) {
+        let settings = load_settings();
+        let catalog = load(&settings);
+        self.skill_catalog = catalog.clone();
+        agent.set_skill_catalog(catalog);
     }
 
     pub fn refresh_config_mtime(&mut self) {

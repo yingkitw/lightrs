@@ -1,8 +1,9 @@
 use std::path::Path;
 
+use crate::skills::{SkillCatalog, system_appendix};
 use crate::tools::ShellPolicy;
 
-pub(crate) fn system_prompt(workdir: &Path, shell: &ShellPolicy) -> String {
+pub(crate) fn system_prompt(workdir: &Path, shell: &ShellPolicy, skills: &SkillCatalog) -> String {
     let mut text = format!(
         "lightrs agent. Workdir: {}. Use tools; do not invent file contents. Prefer patch_file for small edits; brief replies.",
         workdir.display()
@@ -13,5 +14,6 @@ pub(crate) fn system_prompt(workdir: &Path, shell: &ShellPolicy) -> String {
     if shell.requires_all_commands_approved() {
         text.push_str(" User approves shell commands in TUI.");
     }
+    text.push_str(&system_appendix(skills));
     text
 }

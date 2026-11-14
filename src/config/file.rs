@@ -15,6 +15,19 @@ pub(crate) struct FileConfig {
     pub workdir: Option<PathBuf>,
     pub keys: Option<FileKeys>,
     pub shell: Option<FileShell>,
+    pub skills: Option<FileSkills>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct FileSkills {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub paths: Vec<PathBuf>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Default, Deserialize)]

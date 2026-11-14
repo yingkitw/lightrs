@@ -28,6 +28,7 @@
 - [x] Auto-reload `[shell]` when `config.toml` mtime changes (before send; `/reload` still manual)
 - [x] GFM table headers in markdown transcript (pulldown `TableHead` cells; bold header row)
 - [x] `/quiet` — hide per-step token `[sys]` lines (header + `/context` unchanged)
+- [x] Agent skills — discover SKILL.md (OpenCode/Cursor/Claude/pi/Codex), system catalog, `$id` attach, `/skills`
 
 ## Backlog
 
@@ -39,7 +40,7 @@
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 52 tests; fixtures + shell gate async test |
+| Correctness & coverage | 5 | 56 tests; skills + fixtures |
 | Agent reliability | 4 | Step cap, interrupt, headless shell policy |
 | UX (TUI) | 5 | Tools, diff, markdown, @mentions, approvals |
 | Maintainability | 5 | `agent/`, `tui/run/`, shared tool path |

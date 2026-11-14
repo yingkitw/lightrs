@@ -10,6 +10,7 @@ pub mod opencode;
 pub mod paths;
 pub mod provider;
 pub mod session;
+pub mod skills;
 pub mod tools;
 pub mod tui;
 

@@ -39,6 +39,8 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     } else {
         false
     };
+    let catalog = crate::skills::load(&crate::skills::load_settings());
+    agent_inner.set_skill_catalog(catalog.clone());
     let agent = Arc::new(tokio::sync::Mutex::new(agent_inner));
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -89,6 +91,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     terminal.backend_mut().execute(EnableMouseCapture)?;
 
     let mut app = App::new(cfg.clone());
+    app.skill_catalog = catalog;
     app.refresh_config_mtime();
     {
         let mut guard = agent.blocking_lock();

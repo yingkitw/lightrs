@@ -84,6 +84,13 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **GFM tables (pulldown-cmark 0.13)**: header cells live under `Tag::TableHead` **without** `TableRow` — collect row on `End(TableHead)`; body rows still use `TableRow`. Alignment rows filtered in `is_alignment_row`. Header rows rendered bold.
 - `pad_display_cell`: truncate only when `n > width` (not `>=`) so exact-width cells don’t get ellipsized.
 
+## Skills (2026-11-14)
+
+- `skills/mod.rs`: roots = `~/.config/lightrs/skills`, `~/.cursor/skills`, `~/.cursor/skills-cursor`, `~/.claude/skills`, `~/.agents/skills`, `~/.pi/agent/skills`, `~/.codex/skills` + `[skills].paths`.
+- OpenCode `lightrs import opencode` still links into `~/.config/lightrs/skills`; runtime scan picks them up without restart.
+- System prompt: compact skill catalog + `rules/*.md` (skip `INDEX.md`). User invokes with `$skill-id`; API message gets `[skills]` blocks + existing `@` attachments (`skills::api_user_content` wraps `mentions::api_user_content`).
+- Rescan on send, `/reload`, `/skills` via `App::refresh_skill_catalog`.
+
 ## Token UX (2026-11-14)
 
 - Per-turn `[sys]` lines: `send · ~N ctx` and model in/out from `agent/turn.rs` via `record_send_estimate` / `record_model_usage`.

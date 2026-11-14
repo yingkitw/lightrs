@@ -164,6 +164,16 @@ mod tests {
     }
 }
 
+/// `[skills]` from config file (defaults: enabled, no extra paths).
+pub fn skills_settings() -> (bool, Vec<PathBuf>) {
+    let file = file::load_config_file().ok().flatten();
+    let sec = file.as_ref().and_then(|f| f.skills.as_ref());
+    (
+        sec.map(|s| s.enabled).unwrap_or(true),
+        sec.map(|s| s.paths.clone()).unwrap_or_default(),
+    )
+}
+
 pub fn validate_work_path(workdir: &Path, user_path: &Path) -> Result<PathBuf> {
     let joined = if user_path.is_absolute() {
         user_path.to_path_buf()

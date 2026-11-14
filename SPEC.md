@@ -61,6 +61,7 @@
 | `/context` | Message count + token usage |
 | `/reload` | Re-read `config.toml` `[shell]` (allowlist, `require_approval`); refresh agent system prompt |
 | `/quiet` | Toggle per-step `[sys]` token lines (`send · ~N ctx`, model in/out); header + `/context` unchanged |
+| `/skills` | List discovered skills (`$id` to invoke on send) |
 | `/quit` | Exit (same as `q` when idle) |
 
 `Tab` completes unique slash prefix.
@@ -75,6 +76,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - Loop: user message → model → (optional) tool calls → tool results → model until text reply or step cap (**16**)
 - **Streaming**: assistant text appended live when supported; tool calls assembled from stream deltas before execution
 - Tools: `read_file`, `write_file`, `patch_file`, `list_dir`, `run_command` (schemas in `tools/schemas.rs`)
+- **Skills**: `skills/mod.rs` scans `SKILL.md` directories (OpenCode import tree, Cursor, Claude Code, pi, Codex, optional `[skills].paths`). Catalog appended to system prompt; `$skill-id` in the user message attaches skill body to the API payload (UI unchanged). `@path` file attach unchanged (`mentions.rs`). Rules from `~/.config/lightrs/rules/*.md` merge into system prompt.
 
 ## Configuration
 
@@ -97,3 +99,13 @@ require_approval = true
 ```
 
 When `require_approval` is true, the TUI prompts **y/n** before every `run_command`. When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command string and other keys are ignored. **ACP / headless** runs without a TUI return an error to the model when approval would be required (fail closed).
+
+### Skills
+
+```toml
+[skills]
+enabled = true
+paths = []   # extra roots with skill subdirs or SKILL.md
+```
+
+Disabled when `enabled = false`. Catalog and rules refresh on each send and on `/reload` / `/skills`.
