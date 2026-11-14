@@ -1,4 +1,10 @@
 //! Recorded OpenAI-shaped HTTP bodies (fixtures under `tests/fixtures/`).
+//!
+//! **Adding an SSE stream fixture** (manual; CI stays offline):
+//! 1. Capture the raw `data: {…}` SSE body from a provider streaming `chat/completions` response.
+//! 2. Save it as `tests/fixtures/stream_<provider>_<case>.sse` (keep `[DONE]` if present).
+//! 3. Add a test that calls `replay_sse_body` and asserts tool names, `delta.tool_calls`, or final text.
+//!    Mirror existing Kimi/GLM/MiniMax tests in this file.
 
 use std::path::Path;
 

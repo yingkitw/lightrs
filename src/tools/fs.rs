@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::chat::FileDiffUi;
-use crate::config::validate_work_path;
+use crate::config::{resolve_work_output_path, validate_work_path};
 use crate::tools::diff::build_file_diff;
 
 #[derive(Deserialize)]
@@ -82,16 +82,12 @@ pub fn write_file(workdir: &Path, args: WriteFileArgs) -> Result<WriteFileOutcom
 }
 
 fn resolve_write_path(workdir: &Path, rel: &str) -> Result<std::path::PathBuf> {
-    if Path::new(rel).is_absolute() {
-        Ok(validate_work_path(workdir, Path::new(rel))?)
-    } else {
-        let target = workdir.join(rel);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create dirs for {}", target.display()))?;
-        }
-        Ok(target)
+    let path = resolve_work_output_path(workdir, Path::new(rel))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create dirs for {}", path.display()))?;
     }
+    Ok(path)
 }
 
 fn commit_write(

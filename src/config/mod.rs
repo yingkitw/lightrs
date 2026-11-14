@@ -174,6 +174,7 @@ pub fn skills_settings() -> (bool, Vec<PathBuf>) {
     )
 }
 
+/// Resolve a path for reading or listing (target must exist on disk).
 pub fn validate_work_path(workdir: &Path, user_path: &Path) -> Result<PathBuf> {
     let joined = if user_path.is_absolute() {
         user_path.to_path_buf()
@@ -190,4 +191,73 @@ pub fn validate_work_path(workdir: &Path, user_path: &Path) -> Result<PathBuf> {
         bail!("path escapes workdir: {}", user_path.display());
     }
     Ok(canonical)
+}
+
+/// Resolve a path for writing a new file (target may not exist yet).
+pub fn resolve_work_output_path(workdir: &Path, user_path: &Path) -> Result<PathBuf> {
+    if user_path.is_absolute() {
+        return validate_work_path(workdir, user_path);
+    }
+    use std::path::Component;
+    let mut acc = workdir.to_path_buf();
+    let mut depth = 0usize;
+    for comp in user_path.components() {
+        match comp {
+            Component::ParentDir => {
+                if depth == 0 {
+                    bail!("path escapes workdir: {}", user_path.display());
+                }
+                depth -= 1;
+                acc.pop();
+            }
+            Component::Normal(c) => {
+                depth += 1;
+                acc.push(c);
+            }
+            Component::CurDir => {}
+            _ => bail!("invalid path: {}", user_path.display()),
+        }
+    }
+    if acc.exists() {
+        let work = workdir
+            .canonicalize()
+            .unwrap_or_else(|_| workdir.to_path_buf());
+        let canon = acc
+            .canonicalize()
+            .with_context(|| format!("path {}", acc.display()))?;
+        if !canon.starts_with(&work) {
+            bail!("path escapes workdir: {}", user_path.display());
+        }
+        return Ok(canon);
+    }
+    Ok(acc)
+}
+
+#[cfg(test)]
+mod path_tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn resolve_output_allows_new_file() {
+        let dir = std::env::temp_dir().join(format!("lightrs-path-out-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = resolve_work_output_path(&dir, Path::new("out/new.md")).unwrap();
+        assert_eq!(path, dir.join("out/new.md"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_output_rejects_parent_escape() {
+        let dir = std::env::temp_dir().join(format!("lightrs-path-esc-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let err = resolve_work_output_path(&dir, Path::new("../escape.md"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("escapes workdir"));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

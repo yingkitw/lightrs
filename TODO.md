@@ -29,6 +29,8 @@
 - [x] Optional `syntect` feature — plain code fences when off (`Cargo.toml` `syntect`)
 - [x] GitHub CI — full tests + `cargo test --no-default-features --lib` (`.github/workflows/ci.yml`)
 - [x] `/export` — markdown transcript under workdir (`session/export.rs`)
+- [x] `/export` tests — tool/diff markdown, workdir write, path escape guard
+- [x] Fix `/export` default path — `resolve_work_output_path` (file need not exist pre-write)
 
 ## Backlog
 
@@ -38,11 +40,17 @@
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 66 tests; CI + `/export` + session split |
+| Correctness & coverage | 5 | 71 tests; CI + export path fix + SSE fixture playbook |
 | Agent reliability | 4 | Step cap, interrupt, headless shell policy |
 | UX (TUI) | 5 | Tools, diff, markdown, skills, approvals, sys layout |
 | Maintainability | 5 | `agent/`, `tui/run/`, `skills/`, shared tool path |
 | Docs alignment | 5 | `docs_sync` + root MDs audited to code |
 | Footprint | 4 | `--no-default-features` drops ACP + syntect; syntax highlighting optional |
 
-**Weakest next:** record live provider SSE into fixtures (optional) or MCP wiring.
+**Weakest next:** MCP wiring (out of v0.1 scope) or optional live SSE capture into `tests/fixtures/`.
+
+## Brainstorm (unprioritized)
+
+- Clippy cleanup batch (27 lib warnings; not CI-blocking yet)
+- Release binary size badge in CI (`--no-default-features` vs default)
+- Headless `lightrs chat` one-shot for scripting (no TUI)

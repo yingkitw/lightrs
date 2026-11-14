@@ -28,7 +28,8 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 ## Tools & security
 
-- Paths must stay under `workdir` after `canonicalize` (`config::validate_work_path`).
+- Paths must stay under `workdir` after `canonicalize` (`config::validate_work_path` for reads).
+- New files / `/export`: `config::resolve_work_output_path` (no pre-existing file; rejects `..` walks).
 - `run_command` uses `sh -c` with timeout (default 120s, max 600s).
 - `read_file` default cap 64 KiB (max 512 KiB per request).
 - Optional `[shell].allowlist` in config → `ShellPolicy` prefix match on `run_command` (empty list = allow all). Not a substitute for OS sandboxing; blocks obvious out-of-policy commands.
@@ -114,6 +115,12 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 ## Export (2026-11-14)
 
 - `/export` [path] → `session::export_ui_markdown`; default `lightrs-transcript.md` under workdir; `[sys]` omitted (same as session save filter).
+- `session/export.rs` tests: markdown tool/diff sections; disk write; `validate_work_path` rejects `..` escapes (same sandbox as file tools).
+
+## Provider SSE fixtures (2026-11-14)
+
+- Offline replay via `provider::replay_sse_body` in `tests/provider_fixtures.rs` + `tests/fixtures/*.sse`.
+- To extend: save provider SSE verbatim, add a focused `replay_sse_body` assertion test (see module doc on `provider_fixtures.rs`).
 
 ## Session UI (2026-11-14)
 
