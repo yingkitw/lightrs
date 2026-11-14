@@ -11,7 +11,8 @@ opencode/            JSONC import (paths, profile, assets)
 migrate/             scan (detectors), profile, write
 acp/                 v1/v2 agent server + engine
 tui/                 run loop, app, slash, info
-  highlight/         markdown + syntect + wrap
+  highlight/         markdown + wrap
+  paths.rs           `~/.config/<app>` without extra crates
   ui/                chrome (header/input/status) + transcript
 ```
 
@@ -38,7 +39,7 @@ URLs omit trailing slashes; paths are joined as `{base}/chat/completions`.
 
 Like [Codex `codex-rs/tui`](https://github.com/openai/codex/tree/main/codex-rs/tui), lightrs stays on **ratatui + crossterm** (not a custom diff renderer):
 
-- **Chat surface**: markdown transcript + syntax-highlighted fences (`tui/highlight/`)
+- **Chat surface**: markdown transcript + styled code fences (`tui/highlight/`)
 - **Composer**: multi-line input, **Ctrl+P/N** prompt history (`tui/composer.rs`)
 - **Turn lifecycle**: busy spinner, **Esc / Ctrl+C** interrupts in-flight streams (`watch` cancel)
 - **Slash commands**: local dispatch (`tui/slash.rs`), not sent to the model

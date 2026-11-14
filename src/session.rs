@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::{Agent, TokenStats};
 use crate::chat::{ApiMessage, UiMessage};
-use crate::config::config_path;
+use crate::paths::lightrs_sessions_dir;
 
 const FORMAT_VERSION: u32 = 1;
 
@@ -23,10 +23,7 @@ pub struct SessionFile {
 }
 
 pub fn sessions_dir() -> PathBuf {
-    config_path()
-        .parent()
-        .map(|p| p.join("sessions"))
-        .unwrap_or_else(|| PathBuf::from("sessions"))
+    lightrs_sessions_dir()
 }
 
 pub fn session_path(workdir: &Path) -> PathBuf {
@@ -109,10 +106,7 @@ mod tests {
             version: FORMAT_VERSION,
             workdir: temp_dir(),
             api_history: vec![ApiMessage::user("hi")],
-            ui_history: vec![UiMessage {
-                role: crate::chat::UiRole::User,
-                content: "hi".into(),
-            }],
+            ui_history: vec![UiMessage::with_role(crate::chat::UiRole::User, "hi")],
             token_stats: TokenStats::default(),
         };
         let json = serde_json::to_string(&file).unwrap();

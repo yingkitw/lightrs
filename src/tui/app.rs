@@ -1,5 +1,5 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
-
 use std::time::Instant;
 
 use crate::config::AppConfig;
@@ -32,6 +32,10 @@ pub struct App {
     pub pin_bottom: bool,
     pub composer: Composer,
     pub busy_since: Option<Instant>,
+    /// Indices in the UI transcript with expanded tool-call detail.
+    pub expanded_tools: HashSet<usize>,
+    /// Tool message index closest to the bottom of the visible transcript (for `o`).
+    pub focus_tool_msg_idx: Option<usize>,
 }
 
 impl App {
@@ -46,7 +50,21 @@ impl App {
             pin_bottom: true,
             composer: Composer::default(),
             busy_since: None,
+            expanded_tools: HashSet::new(),
+            focus_tool_msg_idx: None,
         }
+    }
+
+    pub fn toggle_tool_expand(&mut self, msg_idx: usize) {
+        if self.expanded_tools.contains(&msg_idx) {
+            self.expanded_tools.remove(&msg_idx);
+        } else {
+            self.expanded_tools.insert(msg_idx);
+        }
+    }
+
+    pub fn clear_tool_expansion(&mut self) {
+        self.expanded_tools.clear();
     }
 
     pub fn busy_spinner(&self) -> &'static str {

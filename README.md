@@ -8,6 +8,9 @@ A minimal terminal coding agent inspired by pi / opencode. Single Rust binary, O
 cargo install --path .
 # or
 cargo build --release
+
+# TUI + migrate only (no ACP server): smaller binary
+cargo build --release --no-default-features
 ```
 
 ## API keys
@@ -53,6 +56,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Esc` — clear input; while busy, **interrupt** the current turn
 - `Esc` / `Ctrl+C` / `Ctrl+Q` while busy — stop streaming (does not quit)
 - `↑` / `↓` — scroll transcript when input is empty
+- `o` — expand/collapse tool call detail (name + args always visible; full args/result when expanded)
 - `Ctrl+U` — clear input line
 - `PgUp` / `PgDn` — scroll by screen
 - `Home` / `End` — oldest / newest messages
@@ -60,7 +64,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `/` — slash commands (not sent to the model); `Tab` completes
 - `/help` — list commands (`/clear`, `/cwd`, `/status`, `/quit`, …)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
-- Transcript renders **Markdown** (headings, lists, inline `code`) and **syntax-highlights** fenced blocks (Rust, Python, JS/TS, Go, Java, C/C++, SQL, Bash, YAML, JSON, Markdown, etc.) via RGB colors — use a truecolor terminal for best results
+- Transcript renders **Markdown** (headings, lists, inline `code`) and styled fenced code blocks (lightweight, no syntect)
 
 The agent can **read/write files**, **list directories**, and **run shell commands** in the current working directory (same scope as you launching the binary).
 

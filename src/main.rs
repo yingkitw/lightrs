@@ -1,3 +1,4 @@
+#[cfg(feature = "acp")]
 mod acp;
 mod agent;
 mod chat;
@@ -6,6 +7,7 @@ mod config;
 mod migrate;
 mod opencode;
 mod provider;
+mod paths;
 mod session;
 mod tools;
 mod tui;
@@ -20,10 +22,18 @@ fn main() -> Result<()> {
     match cli.command.unwrap_or(Command::Tui) {
         Command::Tui => tui::run(AppConfig::load(&cli.model, cli.auto_migrate)?),
         Command::Acp { protocol } => {
-            let cfg = AppConfig::load(&cli.model, cli.auto_migrate)?;
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(acp::serve(cfg, protocol))
-                .map_err(|e| anyhow::anyhow!("{e}"))
+            #[cfg(feature = "acp")]
+            {
+                let cfg = AppConfig::load(&cli.model, cli.auto_migrate)?;
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(acp::serve(cfg, protocol))
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            }
+            #[cfg(not(feature = "acp"))]
+            {
+                let _ = protocol;
+                anyhow::bail!("ACP support disabled; rebuild with `--features acp`")
+            }
         }
         Command::Import { source } => match source {
             ImportSource::Opencode { config, project } => opencode::import(config, project),

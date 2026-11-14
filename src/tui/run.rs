@@ -230,7 +230,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                         if is_slash_input(&line) {
                             let mut guard = agent.blocking_lock();
                             let was_clear = line.trim() == "/clear";
-                            match run_slash(&line, &mut guard, &app) {
+                            match run_slash(&line, &mut guard, &mut app) {
                                 SlashAction::Handled => {
                                     if !was_clear {
                                         let _ = session::save(&guard, app.workdir());
@@ -270,6 +270,11 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                     KeyCode::PageDown if app.input.is_empty() => app.scroll_page_down(),
                     KeyCode::Home if app.input.is_empty() => app.scroll_to_top(),
                     KeyCode::End if app.input.is_empty() => app.scroll_to_bottom(),
+                    KeyCode::Char('o') if app.state == RunState::Ready && app.input.is_empty() => {
+                        if let Some(idx) = app.focus_tool_msg_idx {
+                            app.toggle_tool_expand(idx);
+                        }
+                    }
                     _ => {}
                 },
                 Event::Mouse(mouse) => match mouse.kind {

@@ -81,7 +81,7 @@ fn common_prefix(a: &str, b: &str) -> String {
 }
 
 /// Run a full input line that starts with `/`.
-pub fn run_slash(line: &str, agent: &mut Agent, app: &App) -> SlashAction {
+pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
     let name = line
         .trim()
         .strip_prefix('/')
@@ -101,6 +101,7 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &App) -> SlashAction {
         }
         "clear" => {
             agent.clear_conversation();
+            app.clear_tool_expansion();
             let _ = session::remove(app.workdir());
             SlashAction::Handled
         }

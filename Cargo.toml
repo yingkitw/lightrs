@@ -10,21 +10,20 @@ name = "lightrs"
 path = "src/main.rs"
 
 [features]
-default = ["acp-v2"]
-acp-v2 = ["agent-client-protocol/unstable_protocol_v2"]
+default = ["acp", "acp-v2"]
+# TUI-only build: `cargo build --no-default-features`
+acp = ["dep:agent-client-protocol"]
+acp-v2 = ["acp", "agent-client-protocol?/unstable_protocol_v2"]
 
 [dependencies]
-agent-client-protocol = { version = "5", features = ["stdio"] }
+agent-client-protocol = { version = "5", features = ["stdio"], optional = true }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
-crossterm = "0.28"
-directories = "5"
-ratatui = "0.29"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
+crossterm = "0.29"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 pulldown-cmark = "0.13"
-syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
-toml = "0.8"
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
+toml = "1"

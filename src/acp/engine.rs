@@ -119,7 +119,7 @@ fn truncate(s: &str, max: usize) -> String {
     format!("{end}…")
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "acp"))]
 mod tests {
     use super::*;
 

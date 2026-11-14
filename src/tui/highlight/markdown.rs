@@ -2,8 +2,27 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::syntect::{highlight_code, normalize_lang};
 use super::wrap::{wrap_plain_lines, wrap_styled_lines};
+
+fn normalize_lang(lang: &str) -> String {
+    match lang.trim().to_lowercase().as_str() {
+        "" => String::new(),
+        "rs" => "rust".into(),
+        "js" | "jsx" => "javascript".into(),
+        "ts" | "tsx" => "typescript".into(),
+        "py" => "python".into(),
+        "sh" | "shell" | "zsh" | "bash" => "bash".into(),
+        "yml" => "yaml".into(),
+        other => other.into(),
+    }
+}
+
+fn code_block_lines(code: &str, width: usize) -> Vec<Line<'static>> {
+    let style = Style::default()
+        .fg(Color::Rgb(180, 210, 255))
+        .bg(Color::Rgb(30, 32, 42));
+    wrap_plain_lines(code.trim_end_matches('\n'), width, style)
+}
 
 pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<Line<'static>> {
     let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
@@ -197,10 +216,7 @@ impl MdLines {
             format!("── {header} ──"),
             Style::default().fg(Color::DarkGray),
         )));
-        self.out.extend(wrap_styled_lines(
-            highlight_code(code, &lang_key),
-            self.width,
-        ));
+        self.out.extend(code_block_lines(code, self.width));
         self.out.push(Line::from(""));
     }
 }

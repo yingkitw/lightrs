@@ -128,17 +128,17 @@ impl Agent {
     }
 
     pub fn push_system(&mut self, content: impl Into<String>) {
-        self.ui_history.lock().unwrap().push(UiMessage {
-            role: UiRole::System,
-            content: content.into(),
-        });
+        self.ui_history
+            .lock()
+            .unwrap()
+            .push(UiMessage::with_role(UiRole::System, content));
     }
 
     pub fn push_error(&mut self, content: impl Into<String>) {
-        self.ui_history.lock().unwrap().push(UiMessage {
-            role: UiRole::Error,
-            content: content.into(),
-        });
+        self.ui_history
+            .lock()
+            .unwrap()
+            .push(UiMessage::with_role(UiRole::Error, content));
     }
 
     pub fn finish_interrupt(&mut self) {
@@ -152,10 +152,10 @@ impl Agent {
             .push(ApiMessage::system(system_prompt(&self.workdir)));
         let mut ui = self.ui_history.lock().unwrap();
         ui.clear();
-        ui.push(UiMessage {
-            role: UiRole::System,
-            content: "Conversation cleared.".into(),
-        });
+        ui.push(UiMessage::with_role(
+            UiRole::System,
+            "Conversation cleared.",
+        ));
         drop(ui);
         self.token_stats = TokenStats::default();
         self.refresh_context_estimate();
@@ -170,10 +170,10 @@ impl Agent {
         user_text: String,
         mut on: impl FnMut(ObserveEvent<'_>) + Send,
     ) -> Result<String> {
-        self.ui_history.lock().unwrap().push(UiMessage {
-            role: UiRole::User,
-            content: user_text.clone(),
-        });
+        self.ui_history
+            .lock()
+            .unwrap()
+            .push(UiMessage::with_role(UiRole::User, user_text.clone()));
         self.api_history.push(ApiMessage::user(user_text));
         self.refresh_context_estimate();
 
@@ -249,16 +249,13 @@ impl Agent {
                             name: &name,
                             arguments: &args,
                         });
-                        self.ui_history.lock().unwrap().push(UiMessage {
-                            role: UiRole::Tool,
-                            content: format!("→ {name}({})", truncate(&args, 120)),
-                        });
                         let result = execute_tool(&workdir, &name, &args);
                         on(ObserveEvent::ToolEnd { body: &result });
-                        self.ui_history.lock().unwrap().push(UiMessage {
-                            role: UiRole::Tool,
-                            content: truncate(&result, 8000),
-                        });
+                        self.ui_history.lock().unwrap().push(UiMessage::tool_result(
+                            &name,
+                            &args,
+                            truncate(&result, 8000),
+                        ));
                         self.api_history.push(ApiMessage::tool_result(
                             call.id.clone(),
                             name,
@@ -281,10 +278,10 @@ impl Agent {
                 .last()
                 .is_some_and(|m| m.role == UiRole::Assistant && !m.content.is_empty());
             if !streamed {
-                self.ui_history.lock().unwrap().push(UiMessage {
-                    role: UiRole::Assistant,
-                    content: text.clone(),
-                });
+                self.ui_history.lock().unwrap().push(UiMessage::with_role(
+                    UiRole::Assistant,
+                    text.clone(),
+                ));
             }
             return Ok(text);
         }
@@ -303,10 +300,10 @@ impl Agent {
     ) -> Result<String> {
         {
             let mut g = agent.lock().await;
-            g.ui_history.lock().unwrap().push(UiMessage {
-                role: UiRole::User,
-                content: user_text.clone(),
-            });
+            g.ui_history
+                .lock()
+                .unwrap()
+                .push(UiMessage::with_role(UiRole::User, user_text.clone()));
             g.api_history.push(ApiMessage::user(user_text));
             g.refresh_context_estimate();
         }
@@ -396,16 +393,13 @@ impl Agent {
                             name: &name,
                             arguments: &args,
                         });
-                        g.ui_history.lock().unwrap().push(UiMessage {
-                            role: UiRole::Tool,
-                            content: format!("→ {name}({})", truncate(&args, 120)),
-                        });
                         let result = execute_tool(&workdir, &name, &args);
                         on(ObserveEvent::ToolEnd { body: &result });
-                        g.ui_history.lock().unwrap().push(UiMessage {
-                            role: UiRole::Tool,
-                            content: truncate(&result, 8000),
-                        });
+                        g.ui_history.lock().unwrap().push(UiMessage::tool_result(
+                            &name,
+                            &args,
+                            truncate(&result, 8000),
+                        ));
                         g.api_history.push(ApiMessage::tool_result(
                             call.id.clone(),
                             name,
@@ -429,10 +423,10 @@ impl Agent {
                 .last()
                 .is_some_and(|m| m.role == UiRole::Assistant && !m.content.is_empty());
             if !streamed {
-                g.ui_history.lock().unwrap().push(UiMessage {
-                    role: UiRole::Assistant,
-                    content: text.clone(),
-                });
+                g.ui_history.lock().unwrap().push(UiMessage::with_role(
+                    UiRole::Assistant,
+                    text.clone(),
+                ));
             }
             return Ok(text);
         }
@@ -454,10 +448,7 @@ fn append_assistant_delta(
     let mut ui = ui_history.lock().unwrap();
     let needs_row = ui.last().is_none_or(|m| m.role != UiRole::Assistant);
     if needs_row {
-        ui.push(UiMessage {
-            role: UiRole::Assistant,
-            content: String::new(),
-        });
+        ui.push(UiMessage::with_role(UiRole::Assistant, String::new()));
     }
     if let Some(last) = ui.last_mut() {
         last.content.push_str(chunk);

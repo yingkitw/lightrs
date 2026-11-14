@@ -11,9 +11,47 @@ pub enum UiRole {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCallUi {
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UiMessage {
     pub role: UiRole,
+    /// Tool output (or plain message body).
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call: Option<ToolCallUi>,
+}
+
+impl UiMessage {
+    pub fn tool_result(
+        name: impl Into<String>,
+        arguments: impl Into<String>,
+        result: impl Into<String>,
+    ) -> Self {
+        Self {
+            role: UiRole::Tool,
+            content: result.into(),
+            tool_call: Some(ToolCallUi {
+                name: name.into(),
+                arguments: arguments.into(),
+            }),
+        }
+    }
+
+    pub fn is_tool_block(&self) -> bool {
+        self.role == UiRole::Tool && self.tool_call.is_some()
+    }
+
+    pub fn with_role(role: UiRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            tool_call: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

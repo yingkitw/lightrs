@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use crate::cli::ModelFlags;
 use crate::config::Provider;
+use crate::paths::lightrs_config_toml;
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct FileConfig {
@@ -34,9 +35,7 @@ pub fn load_config_file() -> Result<Option<FileConfig>> {
 }
 
 pub fn config_path() -> PathBuf {
-    directories::ProjectDirs::from("", "", "lightrs")
-        .map(|d| d.config_dir().join("config.toml"))
-        .unwrap_or_else(|| PathBuf::from("config.toml"))
+    lightrs_config_toml()
 }
 
 pub fn resolve_api_key(

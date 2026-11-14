@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
-use futures_util::StreamExt;
 use tokio::sync::watch;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Deserialize;
@@ -175,7 +174,7 @@ pub async fn post_chat_stream(
     );
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-    let response = http
+    let mut response = http
         .post(url)
         .headers(headers)
         .json(&request)
@@ -190,14 +189,15 @@ pub async fn post_chat_stream(
     }
 
     let mut acc = StreamAccumulator::default();
-    let mut byte_stream = response.bytes_stream();
     let mut line_buf = String::new();
 
-    while let Some(chunk) = byte_stream.next().await {
+    loop {
         if *cancel.borrow() {
             bail!("turn interrupted");
         }
-        let chunk = chunk.context("stream chunk")?;
+        let Some(chunk) = response.chunk().await.context("stream chunk")? else {
+            break;
+        };
         line_buf.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(newline) = line_buf.find('\n') {
             let line = line_buf[..newline].trim_end_matches('\r').to_string();

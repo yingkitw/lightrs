@@ -1,5 +1,4 @@
 mod markdown;
-mod syntect;
 mod wrap;
 
 use ratatui::style::Style;
@@ -31,19 +30,15 @@ fn looks_rich(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::style::Color;
-
     #[test]
-    fn rust_fence_produces_colored_spans() {
+    fn rust_fence_renders_fence_header() {
         let lines = render_message_body("```rust\nfn main() {}\n```", 80, Style::default());
-        assert!(
-            lines.iter().any(|l| {
-                l.spans
-                    .iter()
-                    .any(|s| matches!(s.style.fg, Some(Color::Rgb(_, _, _))))
-            }),
-            "expected RGB syntax colors"
-        );
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("rust"));
+        assert!(joined.contains("fn main"));
     }
 
     #[test]

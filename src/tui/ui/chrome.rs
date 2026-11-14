@@ -87,7 +87,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
         } else if !app.input.is_empty() {
             "Enter send · Esc clear · Ctrl+U clear".into()
         } else {
-            "↑↓ scroll (input empty) · /help · q quit".into()
+            "↑↓ scroll · o tool detail · /help · q quit".into()
         }
     } else {
         let phase = if app.status.is_empty() {
