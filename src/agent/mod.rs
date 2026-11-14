@@ -201,6 +201,17 @@ impl Agent {
         self.ui_history.lock().unwrap().clone()
     }
 
+    pub fn last_assistant_text(&self) -> Option<String> {
+        use crate::chat::UiRole;
+        self.ui_history
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|m| m.role == UiRole::Assistant && !m.content.trim().is_empty())
+            .map(|m| m.content.clone())
+    }
+
     pub fn api_context_len(&self) -> usize {
         self.api_history.len()
     }

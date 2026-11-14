@@ -1,10 +1,11 @@
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde::Deserialize;
 
 use crate::config::validate_work_path;
 
+use super::glob_pattern;
 use super::walk;
 
 const MAX_RESULTS: usize = 200;
@@ -20,8 +21,9 @@ pub fn glob_file_search(workdir: &Path, args: GlobSearchArgs) -> Result<String> 
     if pattern.is_empty() {
         bail!("pattern must not be empty");
     }
-    let pat =
-        glob::Pattern::new(pattern).with_context(|| format!("invalid glob pattern `{pattern}`"))?;
+    if pattern.bytes().any(|b| b == b'{' || b == b'}') {
+        bail!("glob patterns with `{{`/`}}` are not supported");
+    }
     let root = match args.path.as_deref() {
         None | Some(".") | Some("") => workdir.to_path_buf(),
         Some(p) => validate_work_path(workdir, Path::new(p))?,
@@ -35,7 +37,7 @@ pub fn glob_file_search(workdir: &Path, args: GlobSearchArgs) -> Result<String> 
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
-        if pat.matches(&rel) {
+        if glob_pattern::glob_matches(pattern, &rel) {
             matches.push(rel);
         }
     }

@@ -65,6 +65,7 @@
 | `/quiet` | Toggle per-step `[sys]` token lines (`send · ~N ctx`, model in/out); header + `/context` unchanged |
 | `/skills` | List discovered skills (`$id` to invoke on send) |
 | `/export` [path] | Write UI transcript to markdown under workdir (default `lightrs-transcript.md`; skips `[sys]`) |
+| `/copy` [`code`] | Copy latest assistant reply to the OS clipboard; `code` = last fenced ``` block only |
 | `/quit` | Exit (same as `q` when idle) |
 
 `Tab` completes unique slash prefix.

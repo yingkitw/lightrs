@@ -7,11 +7,10 @@ A minimal terminal coding agent inspired by pi / opencode. Single Rust binary, O
 ```bash
 cargo install --path .
 # or
-cargo build --release
+cargo build --release          # default: TUI + syntect (no ACP)
 
-# No ACP (smaller): `cargo build --release --no-default-features`
-# Smallest TUI (plain code fences, no ACP): same as above without `syntect`
-# TUI + syntect, no ACP: `cargo build --release --no-default-features --features syntect`
+# ACP server (Zed, JetBrains): `cargo build --release --features full`
+# Smallest TUI (plain code fences): `cargo build --release --no-default-features`
 ```
 
 ## API keys
@@ -59,8 +58,9 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 
 ### Keys in TUI
 
-- `Enter` — send message (supports multi-line input)
+- `Enter` — send message (supports multi-line input; **paste** multi-line with Cmd/Ctrl+V)
 - `Shift+Enter` or `Ctrl+J` — newline in the composer
+- `/copy` — copy the latest assistant reply to the clipboard (`/copy code` = last ``` fence only)
 - `Ctrl+P` / `Ctrl+N` — recall older / newer submitted prompts (Codex-style history)
 - `@path` — attach workdir files to the API message (`Tab` completes); `$skill-id` — attach a **skill** (`Tab` on `$` prefix); paths skip `.git` / `target` / `node_modules`
 - `Esc` — clear input; while busy, **interrupt** the current turn
@@ -75,7 +75,8 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `/help` — list commands (`/clear`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit`, …)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
 - Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** ASCII, collapsible **tool** rows (mouse or `o`), unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
-- Mouse wheel scrolls the transcript; left-click a tool block to expand/collapse
+- Scroll with **PgUp/PgDn** or arrow keys (mouse capture is off so you can **select/copy** transcript text)
+- `o` expands the focused tool block (previously: click)
 
 The agent can **read/write/patch files** (patch tolerates minor whitespace drift), **`grep`** (literal search in tree), **list directories**, and **run shell commands** (64 KiB output cap per stream) under the configured working directory (same privilege as your user).
 
@@ -84,6 +85,7 @@ The agent can **read/write/patch files** (patch tolerates minor whitespace drift
 Run as an ACP **agent** on stdio for editors (Zed, JetBrains, etc.):
 
 ```bash
+# requires build with `--features full` (or `--features acp,acp-v2`)
 lightrs acp --provider kimi
 lightrs acp --protocol v2   # draft ACP v2 session lifecycle
 ```

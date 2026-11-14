@@ -57,9 +57,9 @@ Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses i
 
 ## Key dependencies (TUI)
 
-`ratatui`, `crossterm`, `pulldown-cmark`, `syntect`, `similar`, `reqwest` (rustls + stream), `tokio`. ACP adds optional `agent-client-protocol`.
+`ratatui`, `crossterm`, `pulldown-cmark` (no default features), `syntect` (optional, `regex-fancy`), `similar`, `reqwest` (rustls + stream), `tokio`. ACP adds optional `agent-client-protocol`. `glob_file_search` uses in-tree `glob_pattern` (no `glob` crate).
 
-Build profiles: default includes ACP + syntect (~13 MB release here). `cargo build --release --no-default-features` drops both (~7.6 MB); add `--features syntect` for highlighting without ACP.
+Build profiles: default is TUI + syntect only (~398 crates in the resolve graph here). `--features full` adds ACP (`acp`, `acp-v2`). `cargo build --release --no-default-features` is the smallest TUI (~377 crates; plain code fences).
 
 Tests: `tests/docs_sync.rs` (doc alignment); `tests/provider_fixtures.rs` + `tests/fixtures/` (chat JSON + SSE, including Kimi/GLM/MiniMax tool streams).
 

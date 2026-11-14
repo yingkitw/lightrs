@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::agent::Agent;
 use crate::chat::{UiMessage, UiRole};
@@ -61,9 +61,7 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
         .title(title)
         .borders(Borders::ALL)
         .border_style(theme::border());
-    let paragraph = Paragraph::new(Text::from(visible))
-        .block(block)
-        .wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(Text::from(visible)).block(block);
     frame.render_widget(paragraph, area);
 }
 

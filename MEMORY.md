@@ -15,17 +15,20 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Agent state lives behind `tokio::sync::Mutex<Agent>`; async worker uses `.lock().await`.
 - TUI thread uses `blocking_lock()` for draw and slash commands — do not use `std::sync::Mutex` across `.await` in `tokio::spawn`.
 
-## Build features (2026-11-14)
+## Build features (2026-11-15)
 
-- `syntect` Cargo feature (default on): fenced code uses syntect; off → monochrome `theme::code_block()` lines.
-- `cargo build --release --no-default-features` — no ACP, no syntect (smallest TUI binary; ~7.6 MB vs ~13 MB with defaults on this machine).
+- **Default features**: `syntect` only (TUI + highlighting). ACP is opt-in: `--features full` or `acp,acp-v2`.
+- `syntect` uses `regex-fancy` (pure Rust) instead of `regex-onig` to drop the `onig` native dependency.
+- `pulldown-cmark` and `clap` built with `default-features = false` where applicable.
+- `glob_file_search`: `tools/glob_pattern.rs` (`*`, `?`, `**`); no `glob` crate.
+- `cargo build --release --no-default-features` — no syntect (smallest TUI binary).
 
 ## grep tool (2026-11-14)
 
 - `tools/grep.rs`: recursive literal search under `validate_work_path`; skip `.git`, `target`, `node_modules`, `.cursor`.
 - Limits: 80 matches default (200 max), 2000 files, 256 KiB read per file; `path:line:col:text` output.
 - Uses **`rg -F`** when `rg` is on PATH (literal fixed string); else in-tree walk (`tools/walk.rs`).
-- **`glob_file_search`**: `glob` crate, max 200 paths, same skip dirs as grep.
+- **`glob_file_search`**: in-tree glob matcher, max 200 paths, same skip dirs as grep.
 - **Backups**: `write_file`/`patch_file` snapshot prior bytes to `.lightrs/backups/<rel>_<ts>.bak` under workdir.
 - **CLI**: `lightrs exec -p` (optional `--json`, `--approve-shell`); `lightrs doctor --check` for setup health.
 

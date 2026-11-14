@@ -2,6 +2,7 @@ mod backup;
 mod diff;
 mod edit_match;
 mod fs;
+mod glob_pattern;
 mod glob_search;
 mod grep;
 mod multi_edit;

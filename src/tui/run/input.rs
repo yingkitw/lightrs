@@ -28,6 +28,10 @@ pub(crate) fn handle_crossterm_event(
 ) -> Result<InputAction> {
     match event {
         Event::Key(key) => handle_key(key, agent, app, cancel_tx, kick_tx),
+        Event::Paste(text) if app.state == RunState::Ready => {
+            app.insert_text(&text);
+            Ok(InputAction::Continue)
+        }
         Event::Mouse(mouse) => {
             match mouse.kind {
                 MouseEventKind::ScrollUp => app.scroll_up(3),

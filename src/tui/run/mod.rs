@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -86,9 +86,9 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     let mut stdout = std::io::stdout();
     enable_raw_mode()?;
     stdout.execute(EnterAlternateScreen)?;
+    stdout.execute(EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    terminal.backend_mut().execute(EnableMouseCapture)?;
 
     let mut app = App::new(cfg.clone());
     app.skill_catalog = catalog;
@@ -144,7 +144,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
         let _ = session::save(&guard, app.workdir());
     }
 
-    terminal.backend_mut().execute(DisableMouseCapture)?;
+    terminal.backend_mut().execute(DisableBracketedPaste)?;
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;

@@ -58,15 +58,20 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
         });
     let inner = block.inner(area);
 
-    let content = if let Some(ref ap) = app.pending_approval {
-        Line::from(Span::styled(&ap.command, theme::busy()))
+    let input_lines: Vec<Line> = if let Some(ref ap) = app.pending_approval {
+        vec![Line::from(Span::styled(&ap.command, theme::busy()))]
     } else if app.input.is_empty() && app.state == RunState::Ready {
-        Line::from(vec![Span::styled(
+        vec![Line::from(vec![Span::styled(
             "Message…  Enter send · @ file · $ skill · Tab · / commands",
             theme::hint(),
-        )])
+        )])]
+    } else if app.input.is_empty() {
+        vec![Line::from("")]
     } else {
-        Line::from(app.input.as_str())
+        app.input
+            .split('\n')
+            .map(|row| Line::from(row.to_string()))
+            .collect()
     };
 
     let style = if app.pending_approval.is_some() {
@@ -76,7 +81,7 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
     } else {
         theme::body()
     };
-    let paragraph = Paragraph::new(Text::from(vec![content]))
+    let paragraph = Paragraph::new(Text::from(input_lines))
         .style(style)
         .block(block)
         .wrap(Wrap { trim: false });
@@ -85,10 +90,30 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
 }
 
 pub fn place_input_cursor(frame: &mut Frame, inner: Rect, app: &App) {
-    let col = u16::try_from(app.input.chars().count()).unwrap_or(u16::MAX);
-    let x = inner.x.saturating_add(col.min(inner.width.saturating_sub(1)));
-    let y = inner.y;
+    let (row, col) = input_cursor_at_end(&app.input);
+    let x = inner
+        .x
+        .saturating_add((col as u16).min(inner.width.saturating_sub(1)));
+    let y = inner
+        .y
+        .saturating_add((row as u16).min(inner.height.saturating_sub(1)));
     frame.set_cursor_position(Position::new(x, y));
+}
+
+fn input_cursor_at_end(input: &str) -> (usize, usize) {
+    if input.is_empty() {
+        return (0, 0);
+    }
+    if input.ends_with('\n') {
+        let row = input.chars().filter(|c| *c == '\n').count();
+        return (row, 0);
+    }
+    let row = input.matches('\n').count();
+    let col = input
+        .rsplit_once('\n')
+        .map(|(_, tail)| tail.chars().count())
+        .unwrap_or_else(|| input.chars().count());
+    (row, col)
 }
 
 pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {

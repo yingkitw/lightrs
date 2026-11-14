@@ -1,5 +1,6 @@
 use crate::agent::{Agent, context_usage_text};
 use crate::session;
+use crate::tui::clipboard::{copy_payload_from_markdown, set_text};
 use crate::tui::App;
 use crate::tui::info::{context_details, session_details};
 
@@ -15,6 +16,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("quiet", "toggle per-step token sys lines"),
     ("skills", "list discovered agent skills"),
     ("export", "write UI transcript to markdown in workdir"),
+    ("copy", "copy last reply (or last ``` fence with /copy code) to clipboard"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +160,34 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                     "{n} skill(s). Invoke with $id on your message:\n{}{extra}",
                     lines.join("\n")
                 ));
+            }
+            SlashAction::Handled
+        }
+        "copy" => {
+            let code_only = line
+                .split_whitespace()
+                .nth(1)
+                .is_some_and(|a| a == "code");
+            let Some(markdown) = agent.last_assistant_text() else {
+                agent.push_system("nothing to copy — no assistant reply yet");
+                return SlashAction::Handled;
+            };
+            let payload = copy_payload_from_markdown(&markdown, code_only);
+            if payload.trim().is_empty() {
+                agent.push_system(if code_only {
+                    "no fenced ``` block in the latest reply"
+                } else {
+                    "latest reply is empty"
+                });
+                return SlashAction::Handled;
+            }
+            match set_text(&payload) {
+                Ok(()) => agent.push_system(format!(
+                    "copied {} byte(s) to clipboard{}",
+                    payload.len(),
+                    if code_only { " (last code fence)" } else { "" }
+                )),
+                Err(e) => agent.push_error(format!("copy failed: {e:#}")),
             }
             SlashAction::Handled
         }

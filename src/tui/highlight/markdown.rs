@@ -124,8 +124,8 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
                 } else if in_heading {
                     heading_buf.push(' ');
                 } else {
+                    // GFM line break: new row in the same block, not a blank separator.
                     out.flush_paragraph();
-                    out.out.push(Line::from(""));
                 }
             }
             Event::Start(Tag::Table(_)) => {

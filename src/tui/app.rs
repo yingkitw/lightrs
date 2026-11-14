@@ -162,6 +162,10 @@ impl App {
         self.input.push(c);
     }
 
+    pub fn insert_text(&mut self, text: &str) {
+        self.input.push_str(text);
+    }
+
     pub fn backspace(&mut self) {
         self.input.pop();
     }
