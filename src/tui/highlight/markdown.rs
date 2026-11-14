@@ -5,24 +5,13 @@ use ratatui::text::{Line, Span};
 use crate::tui::theme::{self, palette};
 
 use super::mermaid;
+use super::syntect::{highlight_code, normalize_lang};
 use super::wrap::{wrap_plain_lines, wrap_styled_lines};
 
-fn normalize_lang(lang: &str) -> String {
-    match lang.trim().to_lowercase().as_str() {
-        "" => String::new(),
-        "rs" => "rust".into(),
-        "js" | "jsx" => "javascript".into(),
-        "ts" | "tsx" => "typescript".into(),
-        "py" => "python".into(),
-        "sh" | "shell" | "zsh" | "bash" => "bash".into(),
-        "yml" => "yaml".into(),
-        "mmd" => "mermaid".into(),
-        other => other.into(),
-    }
-}
-
-fn code_block_lines(code: &str, width: usize) -> Vec<Line<'static>> {
-    wrap_plain_lines(code.trim_end_matches('\n'), width, theme::code_block())
+fn code_block_lines(code: &str, lang: &str, width: usize) -> Vec<Line<'static>> {
+    let trimmed = code.trim_end_matches('\n');
+    let highlighted = highlight_code(trimmed, lang);
+    wrap_styled_lines(highlighted, width)
 }
 
 pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<Line<'static>> {
@@ -220,7 +209,7 @@ impl MdLines {
             format!("── {header} ──"),
             theme::fence_header(),
         )));
-        self.out.extend(code_block_lines(code, self.width));
+        self.out.extend(code_block_lines(code, &lang_key, self.width));
         self.out.push(Line::from(""));
     }
 }

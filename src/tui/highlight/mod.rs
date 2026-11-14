@@ -1,5 +1,6 @@
 mod markdown;
 mod mermaid;
+mod syntect;
 mod wrap;
 
 use ratatui::style::Style;
@@ -52,6 +53,12 @@ mod tests {
             .collect();
         assert!(joined.contains("rust"));
         assert!(joined.contains("fn main"));
+        let colored = lines.iter().any(|l| {
+            l.spans.iter().any(|s| {
+                s.content.contains("fn") && s.style.fg.is_some()
+            })
+        });
+        assert!(colored, "expected syntect-colored tokens");
     }
 
     #[test]
