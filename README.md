@@ -62,11 +62,12 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
-- `/help` — list commands (`/clear`, `/cwd`, `/status`, `/quit`, …)
+- `/help` — list commands (`/clear`, `/cwd`, `/status`, `/context`, `/quit`, …)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
-- Transcript renders **Markdown** (headings, lists, inline `code`), **syntax-highlighted fenced code** (syntect), and **Mermaid** (` ```mermaid `) as ASCII flow/sequence previews plus source
+- Transcript: **Markdown**, **syntect** fenced code, **Mermaid** ASCII previews, collapsible **tool** rows (mouse or `o`), and colorized **unified diff** on `write_file`
+- Mouse wheel scrolls the transcript; left-click a tool block to expand/collapse
 
-The agent can **read/write files**, **list directories**, and **run shell commands** in the current working directory (same scope as you launching the binary). **`write_file`** tool calls show a colorized unified diff in the transcript (click/o to expand).
+The agent can **read/write files**, **list directories**, and **run shell commands** under the configured working directory (same privilege as your user).
 
 ### ACP (Agent Client Protocol)
 
@@ -92,8 +93,9 @@ Writes under `~/.config/lightrs/` (`config.toml` or `opencode-import.toml`, `mcp
 
 ## Design
 
-- One OpenAI-compatible HTTP client for all backends
-- Small fixed tool set; no MCP, no LSP, no embeddings
-- Async LLM calls on a Tokio runtime; sync TUI on the main thread
+- One OpenAI-compatible HTTP client for all backends (optional streaming SSE)
+- Fixed tool set: read/write/list + shell; no in-process MCP/LSP
+- Tokio agent worker + sync TUI thread; per-project session JSON under `~/.config/lightrs/sessions/`
+- Main crates: `ratatui`, `reqwest`, `pulldown-cmark`, `syntect`, `similar` (write diffs)
 
-See `ARCHITECTURE.md` and `SPEC.md` for details.
+See `ARCHITECTURE.md`, `SPEC.md`, and `TODO.md`.
