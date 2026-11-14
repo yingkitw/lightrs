@@ -2,7 +2,7 @@ mod markdown;
 mod syntect;
 mod wrap;
 
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::Line;
 
 /// Render message body as ratatui lines (Markdown + highlighted fenced code).
@@ -31,6 +31,7 @@ fn looks_rich(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
 
     #[test]
     fn rust_fence_produces_colored_spans() {
