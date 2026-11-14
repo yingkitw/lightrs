@@ -68,7 +68,8 @@ fn transcript_lines(
     let mut lines = Vec::new();
     let mut tool_spans = Vec::new();
     for (idx, m) in messages.iter().enumerate() {
-        if let Some(tc) = &m.tool_call {
+        if m.is_tool_block() {
+            let tc = m.tool_call.as_ref().expect("tool_call when is_tool_block");
             let start = lines.len();
             render_tool_block(&mut lines, idx, m, tc, width, app);
             tool_spans.push((start, lines.len(), idx));
