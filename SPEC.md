@@ -26,7 +26,7 @@
 ### Transcript
 
 - Roles: user, assistant, tool, system, error
-- **Markdown**: full pulldown pass on message bodies — headings, lists, **bold** / *italic* / ~~strike~~, links (styled), blockquotes (`▏`), rules; tables/strikethrough/task lists enabled
+- **Markdown**: full pulldown pass on message bodies — headings, lists, **bold** / *italic* / ~~strike~~, links (styled), blockquotes (`▏`), pipe tables (`│`), rules; strikethrough/task lists enabled
 - **Fenced code**: syntect highlight + wrap
 - **Mermaid** (`mermaid` / `mmd`): ASCII flow/sequence preview + source
 - **Tool blocks**: single row per call; collapsed shows short args + truncated result; expanded shows full args/result

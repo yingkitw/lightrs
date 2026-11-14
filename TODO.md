@@ -30,9 +30,9 @@
 - [x] Split `tui/run/` (`events`, `input`)
 - [x] Auto-reload `[shell]` when `config.toml` mtime changes (before send; `/reload` still manual)
 
-## Backlog
+- [x] Markdown tables → ASCII pipe grid in transcript
 
-- [ ] Table rendering in markdown transcript (pulldown tables → ASCII grid)
+## Backlog
 
 ## Scorecard (2026-11-14 → loop pass)
 

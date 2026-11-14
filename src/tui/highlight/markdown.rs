@@ -29,6 +29,11 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
     let mut heading_buf = String::new();
     let mut in_heading = false;
     let mut in_link = false;
+    let mut in_table = false;
+    let mut in_table_cell = false;
+    let mut table_cell = String::new();
+    let mut table_row: Vec<String> = Vec::new();
+    let mut table_rows: Vec<Vec<String>> = Vec::new();
 
     for event in parser {
         match event {
@@ -58,8 +63,16 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
                 code_body.clear();
                 code_lang.clear();
             }
-            Event::Start(Tag::Paragraph) => out.flush_paragraph(),
-            Event::End(TagEnd::Paragraph) => out.flush_paragraph(),
+            Event::Start(Tag::Paragraph) => {
+                if !in_table {
+                    out.flush_paragraph();
+                }
+            }
+            Event::End(TagEnd::Paragraph) => {
+                if !in_table {
+                    out.flush_paragraph();
+                }
+            }
             Event::Start(Tag::BlockQuote(_)) => {
                 out.flush_paragraph();
                 out.blockquote_depth += 1;
@@ -114,11 +127,33 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
                     out.out.push(Line::from(""));
                 }
             }
+            Event::Start(Tag::Table(_)) => {
+                out.flush_paragraph();
+                in_table = true;
+                table_rows.clear();
+            }
+            Event::End(TagEnd::Table) => {
+                in_table = false;
+                out.push_table(&table_rows);
+                table_rows.clear();
+            }
+            Event::Start(Tag::TableRow) => table_row.clear(),
+            Event::End(TagEnd::TableRow) => table_rows.push(table_row.clone()),
+            Event::Start(Tag::TableCell) => {
+                in_table_cell = true;
+                table_cell.clear();
+            }
+            Event::End(TagEnd::TableCell) => {
+                in_table_cell = false;
+                table_row.push(table_cell.trim().to_string());
+            }
             Event::Text(text) => {
                 if in_code_block {
                     code_body.push_str(&text);
                 } else if in_heading {
                     heading_buf.push_str(&text);
+                } else if in_table && in_table_cell {
+                    table_cell.push_str(&text);
                 } else {
                     let style = out.inline_style(in_link);
                     out.push_span(Span::styled(text.to_string(), style));
@@ -254,6 +289,41 @@ impl MdLines {
         self.out.push(Line::from(""));
     }
 
+    fn push_table(&mut self, rows: &[Vec<String>]) {
+        let rows: Vec<Vec<String>> = rows
+            .iter()
+            .filter(|row| !is_alignment_row(row))
+            .cloned()
+            .collect();
+        if rows.is_empty() {
+            return;
+        }
+        let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
+        if cols == 0 {
+            return;
+        }
+        let mut widths = vec![2usize; cols];
+        for row in &rows {
+            for (i, cell) in row.iter().enumerate() {
+                widths[i] = widths[i].max(cell.chars().count().min(28));
+            }
+        }
+        let style = theme::body_muted();
+        for row in &rows {
+            let cells: Vec<String> = (0..cols)
+                .map(|i| {
+                    let text = row.get(i).map(String::as_str).unwrap_or("");
+                    pad_display_cell(text, widths[i])
+                })
+                .collect();
+            self.out.push(Line::styled(
+                format!("│ {} │", cells.join(" │ ")),
+                style,
+            ));
+        }
+        self.out.push(Line::from(""));
+    }
+
     fn push_code_block(&mut self, lang: &str, code: &str) {
         let lang_key = normalize_lang(lang);
         if lang_key == "mermaid" {
@@ -272,5 +342,22 @@ impl MdLines {
         )));
         self.out.extend(code_block_lines(code, &lang_key, self.width));
         self.out.push(Line::from(""));
+    }
+}
+
+fn is_alignment_row(row: &[String]) -> bool {
+    row.iter().all(|cell| {
+        let t = cell.trim();
+        t.is_empty() || t.chars().all(|c| c == '-' || c == ':' || c.is_whitespace())
+    })
+}
+
+fn pad_display_cell(text: &str, width: usize) -> String {
+    let n = text.chars().count();
+    if n >= width {
+        let end: String = text.chars().take(width.saturating_sub(1)).collect();
+        format!("{end}…")
+    } else {
+        format!("{text}{}", " ".repeat(width - n))
     }
 }

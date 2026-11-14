@@ -63,6 +63,18 @@ mod tests {
     }
 
     #[test]
+    fn markdown_table_rows() {
+        let md = "| one | two |\n| --- | --- |\n| 1 | 2 |";
+        let lines = render_message_body(md, 48, Style::default());
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains('│'), "expected table pipes: {joined}");
+        assert!(joined.contains('1') && joined.contains('2'), "table cells: {joined}");
+    }
+
+    #[test]
     fn markdown_bold_and_link_styles() {
         let lines = render_message_body("**bold** and [link](https://x.test)", 80, Style::default());
         let bold = lines.iter().any(|l| {
