@@ -14,7 +14,7 @@ tools/                  schemas, fs/shell, diff (similar), ToolOutcome
 opencode/, migrate/    Import + auto-migrate scanners
 acp/                    Optional ACP v1/v2 server (feature `acp`)
 tui/
-  run.rs, app.rs, composer.rs, slash.rs, info.rs, theme.rs
+  run.rs, app.rs, composer.rs, mentions.rs, slash.rs, info.rs, theme.rs
   highlight/            markdown (pulldown), syntect, mermaid ASCII, diff render, wrap
   ui/                   chrome (header/input/status), transcript (tools + diff + markdown)
 ```
@@ -51,7 +51,7 @@ Reference: [Codex `codex-rs/tui`](https://github.com/openai/codex/tree/main/code
 | Lifecycle | Busy spinner; **Esc / Ctrl+C** interrupt |
 | Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/cwd`, `/status`, `/context`, `/quit` |
 
-Not in v0.1: Codex bottom-pane modals, `@` mentions, exec approvals, side-by-side diff pane.
+Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses input-pane **y/n** approval when configured (`[shell].require_approval` or allowlist block).
 
 ## Key dependencies (TUI)
 
@@ -63,5 +63,5 @@ Tests: `tests/docs_sync.rs` (doc alignment); `tests/provider_fixtures.rs` + `tes
 
 ## Security notes
 
-- Shell tool runs with user privileges; no allowlist in v0.1
+- Shell tool runs with user privileges; optional `[shell].allowlist` and interactive approval in TUI (`config.toml`)
 - Paths resolved under `workdir`; traversal rejected after canonicalization (`validate_work_path`)

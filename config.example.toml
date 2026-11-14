@@ -9,3 +9,8 @@ workdir = "."               # agent file/shell scope
 # glm = "..."
 # kimi = "..."
 # minimax = "..."
+
+# Optional: restrict and/or confirm run_command before execution
+# [shell]
+# allowlist = ["cargo ", "git ", "rustc ", "ls", "pwd"]  # empty = allow all prefixes
+# require_approval = true   # prompt y/n for every run_command (in addition to allowlist blocks)

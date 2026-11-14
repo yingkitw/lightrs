@@ -44,6 +44,7 @@
 ### Input
 
 - `Enter` send; `Shift+Enter` / `Ctrl+J` newline
+- `@relative/path` file mentions in the composer; `Tab` completes paths under **workdir** (status bar shows matches)
 - `Ctrl+P` / `Ctrl+N` prompt history
 - Scroll transcript when input empty (`↑`/`↓`, PgUp/PgDn, Home/End)
 - Interrupt while busy: `Esc`, `Ctrl+C`, `Ctrl+Q` (does not quit)
@@ -75,3 +76,21 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 ## Configuration
 
 Priority: **CLI > environment > config file > defaults** (`config/file.rs`, `config.example.toml`).
+
+### Shell allowlist
+
+```toml
+[shell]
+allowlist = ["cargo ", "git ", "ls"]
+```
+
+When non-empty, `run_command` only runs if the command string equals or starts with an entry (prefix match). Blocked commands return an error string to the model; system prompt notes when allowlist is active.
+
+### Shell approval (TUI)
+
+```toml
+[shell]
+require_approval = true
+```
+
+When `require_approval` is true, the TUI prompts **y/n** before every `run_command`. When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command string and other keys are ignored.

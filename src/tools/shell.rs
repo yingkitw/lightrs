@@ -5,13 +5,26 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use super::shell_policy::ShellPolicy;
+
 #[derive(Deserialize)]
 pub struct RunCommandArgs {
     pub command: String,
     pub timeout_secs: Option<u64>,
 }
 
-pub fn run_command(workdir: &Path, args: RunCommandArgs) -> Result<String> {
+pub fn run_command(
+    workdir: &Path,
+    args: RunCommandArgs,
+    policy: &ShellPolicy,
+    bypass_allowlist: bool,
+) -> Result<String> {
+    if !bypass_allowlist && !policy.is_allowed(&args.command) {
+        bail!(
+            "command blocked by shell allowlist (configure [shell].allowlist in ~/.config/lightrs/config.toml): {}",
+            args.command.trim()
+        );
+    }
     let timeout = args.timeout_secs.unwrap_or(120).min(600);
     let mut child = Command::new("sh")
         .arg("-c")

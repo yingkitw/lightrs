@@ -21,6 +21,7 @@ use crate::config::AppConfig;
 use crate::provider::LlmClient;
 use crate::session;
 use crate::tui::info::{session_resume_message, session_start_message};
+use crate::tui::mentions::tab_complete_mention;
 use crate::tui::slash::{SlashAction, is_slash_input, run_slash, tab_complete};
 use crate::tui::{AgentEvent, App, RunState, draw};
 
@@ -69,6 +70,11 @@ fn handle_agent_event(
             }
             false
         }
+        AgentEvent::CommandApproval(req) => {
+            app.pending_approval = Some(req);
+            app.status = "approve shell command".into();
+            true
+        }
     }
 }
 
@@ -86,7 +92,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
 
     let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
     let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
-    let mut agent_inner = Agent::new(client, Arc::clone(&workdir));
+    let mut agent_inner = Agent::new(client, Arc::clone(&workdir), cfg.shell_policy.clone());
     let resumed = if let Ok(Some(saved)) = session::load(&cfg.workdir) {
         agent_inner.restore_session(saved);
         true
@@ -115,6 +121,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                     }
                 },
                 cancel_rx.clone(),
+                tx_bg.clone(),
             )
             .await;
             match result {
@@ -172,7 +179,22 @@ pub fn run(cfg: AppConfig) -> Result<()> {
         let poll_ms = if app.state == RunState::Busy { 16 } else { 100 };
         if event::poll(Duration::from_millis(poll_ms))? {
             match event::read()? {
-                Event::Key(key) => match key.code {
+                Event::Key(key) => {
+                    if app.pending_approval.is_some() {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                app.resolve_approval(true);
+                                app.status.clear();
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                app.resolve_approval(false);
+                                app.status.clear();
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+                    match key.code {
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         if app.state == RunState::Busy {
                             request_interrupt(cancel_tx.as_ref());
@@ -253,7 +275,10 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                     KeyCode::Char(c) if app.state == RunState::Ready => app.push_char(c),
                     KeyCode::Backspace if app.state == RunState::Ready => app.backspace(),
                     KeyCode::Tab if app.state == RunState::Ready => {
-                        if let Some(completed) = tab_complete(&app.input) {
+                        let wd = app.workdir();
+                        if let Some(completed) = tab_complete_mention(&app.input, wd) {
+                            app.input = completed;
+                        } else if let Some(completed) = tab_complete(&app.input) {
                             app.input = completed;
                         }
                     }
@@ -277,6 +302,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                         }
                     }
                     _ => {}
+                    }
                 },
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => app.scroll_up(3),

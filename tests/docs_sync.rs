@@ -18,6 +18,7 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
     ("src/tools/diff.rs", "diff"),
     ("src/tui/theme.rs", "theme.rs"),
     ("src/tui/composer.rs", "composer.rs"),
+    ("src/tui/mentions.rs", "mentions"),
     ("src/tui/highlight/syntect.rs", "syntect"),
     ("src/tui/highlight/diff.rs", "highlight/diff"),
 ];

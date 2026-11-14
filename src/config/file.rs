@@ -14,6 +14,17 @@ pub(crate) struct FileConfig {
     pub base_url: Option<String>,
     pub workdir: Option<PathBuf>,
     pub keys: Option<FileKeys>,
+    pub shell: Option<FileShell>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct FileShell {
+    /// Command prefix allowlist for `run_command`; empty = allow all.
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    /// When true, TUI prompts before every `run_command` (y/n).
+    #[serde(default)]
+    pub require_approval: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]

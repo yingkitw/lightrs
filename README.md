@@ -23,7 +23,7 @@ Set one key for your provider (or use flags / config file):
 | Kimi     | `MOONSHOT_API_KEY` |
 | MiniMax  | `MINIMAX_API_KEY` |
 
-Optional config: `~/.config/lightrs/config.toml` (see `config.example.toml`).
+Optional config: `~/.config/lightrs/config.toml` (see `config.example.toml`). Optional `[shell].allowlist` prefixes restrict `run_command`; `require_approval = true` or an allowlist block triggers a **y/n** prompt in the TUI before the shell runs.
 
 ## Usage
 
@@ -53,6 +53,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Enter` — send message (supports multi-line input)
 - `Shift+Enter` or `Ctrl+J` — newline in the composer
 - `Ctrl+P` / `Ctrl+N` — recall older / newer submitted prompts (Codex-style history)
+- `@path` — attach a workdir-relative file path in the message; `Tab` completes (skips `.git` / `target` / `node_modules`)
 - `Esc` — clear input; while busy, **interrupt** the current turn
 - `Esc` / `Ctrl+C` / `Ctrl+Q` while busy — stop streaming (does not quit)
 - `↑` / `↓` — scroll transcript when input is empty

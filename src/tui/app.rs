@@ -13,12 +13,19 @@ pub enum RunState {
     Busy,
 }
 
+pub struct CommandApproval {
+    pub command: String,
+    pub reply: tokio::sync::oneshot::Sender<bool>,
+}
+
 pub enum AgentEvent {
     Done,
     Failed(String),
     Interrupted,
     /// Transcript changed while a turn is in progress (streaming).
     Refresh,
+    /// TUI must approve/deny before the agent continues this shell command.
+    CommandApproval(CommandApproval),
 }
 
 pub struct App {
@@ -44,6 +51,7 @@ pub struct App {
     pub transcript_visible_start: usize,
     /// `(first_line, last_line_exclusive, ui_message_index)` per tool block.
     pub tool_hit_spans: Vec<(usize, usize, usize)>,
+    pub pending_approval: Option<CommandApproval>,
 }
 
 impl App {
@@ -63,6 +71,13 @@ impl App {
             transcript_rect: Rect::default(),
             transcript_visible_start: 0,
             tool_hit_spans: Vec::new(),
+            pending_approval: None,
+        }
+    }
+
+    pub fn resolve_approval(&mut self, approved: bool) {
+        if let Some(req) = self.pending_approval.take() {
+            let _ = req.reply.send(approved);
         }
     }
 

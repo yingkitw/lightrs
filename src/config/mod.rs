@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use crate::cli::ModelFlags;
 use crate::migrate::{self, format_scan_report, infer_provider_from_env, scan_local_tools};
+use crate::tools::ShellPolicy;
 
 pub use file::config_path;
 
@@ -58,6 +59,7 @@ pub struct AppConfig {
     pub base_url: String,
     pub api_key: String,
     pub workdir: PathBuf,
+    pub shell_policy: ShellPolicy,
 }
 
 impl AppConfig {
@@ -101,12 +103,19 @@ impl AppConfig {
 
         let api_key = file::resolve_api_key(flags, file.as_ref(), provider)?;
 
+        let (allowlist, require_approval) = file
+            .as_ref()
+            .and_then(|f| f.shell.as_ref())
+            .map(|s| (s.allowlist.clone(), s.require_approval))
+            .unwrap_or((Vec::new(), false));
+
         Ok(Self {
             provider,
             model,
             base_url,
             api_key,
             workdir,
+            shell_policy: ShellPolicy::new(allowlist, require_approval),
         })
     }
 }

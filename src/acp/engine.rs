@@ -40,7 +40,11 @@ pub fn make_agent(cfg: &AppConfig, cwd: PathBuf) -> Result<Agent> {
         .or_else(|_| cwd.canonicalize())
         .unwrap_or(cwd);
     let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
-    Ok(Agent::new(client, Arc::from(workdir.as_path())))
+    Ok(Agent::new(
+        client,
+        Arc::from(workdir.as_path()),
+        cfg.shell_policy.clone(),
+    ))
 }
 
 pub async fn run_turn_v1(

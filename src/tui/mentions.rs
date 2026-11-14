@@ -1,0 +1,140 @@
+use std::path::Path;
+
+const MAX_LIST: usize = 4_000;
+const HINT_SHOW: usize = 3;
+
+const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", ".cursor"];
+
+/// Active `@path` token at end of input (no spaces in the path fragment).
+pub fn active_mention(input: &str) -> Option<(&str, usize)> {
+    let at = input.rfind('@')?;
+    let tail = &input[at + 1..];
+    if tail.contains(char::is_whitespace) {
+        return None;
+    }
+    Some((tail, at))
+}
+
+pub fn mention_hint(input: &str, workdir: &Path) -> Option<String> {
+    let (prefix, _) = active_mention(input)?;
+    let mut matches: Vec<String> = list_workdir_paths(workdir)
+        .into_iter()
+        .filter(|p| prefix.is_empty() || p.starts_with(prefix))
+        .collect();
+    if matches.is_empty() {
+        return Some("@mention — no matching files".into());
+    }
+    matches.sort();
+    if matches.len() <= HINT_SHOW {
+        return Some(matches.iter().map(|p| format!("@{p}")).collect::<Vec<_>>().join(" · "));
+    }
+    let head: Vec<String> = matches
+        .iter()
+        .take(HINT_SHOW)
+        .map(|p| format!("@{p}"))
+        .collect();
+    Some(format!("{} · …", head.join(" · ")))
+}
+
+pub fn tab_complete_mention(input: &str, workdir: &Path) -> Option<String> {
+    let (prefix, at) = active_mention(input)?;
+    let mut matches: Vec<String> = list_workdir_paths(workdir)
+        .into_iter()
+        .filter(|p| prefix.is_empty() || p.starts_with(prefix))
+        .collect();
+    if matches.is_empty() {
+        return None;
+    }
+    matches.sort();
+    if matches.len() == 1 {
+        let head = &input[..at];
+        return Some(format!("{head}@{}", matches[0]));
+    }
+    if !prefix.is_empty() {
+        let common = common_prefix_iter(matches.iter().map(String::as_str));
+        if common.len() > prefix.len() {
+            let head = &input[..at];
+            return Some(format!("{head}@{common}"));
+        }
+    }
+    None
+}
+
+fn common_prefix_iter<'a>(mut names: impl Iterator<Item = &'a str>) -> String {
+    let first = names.next().unwrap_or("");
+    let mut prefix: Vec<char> = first.chars().collect();
+    for name in names {
+        let chars: Vec<char> = name.chars().collect();
+        let len = prefix
+            .iter()
+            .zip(chars.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        prefix.truncate(len);
+        if prefix.is_empty() {
+            break;
+        }
+    }
+    prefix.iter().collect()
+}
+
+pub fn list_workdir_paths(workdir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    walk_rel(workdir, workdir, &mut out);
+    out
+}
+
+fn walk_rel(base: &Path, dir: &Path, out: &mut Vec<String>) {
+    if out.len() >= MAX_LIST {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for ent in entries.flatten() {
+        if out.len() >= MAX_LIST {
+            break;
+        }
+        let path = ent.path();
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if ent.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            if SKIP_DIRS.contains(&name.as_str()) {
+                continue;
+            }
+            if let Ok(rel) = path.strip_prefix(base) {
+                let rel_s = rel_path_string(rel);
+                out.push(format!("{rel_s}/"));
+            }
+            walk_rel(base, &path, out);
+        } else if let Ok(rel) = path.strip_prefix(base) {
+            out.push(rel_path_string(rel));
+        }
+    }
+}
+
+fn rel_path_string(rel: &Path) -> String {
+    rel.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn detects_active_mention() {
+        assert_eq!(active_mention("hi @src/mai"), Some(("src/mai", 3)));
+        assert!(active_mention("hi @src foo").is_none());
+    }
+
+    #[test]
+    fn completes_unique_file() {
+        let dir = std::env::temp_dir().join(format!("lightrs-mention-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.rs"), "").unwrap();
+        let out = tab_complete_mention("explain @src/l", &dir).unwrap();
+        assert!(out.contains("src/lib.rs"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

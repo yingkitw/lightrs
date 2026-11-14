@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::watch;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use tokio::sync::mpsc;
+
+use crate::tui::{AgentEvent, CommandApproval};
 
 pub use tokens::{TokenStats, TokenSummary, context_usage_text};
 
@@ -13,7 +16,7 @@ use crate::chat::{ApiMessage, ApiRole, ChatRequest, UiMessage, UiRole};
 use crate::session::SessionFile;
 use tokens::{apply_usage, estimate_context_tokens};
 use crate::provider::LlmClient;
-use crate::tools::{execute_tool, tool_schemas};
+use crate::tools::{RunCommandArgs, ShellPolicy, execute_tool, tool_schemas};
 
 const MAX_TOOL_STEPS: usize = 16;
 
@@ -30,8 +33,8 @@ pub enum ObserveEvent<'a> {
     },
 }
 
-fn system_prompt(workdir: &Path) -> String {
-    format!(
+fn system_prompt(workdir: &Path, shell: &ShellPolicy) -> String {
+    let mut text = format!(
         r#"You are lightrs, a minimal terminal coding agent.
 Workdir: {}.
 
@@ -39,12 +42,22 @@ Use tools to read or change the codebase and to run commands — do not invent f
 Prefer small, focused edits. Explain briefly after completing the task.
 If a tool returns an error, fix the issue or ask the user for missing info."#,
         workdir.display()
-    )
+    );
+    if shell.is_restrictive() {
+        text.push_str(
+            "\nShell allowlist is enabled: only commands matching configured prefixes can run.",
+        );
+    }
+    if shell.requires_all_commands_approved() {
+        text.push_str("\nThe user must approve each shell command in the TUI before it runs.");
+    }
+    text
 }
 
 pub struct Agent {
     client: LlmClient,
     workdir: Arc<Path>,
+    shell_policy: ShellPolicy,
     api_history: Vec<ApiMessage>,
     /// UI transcript; readable from the TUI thread while the worker streams LLM output.
     ui_history: Arc<Mutex<Vec<UiMessage>>>,
@@ -53,12 +66,13 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(client: LlmClient, workdir: Arc<Path>) -> Self {
+    pub fn new(client: LlmClient, workdir: Arc<Path>, shell_policy: ShellPolicy) -> Self {
         let mut api_history = Vec::new();
-        api_history.push(ApiMessage::system(system_prompt(&workdir)));
+        api_history.push(ApiMessage::system(system_prompt(&workdir, &shell_policy)));
         let mut agent = Self {
             client,
             workdir,
+            shell_policy,
             api_history,
             ui_history: Arc::new(Mutex::new(Vec::new())),
             token_stats: TokenStats::default(),
@@ -100,7 +114,7 @@ impl Agent {
     }
 
     fn ensure_system_prompt(&mut self) {
-        let prompt = ApiMessage::system(system_prompt(&self.workdir));
+        let prompt = ApiMessage::system(system_prompt(&self.workdir, &self.shell_policy));
         match self.api_history.first_mut() {
             Some(first) if matches!(first.role, ApiRole::System) => *first = prompt,
             _ => self.api_history.insert(0, prompt),
@@ -149,7 +163,10 @@ impl Agent {
     pub fn clear_conversation(&mut self) {
         self.api_history.clear();
         self.api_history
-            .push(ApiMessage::system(system_prompt(&self.workdir)));
+            .push(ApiMessage::system(system_prompt(
+                &self.workdir,
+                &self.shell_policy,
+            )));
         let mut ui = self.ui_history.lock().unwrap();
         ui.clear();
         ui.push(UiMessage::with_role(
@@ -249,7 +266,8 @@ impl Agent {
                             name: &name,
                             arguments: &args,
                         });
-                        let outcome = execute_tool(&workdir, &name, &args);
+                        let outcome =
+                            execute_tool(&workdir, &name, &args, &self.shell_policy, false);
                         on(ObserveEvent::ToolEnd { body: &outcome.body });
                         self.ui_history.lock().unwrap().push(UiMessage::tool_result(
                             &name,
@@ -298,6 +316,7 @@ impl Agent {
         user_text: String,
         mut on: impl FnMut(ObserveEvent<'_>) + Send,
         cancel: watch::Receiver<bool>,
+        ui_tx: mpsc::UnboundedSender<AgentEvent>,
     ) -> Result<String> {
         {
             let mut g = agent.lock().await;
@@ -394,7 +413,39 @@ impl Agent {
                             name: &name,
                             arguments: &args,
                         });
-                        let outcome = execute_tool(&workdir, &name, &args);
+                        let approval = await_run_command_approval(
+                            &name,
+                            &args,
+                            &g.shell_policy,
+                            &ui_tx,
+                        )
+                        .await?;
+                        if approval == Some(false) {
+                            let denied = "error: user denied shell command".to_string();
+                            on(ObserveEvent::ToolEnd { body: &denied });
+                            g.ui_history.lock().unwrap().push(UiMessage::tool_result(
+                                &name,
+                                &args,
+                                &denied,
+                                None,
+                            ));
+                            g.api_history.push(ApiMessage::tool_result(
+                                call.id.clone(),
+                                name.clone(),
+                                denied,
+                            ));
+                            g.refresh_context_estimate();
+                            continue;
+                        }
+                        let bypass = approval == Some(true)
+                            && shell_allowlist_bypass(&name, &args, &g.shell_policy);
+                        let outcome = execute_tool(
+                            &workdir,
+                            &name,
+                            &args,
+                            &g.shell_policy,
+                            bypass,
+                        );
                         on(ObserveEvent::ToolEnd { body: &outcome.body });
                         g.ui_history.lock().unwrap().push(UiMessage::tool_result(
                             &name,
@@ -466,6 +517,39 @@ fn remove_trailing_empty_assistant(ui_history: &Arc<Mutex<Vec<UiMessage>>>) {
             ui.pop();
         }
     }
+}
+
+fn shell_allowlist_bypass(name: &str, args: &str, policy: &ShellPolicy) -> bool {
+    if name != "run_command" {
+        return false;
+    }
+    let Ok(parsed) = serde_json::from_str::<RunCommandArgs>(args) else {
+        return false;
+    };
+    policy.is_restrictive() && !policy.is_allowed(&parsed.command)
+}
+
+async fn await_run_command_approval(
+    name: &str,
+    args: &str,
+    policy: &ShellPolicy,
+    ui_tx: &mpsc::UnboundedSender<AgentEvent>,
+) -> Result<Option<bool>> {
+    if name != "run_command" {
+        return Ok(None);
+    }
+    let parsed: RunCommandArgs = serde_json::from_str(args).context("parse run_command JSON")?;
+    if !policy.needs_interactive_approval(&parsed.command) {
+        return Ok(None);
+    }
+    let (reply, rx) = tokio::sync::oneshot::channel();
+    ui_tx
+        .send(AgentEvent::CommandApproval(CommandApproval {
+            command: parsed.command,
+            reply,
+        }))
+        .map_err(|_| anyhow::anyhow!("ui channel closed"))?;
+    Ok(Some(rx.await.unwrap_or(false)))
 }
 
 fn is_interrupted(err: &anyhow::Error) -> bool {

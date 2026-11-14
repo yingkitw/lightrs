@@ -8,6 +8,7 @@ use crate::agent::{Agent, context_usage_text};
 use crate::tui::app::{App, RunState};
 use crate::tui::theme::{self, palette};
 use crate::tui::info::{header_compact, header_lines};
+use crate::tui::mentions::mention_hint;
 use crate::tui::slash::{is_slash_input, slash_command_hint};
 
 pub fn draw_header(frame: &mut Frame, area: Rect, app: &App, agent: &Agent, rows: u16) {
@@ -37,7 +38,9 @@ pub fn draw_header(frame: &mut Frame, area: Rect, app: &App, agent: &Agent, rows
 
 /// Returns the inner rect of the input block for cursor placement.
 pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
-    let title = if app.state == RunState::Busy {
+    let title = if app.pending_approval.is_some() {
+        " approve shell — y/n "
+    } else if app.state == RunState::Busy {
         " input (busy — read-only) "
     } else if is_slash_input(&app.input) {
         " command "
@@ -54,16 +57,20 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
         });
     let inner = block.inner(area);
 
-    let content = if app.input.is_empty() && app.state == RunState::Ready {
+    let content = if let Some(ref ap) = app.pending_approval {
+        Line::from(Span::styled(&ap.command, theme::busy()))
+    } else if app.input.is_empty() && app.state == RunState::Ready {
         Line::from(vec![Span::styled(
-            "Message…  Enter send · Shift+Enter newline · Ctrl+P history · / commands",
+            "Message…  Enter send · @ file · Tab complete · Ctrl+P history · / commands",
             theme::hint(),
         )])
     } else {
         Line::from(app.input.as_str())
     };
 
-    let style = if app.state == RunState::Busy {
+    let style = if app.pending_approval.is_some() {
+        theme::busy()
+    } else if app.state == RunState::Busy {
         theme::body_muted()
     } else {
         theme::body()
@@ -94,6 +101,8 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let hint = if app.state == RunState::Ready {
         if let Some(slash) = slash_command_hint(&app.input) {
             slash
+        } else if let Some(mention) = mention_hint(&app.input, app.workdir()) {
+            mention
         } else if !app.input.is_empty() {
             "Enter send · Esc clear · Ctrl+U clear".into()
         } else {
