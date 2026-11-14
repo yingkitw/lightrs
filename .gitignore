@@ -4,6 +4,5 @@
 .idea
 .DS_Store
 
-# Agent-local docs (not shipped with the repo)
+# Agent-local loop doc (not shipped with the repo)
 AGENTS.md
-MEMORY.md

@@ -60,6 +60,7 @@
 | `/status` | Session / model details |
 | `/context` | Message count + token usage |
 | `/reload` | Re-read `config.toml` `[shell]` (allowlist, `require_approval`); refresh agent system prompt |
+| `/quiet` | Toggle per-step `[sys]` token lines (`send · ~N ctx`, model in/out); header + `/context` unchanged |
 | `/quit` | Exit (same as `q` when idle) |
 
 `Tab` completes unique slash prefix.

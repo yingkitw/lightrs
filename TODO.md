@@ -21,26 +21,29 @@
 - [x] `run_command` prefix allowlist (`[shell].allowlist` in config)
 - [x] Codex-style approval overlay for `run_command` (`require_approval`, allowlist block → **y/n**)
 - [x] Split `agent/` (`turn`, `approval`, `prompt`, `helpers`); unified tool execution + ACP fail-closed without TUI
-- [x] Markdown transcript: styled inline spans (bold/link/strike), blockquotes, always-on parser
-
+- [x] Markdown transcript: styled inline spans (bold/link/strike), blockquotes, tables, always-on parser
 - [x] `/reload` — hot-reload `[shell]` from `config.toml`
-
 - [x] `patch_file` search/replace tool with unified diff in transcript
-
 - [x] Split `tui/run/` (`events`, `input`)
 - [x] Auto-reload `[shell]` when `config.toml` mtime changes (before send; `/reload` still manual)
-
-- [x] Markdown tables → ASCII pipe grid in transcript
+- [x] GFM table headers in markdown transcript (pulldown `TableHead` cells; bold header row)
+- [x] `/quiet` — hide per-step token `[sys]` lines (header + `/context` unchanged)
 
 ## Backlog
 
-## Scorecard (2026-11-14 → loop pass)
+- [x] Track `MEMORY.md` in git (removed from `.gitignore`; no secrets in file)
+- [ ] `grep` / ripgrep-style search tool (workdir-scoped, size caps)
+- [ ] Provider-specific tool-call stream fixtures (GLM/Kimi/MiniMax)
+
+## Scorecard (2026-11-14)
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 49 tests; `patch_file` + fixtures |
-| Agent reliability | 4 | Stream fallback, step cap; ACP blocks interactive shell when configured |
-| UX (TUI) | 5 | Tools, diff, rich markdown, @mentions, shell approval |
-| Maintainability | 5 | `agent/` + `turn.rs` shared tool path; no monolithic `agent.rs` |
-| Docs alignment | 4 | SPEC/ARCHITECTURE synced; MEMORY local (gitignored) |
-| Footprint | 3 | syntect + similar + optional ACP |
+| Correctness & coverage | 5 | 52 tests; fixtures + shell gate async test |
+| Agent reliability | 4 | Step cap, interrupt, headless shell policy |
+| UX (TUI) | 5 | Tools, diff, markdown, @mentions, approvals |
+| Maintainability | 5 | `agent/`, `tui/run/`, shared tool path |
+| Docs alignment | 5 | SPEC/README/slash sync; MEMORY tracked |
+| Footprint | 3 | ~8.5 MB release (--no-default-features); syntect weight |
+
+**Weakest next:** footprint (optional syntect-less build) or docs (track MEMORY in git).

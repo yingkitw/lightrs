@@ -12,6 +12,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("status", "show model, path, and context"),
     ("context", "message count and token usage"),
     ("reload", "re-read config.toml [shell] policy"),
+    ("quiet", "toggle per-step token sys lines"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +123,15 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             agent.push_system(context_details(&app.config, n, &usage, "context"));
             SlashAction::Handled
         }
+        "quiet" => {
+            let on = !agent.quiet_token_sys();
+            agent.set_quiet_token_sys(on);
+            let state = if on { "hidden" } else { "shown" };
+            agent.push_system(format!(
+                "per-step token lines: {state} (header and /context unchanged; /quiet toggles)"
+            ));
+            SlashAction::Handled
+        }
         "reload" => match app.config.reload_shell_from_file() {
             Ok(msg) => {
                 agent.set_shell_policy(app.config.shell_policy.clone());
@@ -164,5 +174,10 @@ mod tests {
     #[test]
     fn tab_unique_complete() {
         assert_eq!(tab_complete("/cl").as_deref(), Some("/clear"));
+    }
+
+    #[test]
+    fn quiet_listed_for_docs_sync() {
+        assert!(COMMANDS.iter().any(|(n, _)| *n == "quiet"));
     }
 }

@@ -71,6 +71,7 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(joined.contains('│'), "expected table pipes: {joined}");
+        assert!(joined.contains("one"), "table header: {joined}");
         assert!(joined.contains('1') && joined.contains('2'), "table cells: {joined}");
     }
 

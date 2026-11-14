@@ -41,6 +41,8 @@ pub struct Agent {
     pub(crate) ui_history: Arc<Mutex<Vec<UiMessage>>>,
     pub(crate) token_stats: TokenStats,
     pub(crate) estimated_context_tokens: u32,
+    /// When true, skip `send · ~N ctx` and per-step model usage lines in the UI transcript.
+    pub(crate) quiet_token_sys: bool,
 }
 
 impl Agent {
@@ -55,6 +57,7 @@ impl Agent {
             ui_history: Arc::new(Mutex::new(Vec::new())),
             token_stats: TokenStats::default(),
             estimated_context_tokens: 0,
+            quiet_token_sys: false,
         };
         agent.refresh_context_estimate();
         agent
@@ -109,7 +112,18 @@ impl Agent {
         self.estimated_context_tokens = estimate_context_tokens(&self.api_history);
     }
 
+    pub fn set_quiet_token_sys(&mut self, quiet: bool) {
+        self.quiet_token_sys = quiet;
+    }
+
+    pub fn quiet_token_sys(&self) -> bool {
+        self.quiet_token_sys
+    }
+
     pub(crate) fn record_send_estimate(&mut self, api_text: &str) {
+        if self.quiet_token_sys {
+            return;
+        }
         let est = estimate_text_tokens(api_text);
         self.push_system(format!(
             "send · ~{} ctx",
@@ -118,6 +132,9 @@ impl Agent {
     }
 
     pub(crate) fn record_model_usage(&mut self, usage: Option<&TokenUsage>) {
+        if self.quiet_token_sys {
+            return;
+        }
         if let Some(line) = step_usage_line(usage) {
             self.push_system(line);
         }

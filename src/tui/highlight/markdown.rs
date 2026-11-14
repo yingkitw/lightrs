@@ -33,7 +33,8 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
     let mut in_table_cell = false;
     let mut table_cell = String::new();
     let mut table_row: Vec<String> = Vec::new();
-    let mut table_rows: Vec<Vec<String>> = Vec::new();
+    let mut table_head_rows: Vec<Vec<String>> = Vec::new();
+    let mut table_body_rows: Vec<Vec<String>> = Vec::new();
 
     for event in parser {
         match event {
@@ -130,15 +131,24 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
             Event::Start(Tag::Table(_)) => {
                 out.flush_paragraph();
                 in_table = true;
-                table_rows.clear();
+                table_head_rows.clear();
+                table_body_rows.clear();
             }
             Event::End(TagEnd::Table) => {
                 in_table = false;
-                out.push_table(&table_rows);
-                table_rows.clear();
+                out.push_table(&table_head_rows, &table_body_rows);
+                table_head_rows.clear();
+                table_body_rows.clear();
+            }
+            Event::Start(Tag::TableHead) => table_row.clear(),
+            Event::End(TagEnd::TableHead) => {
+                if !table_row.is_empty() {
+                    table_head_rows.push(table_row.clone());
+                }
+                table_row.clear();
             }
             Event::Start(Tag::TableRow) => table_row.clear(),
-            Event::End(TagEnd::TableRow) => table_rows.push(table_row.clone()),
+            Event::End(TagEnd::TableRow) => table_body_rows.push(table_row.clone()),
             Event::Start(Tag::TableCell) => {
                 in_table_cell = true;
                 table_cell.clear();
@@ -289,15 +299,23 @@ impl MdLines {
         self.out.push(Line::from(""));
     }
 
-    fn push_table(&mut self, rows: &[Vec<String>]) {
-        let rows: Vec<Vec<String>> = rows
+    fn push_table(&mut self, head: &[Vec<String>], body: &[Vec<String>]) {
+        let head: Vec<Vec<String>> = head
             .iter()
             .filter(|row| !is_alignment_row(row))
             .cloned()
             .collect();
-        if rows.is_empty() {
+        let body: Vec<Vec<String>> = body
+            .iter()
+            .filter(|row| !is_alignment_row(row))
+            .cloned()
+            .collect();
+        if head.is_empty() && body.is_empty() {
             return;
         }
+        let mut rows = head;
+        let head_count = rows.len();
+        rows.extend(body);
         let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
         if cols == 0 {
             return;
@@ -308,8 +326,12 @@ impl MdLines {
                 widths[i] = widths[i].max(cell.chars().count().min(28));
             }
         }
-        let style = theme::body_muted();
-        for row in &rows {
+        for (idx, row) in rows.iter().enumerate() {
+            let style = if idx < head_count {
+                self.base.add_modifier(Modifier::BOLD)
+            } else {
+                theme::body_muted()
+            };
             let cells: Vec<String> = (0..cols)
                 .map(|i| {
                     let text = row.get(i).map(String::as_str).unwrap_or("");
@@ -354,7 +376,7 @@ fn is_alignment_row(row: &[String]) -> bool {
 
 fn pad_display_cell(text: &str, width: usize) -> String {
     let n = text.chars().count();
-    if n >= width {
+    if n > width {
         let end: String = text.chars().take(width.saturating_sub(1)).collect();
         format!("{end}…")
     } else {

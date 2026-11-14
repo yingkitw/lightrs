@@ -68,8 +68,17 @@ mod tests {
     fn headless_denies_when_approval_required() {
         let policy = ShellPolicy::new(vec![], true);
         let args = r#"{"command":"ls"}"#;
-        // blocking test: resolve needs async — test bypass helper only
         assert!(policy.needs_interactive_approval("ls"));
         assert!(!shell_allowlist_bypass("run_command", args, &policy));
+    }
+
+    #[tokio::test]
+    async fn headless_resolve_denies_require_approval() {
+        let policy = ShellPolicy::new(vec![], true);
+        let args = r#"{"command":"ls"}"#;
+        let gate = resolve_shell_gate("run_command", args, &policy, None)
+            .await
+            .unwrap();
+        assert!(matches!(gate, ShellGate::Denied(_)));
     }
 }

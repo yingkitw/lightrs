@@ -30,7 +30,7 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
 
 const TOOLS: &[&str] = &["read_file", "write_file", "patch_file", "list_dir", "run_command"];
 
-const SLASH: &[&str] = &["help", "clear", "cwd", "status", "context", "reload", "quit"];
+const SLASH: &[&str] = &["help", "clear", "cwd", "status", "context", "reload", "quiet", "quit"];
 
 #[test]
 fn architecture_paths_exist_and_are_documented() {
