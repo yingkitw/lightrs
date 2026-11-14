@@ -13,7 +13,7 @@ use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::agent::{Agent, ObserveEvent};
 use crate::config::AppConfig;
@@ -61,7 +61,22 @@ fn handle_agent_event(
             }
             true
         }
+        AgentEvent::Interrupted => {
+            app.set_ready(&app.config.clone());
+            if app.pin_bottom {
+                app.scroll_to_bottom();
+            }
+            false
+        }
     }
+}
+
+fn is_interrupted(err: &anyhow::Error) -> bool {
+    err.to_string().contains("turn interrupted")
+}
+
+fn request_interrupt(cancel_tx: &watch::Sender<bool>) {
+    let _ = cancel_tx.send(true);
 }
 
 /// Sync TUI loop on the main thread; Tokio is only used on a background runtime for LLM calls.
@@ -81,20 +96,35 @@ pub fn run(cfg: AppConfig) -> Result<()> {
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
+    let (cancel_tx, cancel_rx) = watch::channel(false);
+    let cancel_tx = Arc::new(cancel_tx);
 
     let agent_bg = Arc::clone(&agent);
     let tx_bg = tx.clone();
+    let cancel_bg = Arc::clone(&cancel_tx);
     rt.spawn(async move {
         while let Some(text) = kick_rx.recv().await {
-            let result = Agent::run_user_turn_shared(agent_bg.clone(), text, |ev| {
-                if matches!(ev, ObserveEvent::AssistantDelta { .. }) {
-                    let _ = tx_bg.send(AgentEvent::Refresh);
-                }
-            })
+            let _ = cancel_bg.send(false);
+            let result = Agent::run_user_turn_shared(
+                agent_bg.clone(),
+                text,
+                |ev| {
+                    if matches!(ev, ObserveEvent::AssistantDelta { .. }) {
+                        let _ = tx_bg.send(AgentEvent::Refresh);
+                    }
+                },
+                cancel_rx.clone(),
+            )
             .await;
             match result {
                 Ok(_reply) => {
                     let _ = tx_bg.send(AgentEvent::Done);
+                }
+                Err(e) if is_interrupted(&e) => {
+                    let mut g = agent_bg.lock().await;
+                    g.finish_interrupt();
+                    drop(g);
+                    let _ = tx_bg.send(AgentEvent::Interrupted);
                 }
                 Err(e) => {
                     let _ = tx_bg.send(AgentEvent::Failed(format!("{e:#}")));
@@ -142,8 +172,20 @@ pub fn run(cfg: AppConfig) -> Result<()> {
         if event::poll(Duration::from_millis(poll_ms))? {
             match event::read()? {
                 Event::Key(key) => match key.code {
-                    KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if app.state == RunState::Busy {
+                            request_interrupt(cancel_tx.as_ref());
+                        } else {
+                            break;
+                        }
+                    }
+                    KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if app.state == RunState::Busy {
+                            request_interrupt(cancel_tx.as_ref());
+                        } else {
+                            break;
+                        }
+                    }
                     KeyCode::Char('q')
                         if app.state == RunState::Ready && app.input.is_empty() =>
                     {
@@ -152,9 +194,37 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                     KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         app.clear_input();
                     }
+                    KeyCode::Enter
+                        if app.state == RunState::Ready
+                            && key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        app.push_char('\n');
+                    }
+                    KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if app.state == RunState::Ready {
+                            app.push_char('\n');
+                        }
+                    }
+                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if app.state == RunState::Ready {
+                            if let Some(prev) =
+                                app.composer.recall_older(&app.input)
+                            {
+                                app.input = prev;
+                            }
+                        }
+                    }
+                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if app.state == RunState::Ready {
+                            if let Some(next) = app.composer.recall_newer() {
+                                app.input = next;
+                            }
+                        }
+                    }
                     KeyCode::Enter if app.state == RunState::Ready => {
-                        let line = app.take_input().trim().to_string();
-                        if line.is_empty() {
+                        let line = app.take_input();
+                        app.composer.cancel_browse();
+                        if line.trim().is_empty() {
                             continue;
                         }
                         if is_slash_input(&line) {
@@ -172,6 +242,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                             }
                             continue;
                         }
+                        app.composer.commit(line.clone());
                         app.set_busy();
                         let _ = kick_tx.send(line);
                     }
@@ -186,7 +257,12 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                         }
                     }
                     KeyCode::Esc => {
-                        app.clear_input();
+                        if app.state == RunState::Busy {
+                            request_interrupt(cancel_tx.as_ref());
+                        } else {
+                            app.composer.cancel_browse();
+                            app.clear_input();
+                        }
                     }
                     KeyCode::Up if app.input.is_empty() => app.scroll_up(1),
                     KeyCode::Down if app.input.is_empty() => app.scroll_down(1),

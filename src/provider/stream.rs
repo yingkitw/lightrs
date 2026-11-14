@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;
+use tokio::sync::watch;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Deserialize;
 
@@ -163,6 +164,7 @@ pub async fn post_chat_stream(
     api_key: &str,
     mut request: ChatRequest,
     mut on_apply: impl FnMut(StreamApply),
+    cancel: watch::Receiver<bool>,
 ) -> Result<StreamAccumulator> {
     request.stream = Some(true);
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
@@ -192,6 +194,9 @@ pub async fn post_chat_stream(
     let mut line_buf = String::new();
 
     while let Some(chunk) = byte_stream.next().await {
+        if *cancel.borrow() {
+            bail!("turn interrupted");
+        }
         let chunk = chunk.context("stream chunk")?;
         line_buf.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(newline) = line_buf.find('\n') {

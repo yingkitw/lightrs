@@ -47,13 +47,16 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 
 ### Keys in TUI
 
-- `Enter` — send message
-- `Esc` — clear input
+- `Enter` — send message (supports multi-line input)
+- `Shift+Enter` or `Ctrl+J` — newline in the composer
+- `Ctrl+P` / `Ctrl+N` — recall older / newer submitted prompts (Codex-style history)
+- `Esc` — clear input; while busy, **interrupt** the current turn
+- `Esc` / `Ctrl+C` / `Ctrl+Q` while busy — stop streaming (does not quit)
 - `↑` / `↓` — scroll transcript when input is empty
 - `Ctrl+U` — clear input line
 - `PgUp` / `PgDn` — scroll by screen
 - `Home` / `End` — oldest / newest messages
-- `Ctrl+C` / `q` — quit
+- `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
 - `/help` — list commands (`/clear`, `/cwd`, `/status`, `/quit`, …)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details

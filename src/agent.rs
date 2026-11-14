@@ -3,6 +3,8 @@ mod tokens;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::watch;
+
 use anyhow::Result;
 
 pub use tokens::{TokenStats, TokenSummary, context_usage_text};
@@ -139,6 +141,11 @@ impl Agent {
         });
     }
 
+    pub fn finish_interrupt(&mut self) {
+        remove_trailing_empty_assistant(&self.ui_history);
+        self.push_system("Turn interrupted.");
+    }
+
     pub fn clear_conversation(&mut self) {
         self.api_history.clear();
         self.api_history
@@ -181,14 +188,18 @@ impl Agent {
             let client = self.client.clone();
             let ui_history = self.ui_transcript();
             let workdir = Arc::clone(&self.workdir);
+            let (_stop, cancel) = watch::channel(false);
 
-            let mut stream_failed = false;
             let (message, finish_reason, usage) = match client
-                .chat_stream(request, |apply| {
-                    if let crate::provider::StreamApply::ContentDelta(text) = apply {
-                        append_assistant_delta(&ui_history, &text, &mut on);
-                    }
-                })
+                .chat_stream(
+                    request,
+                    |apply| {
+                        if let crate::provider::StreamApply::ContentDelta(text) = apply {
+                            append_assistant_delta(&ui_history, &text, &mut on);
+                        }
+                    },
+                    cancel,
+                )
                 .await
             {
                 Ok(acc) => {
@@ -197,8 +208,8 @@ impl Agent {
                     let message = acc.into_assistant_message();
                     (message, finish_reason, usage)
                 }
+                Err(e) if is_interrupted(&e) => return Err(e),
                 Err(_) => {
-                    stream_failed = true;
                     let request = ChatRequest {
                         model: self.client.model().to_string(),
                         messages: self.api_history.clone(),
@@ -220,11 +231,7 @@ impl Agent {
                 }
             };
 
-            if stream_failed {
-                apply_usage(&mut self.token_stats, usage.as_ref());
-            } else {
-                apply_usage(&mut self.token_stats, usage.as_ref());
-            }
+            apply_usage(&mut self.token_stats, usage.as_ref());
             self.refresh_context_estimate();
 
             if matches!(finish_reason.as_deref(), Some("length" | "max_tokens")) {
@@ -292,6 +299,7 @@ impl Agent {
         agent: Arc<tokio::sync::Mutex<Self>>,
         user_text: String,
         mut on: impl FnMut(ObserveEvent<'_>) + Send,
+        cancel: watch::Receiver<bool>,
     ) -> Result<String> {
         {
             let mut g = agent.lock().await;
@@ -304,6 +312,10 @@ impl Agent {
         }
 
         for _step in 0..MAX_TOOL_STEPS {
+            if *cancel.borrow() {
+                anyhow::bail!("turn interrupted");
+            }
+
             let (client, request, ui_history, workdir) = {
                 let g = agent.lock().await;
                 (
@@ -320,12 +332,17 @@ impl Agent {
                 )
             };
 
+            let cancel_rx = cancel.clone();
             let (message, finish_reason, usage) = match client
-                .chat_stream(request, |apply| {
-                    if let crate::provider::StreamApply::ContentDelta(text) = apply {
-                        append_assistant_delta(&ui_history, &text, &mut on);
-                    }
-                })
+                .chat_stream(
+                    request,
+                    |apply| {
+                        if let crate::provider::StreamApply::ContentDelta(text) = apply {
+                            append_assistant_delta(&ui_history, &text, &mut on);
+                        }
+                    },
+                    cancel_rx,
+                )
                 .await
             {
                 Ok(acc) => {
@@ -334,6 +351,7 @@ impl Agent {
                     let message = acc.into_assistant_message();
                     (message, finish_reason, usage)
                 }
+                Err(e) if is_interrupted(&e) => return Err(e),
                 Err(_) => {
                     let request = {
                         let g = agent.lock().await;
@@ -455,6 +473,10 @@ fn remove_trailing_empty_assistant(ui_history: &Arc<Mutex<Vec<UiMessage>>>) {
             ui.pop();
         }
     }
+}
+
+fn is_interrupted(err: &anyhow::Error) -> bool {
+    err.to_string().contains("turn interrupted")
 }
 
 fn truncate(s: &str, max: usize) -> String {

@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
+use std::time::Instant;
+
 use crate::config::AppConfig;
+use crate::tui::composer::Composer;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunState {
@@ -11,6 +14,7 @@ pub enum RunState {
 pub enum AgentEvent {
     Done,
     Failed(String),
+    Interrupted,
     /// Transcript changed while a turn is in progress (streaming).
     Refresh,
 }
@@ -26,6 +30,8 @@ pub struct App {
     pub status: String,
     /// When true, new output keeps the viewport pinned to the latest messages.
     pub pin_bottom: bool,
+    pub composer: Composer,
+    pub busy_since: Option<Instant>,
 }
 
 impl App {
@@ -38,7 +44,18 @@ impl App {
             transcript_viewport: 1,
             state: RunState::Ready,
             pin_bottom: true,
+            composer: Composer::default(),
+            busy_since: None,
         }
+    }
+
+    pub fn busy_spinner(&self) -> &'static str {
+        const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let tick = self
+            .busy_since
+            .map(|t| t.elapsed().as_millis() / 80)
+            .unwrap_or(0) as usize;
+        FRAMES[tick % FRAMES.len()]
     }
 
     pub fn push_char(&mut self, c: char) {
@@ -99,7 +116,8 @@ impl App {
 
     pub fn set_busy(&mut self) {
         self.state = RunState::Busy;
-        self.status = "waiting for model…".into();
+        self.status.clear();
+        self.busy_since = Some(Instant::now());
         self.pin_bottom = true;
         self.scroll_to_bottom();
     }
@@ -107,6 +125,7 @@ impl App {
     pub fn set_ready(&mut self, _config: &AppConfig) {
         self.state = RunState::Ready;
         self.status.clear();
+        self.busy_since = None;
     }
 
     pub fn set_error_status(&mut self, msg: String) {

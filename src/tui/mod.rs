@@ -2,6 +2,7 @@ mod app;
 mod highlight;
 mod info;
 mod run;
+mod composer;
 mod slash;
 mod ui;
 

@@ -16,7 +16,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, agent: &Agent) {
         .constraints([
             Constraint::Length(header_rows),
             Constraint::Min(3),
-            Constraint::Length(3),
+            Constraint::Length(5),
             Constraint::Length(1),
         ])
         .split(area);

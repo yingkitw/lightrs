@@ -1,6 +1,7 @@
 mod stream;
 
 use anyhow::{Context, Result, bail};
+use tokio::sync::watch;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
 pub use stream::{StreamAccumulator, StreamApply, post_chat_stream};
@@ -65,6 +66,7 @@ impl LlmClient {
         &self,
         request: ChatRequest,
         on_apply: impl FnMut(StreamApply),
+        cancel: watch::Receiver<bool>,
     ) -> Result<StreamAccumulator> {
         post_chat_stream(
             &self.http,
@@ -72,6 +74,7 @@ impl LlmClient {
             &self.api_key,
             request,
             on_apply,
+            cancel,
         )
         .await
     }

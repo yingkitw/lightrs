@@ -46,7 +46,7 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
 
     let content = if app.input.is_empty() && app.state == RunState::Ready {
         Line::from(vec![Span::styled(
-            "Message the agent…  (/ for commands)",
+            "Message…  Enter send · Shift+Enter newline · Ctrl+P history · / commands",
             Style::default().fg(Color::DarkGray),
         )])
     } else {
@@ -89,10 +89,13 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
         } else {
             "↑↓ scroll (input empty) · /help · q quit".into()
         }
-    } else if app.status.is_empty() {
-        "busy…".into()
     } else {
-        app.status.clone()
+        let phase = if app.status.is_empty() {
+            "thinking"
+        } else {
+            app.status.as_str()
+        };
+        format!("{} {phase} · Esc or Ctrl+C stop", app.busy_spinner())
     };
     frame.render_widget(Paragraph::new(hint).style(style), area);
 }
