@@ -14,12 +14,25 @@ use ratatui::text::Line;
 pub use sys::render_system_body;
 
 pub fn render_message_body(content: &str, width: usize, base: Style) -> Vec<Line<'static>> {
+    let content = content.trim_end();
     let lines = markdown::render_markdown(content, width, base);
-    if lines.is_empty() {
+    let lines = if lines.is_empty() {
         wrap::wrap_plain_lines(content, width, base)
     } else {
         lines
+    };
+    strip_trailing_blank_lines(lines)
+}
+
+fn strip_trailing_blank_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    while let Some(last) = lines.last() {
+        if last.spans.iter().all(|s| s.content.trim().is_empty()) {
+            lines.pop();
+        } else {
+            break;
+        }
     }
+    lines
 }
 
 #[cfg(test)]
@@ -36,6 +49,17 @@ mod tests {
             .collect();
         assert!(joined.contains("mermaid"));
         assert!(joined.contains("One"));
+    }
+
+    #[test]
+    fn trailing_newline_does_not_add_blank_body_line() {
+        let lines = render_message_body("Hello world.\n\n", 80, Style::default());
+        assert!(
+            lines
+                .last()
+                .is_none_or(|l| l.spans.iter().any(|s| !s.content.trim().is_empty())),
+            "should not end with an empty rendered line"
+        );
     }
 
     #[test]

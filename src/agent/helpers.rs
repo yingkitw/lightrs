@@ -7,6 +7,11 @@ use super::ObserveEvent;
 pub(crate) const MAX_TOOL_STEPS: usize = 16;
 const TOOL_UI_TRUNCATE: usize = 8_000;
 
+/// Drop trailing whitespace/newlines from model text (avoids extra blank lines in the TUI).
+pub(crate) fn normalize_assistant_text(s: &str) -> String {
+    s.trim_end().to_string()
+}
+
 pub(crate) fn truncate_tool_ui(s: &str) -> String {
     truncate(s, TOOL_UI_TRUNCATE)
 }

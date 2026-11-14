@@ -11,8 +11,8 @@ use crate::tui::AgentEvent;
 
 use super::approval::{ShellGate, resolve_shell_gate};
 use super::helpers::{
-    MAX_TOOL_STEPS, append_assistant_delta, is_interrupted, remove_trailing_empty_assistant,
-    truncate_tool_ui,
+    MAX_TOOL_STEPS, append_assistant_delta, is_interrupted, normalize_assistant_text,
+    remove_trailing_empty_assistant, truncate_tool_ui,
 };
 use super::{Agent, ObserveEvent};
 
@@ -232,17 +232,29 @@ impl Agent {
                 return Ok(None);
             }
 
-        let text = message
-            .text_content()
-            .unwrap_or_else(|| "(empty response)".to_string());
-        self.api_history.push(message);
+        let text = normalize_assistant_text(
+            message
+                .text_content()
+                .as_deref()
+                .unwrap_or("(empty response)"),
+        );
+        let mut stored = message;
+        stored.content = Some(serde_json::Value::String(text.clone()));
+        self.api_history.push(stored);
         let streamed = self
             .ui_history
             .lock()
             .unwrap()
             .last()
             .is_some_and(|m| m.role == UiRole::Assistant && !m.content.is_empty());
-        if !streamed {
+        if streamed {
+            let mut ui = self.ui_history.lock().unwrap();
+            if let Some(last) = ui.last_mut() {
+                if last.role == UiRole::Assistant {
+                    last.content = text.clone();
+                }
+            }
+        } else {
             self.ui_history.lock().unwrap().push(UiMessage::with_role(
                 UiRole::Assistant,
                 text.clone(),
