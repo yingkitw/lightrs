@@ -1,4 +1,5 @@
 mod app;
+mod theme;
 mod highlight;
 mod info;
 mod run;

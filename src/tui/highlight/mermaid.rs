@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+
+use crate::tui::theme::{self, palette};
 
 use super::wrap::wrap_plain_lines;
 
@@ -25,10 +27,10 @@ struct SeqMsg {
 pub fn render_mermaid(source: &str, width: usize) -> Vec<Line<'static>> {
     let view = interpret(source);
     let header_style = Style::default()
-        .fg(Color::Magenta)
+        .fg(palette::MERMAID_ACCENT)
         .add_modifier(Modifier::BOLD);
-    let edge_style = Style::default().fg(Color::Rgb(160, 200, 255));
-    let note_style = Style::default().fg(Color::DarkGray);
+    let edge_style = Style::default().fg(palette::MERMAID_EDGE);
+    let note_style = theme::body_muted();
 
     let mut out = Vec::new();
     out.push(Line::from(Span::styled(
@@ -48,9 +50,7 @@ pub fn render_mermaid(source: &str, width: usize) -> Vec<Line<'static>> {
     }
 
     out.push(Line::from(Span::styled("source:", note_style)));
-    let code_style = Style::default()
-        .fg(Color::Rgb(180, 210, 255))
-        .bg(Color::Rgb(30, 32, 42));
+    let code_style = theme::code_block();
     out.extend(wrap_plain_lines(
         source.trim_end_matches('\n'),
         width,

@@ -1,6 +1,8 @@
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+
+use crate::tui::theme::{self, palette};
 
 use super::mermaid;
 use super::wrap::{wrap_plain_lines, wrap_styled_lines};
@@ -20,10 +22,7 @@ fn normalize_lang(lang: &str) -> String {
 }
 
 fn code_block_lines(code: &str, width: usize) -> Vec<Line<'static>> {
-    let style = Style::default()
-        .fg(Color::Rgb(180, 210, 255))
-        .bg(Color::Rgb(30, 32, 42));
-    wrap_plain_lines(code.trim_end_matches('\n'), width, style)
+    wrap_plain_lines(code.trim_end_matches('\n'), width, theme::code_block())
 }
 
 pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<Line<'static>> {
@@ -86,9 +85,7 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
                 out.flush_paragraph();
                 out.out.push(Line::from(Span::styled(
                     format!(" `{code}` "),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .bg(Color::Rgb(40, 42, 54)),
+                    theme::inline_code(),
                 )));
             }
             Event::Start(Tag::Link { .. }) => in_link = true,
@@ -115,7 +112,7 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
             Event::Rule => {
                 out.flush_paragraph();
                 let rule = "─".repeat(width.max(8).min(48));
-                out.out.push(Line::styled(rule, Style::default().fg(Color::DarkGray)));
+                out.out.push(Line::styled(rule, theme::border()));
             }
             Event::Html(_) | Event::InlineHtml(_) => {}
             _ => {}
@@ -160,7 +157,7 @@ impl MdLines {
             s = s.add_modifier(Modifier::ITALIC);
         }
         if link {
-            s = s.fg(Color::Cyan).add_modifier(Modifier::UNDERLINED);
+            s = theme::link();
         }
         s
     }
@@ -185,10 +182,10 @@ impl MdLines {
 
     fn push_heading(&mut self, text: &str, level: HeadingLevel) {
         let color = match level {
-            HeadingLevel::H1 => Color::Cyan,
-            HeadingLevel::H2 => Color::Green,
-            HeadingLevel::H3 => Color::Magenta,
-            _ => Color::Yellow,
+            HeadingLevel::H1 => palette::HEADING_1,
+            HeadingLevel::H2 => palette::HEADING_2,
+            HeadingLevel::H3 => palette::HEADING_3,
+            _ => palette::HEADING_OTHER,
         };
         let indent = match level {
             HeadingLevel::H1 => "",
@@ -221,7 +218,7 @@ impl MdLines {
         };
         self.out.push(Line::from(Span::styled(
             format!("── {header} ──"),
-            Style::default().fg(Color::DarkGray),
+            theme::fence_header(),
         )));
         self.out.extend(code_block_lines(code, self.width));
         self.out.push(Line::from(""));

@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
@@ -8,6 +8,7 @@ use crate::agent::Agent;
 use crate::chat::{UiMessage, UiRole};
 use crate::tui::app::{App, RunState};
 use crate::tui::highlight::render_message_body;
+use crate::tui::theme::{self, palette};
 
 const COLLAPSED_RESULT_CHARS: usize = 480;
 
@@ -31,9 +32,7 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
         if tail.is_none() {
             lines.push(Line::from(Span::styled(
                 "● waiting for model…",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::ITALIC),
+                theme::busy().add_modifier(Modifier::ITALIC),
             )));
         }
     }
@@ -56,7 +55,10 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
         title.push_str(&format!(" ↑{} ", app.scroll));
     }
 
-    let block = Block::default().title(title).borders(Borders::ALL);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(theme::border());
     let paragraph = Paragraph::new(Text::from(visible))
         .block(block)
         .wrap(Wrap { trim: false });
@@ -82,17 +84,16 @@ fn transcript_lines(
         if m.role == UiRole::Tool && m.content.starts_with("→") {
             lines.push(Line::from(Span::styled(
                 m.content.clone(),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(palette::TOOL),
             )));
             lines.push(Line::from(""));
             continue;
         }
-        let (label, color) = role_style(m.role);
-        let label_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+        let (label, label_style) = theme::role_tag(m.role);
         let body_style = match m.role {
-            UiRole::System | UiRole::Tool => Style::default().fg(Color::DarkGray),
-            UiRole::Error => Style::default().fg(Color::Red),
-            _ => Style::default(),
+            UiRole::System | UiRole::Tool => theme::body_muted(),
+            UiRole::Error => theme::error(),
+            _ => theme::body(),
         };
         lines.push(Line::from(vec![Span::styled(format!("[{label}]"), label_style)]));
         lines.extend(render_message_body(&m.content, width, body_style));
@@ -131,14 +132,12 @@ fn render_tool_block(
     let marker = if expanded { "▼" } else { "▸" };
     let mut header = vec![Span::styled(
         format!("{marker} {} ", tc.name),
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
+        theme::tool_header(expanded),
     )];
     if !expanded {
         header.push(Span::styled(
             truncate_inline(&tc.arguments, 72),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(palette::TOOL_ARGS),
         ));
     }
     header.push(Span::styled(
@@ -147,20 +146,18 @@ fn render_tool_block(
         } else {
             "  (click or o expand)"
         },
-        Style::default().fg(Color::Rgb(80, 80, 80)),
+        theme::hint(),
     ));
     lines.push(Line::from(header));
     if expanded {
         lines.push(Line::from(Span::styled(
             "arguments:",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
+            theme::body_muted().add_modifier(Modifier::ITALIC),
         )));
         lines.extend(render_message_body(
             &format_args_detail(&tc.arguments),
             width,
-            Style::default().fg(Color::Rgb(200, 200, 200)),
+            theme::body(),
         ));
     }
     let body = if expanded {
@@ -170,15 +167,9 @@ fn render_tool_block(
     };
     lines.push(Line::from(Span::styled(
         "result:",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
+        theme::body_muted().add_modifier(Modifier::ITALIC),
     )));
-    lines.extend(render_message_body(
-        &body,
-        width,
-        Style::default().fg(Color::DarkGray),
-    ));
+    lines.extend(render_message_body(&body, width, theme::body_muted()));
     lines.push(Line::from(""));
 }
 
@@ -206,16 +197,6 @@ fn format_args_detail(raw: &str) -> String {
         serde_json::to_string_pretty(&v).unwrap_or_else(|_| trimmed.to_string())
     } else {
         trimmed.to_string()
-    }
-}
-
-fn role_style(role: UiRole) -> (&'static str, Color) {
-    match role {
-        UiRole::User => ("you", Color::Cyan),
-        UiRole::Assistant => ("agent", Color::Green),
-        UiRole::Tool => ("tool", Color::Yellow),
-        UiRole::System => ("sys", Color::DarkGray),
-        UiRole::Error => ("err", Color::Red),
     }
 }
 
