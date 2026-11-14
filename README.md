@@ -9,8 +9,9 @@ cargo install --path .
 # or
 cargo build --release
 
-# TUI + migrate only (no ACP server): smaller binary
-cargo build --release --no-default-features
+# No ACP (smaller): `cargo build --release --no-default-features`
+# Smallest TUI (plain code fences, no ACP): same as above without `syntect`
+# TUI + syntect, no ACP: `cargo build --release --no-default-features --features syntect`
 ```
 
 ## API keys
@@ -53,7 +54,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Enter` — send message (supports multi-line input)
 - `Shift+Enter` or `Ctrl+J` — newline in the composer
 - `Ctrl+P` / `Ctrl+N` — recall older / newer submitted prompts (Codex-style history)
-- `@path` — attach a workdir-relative file path in the message; `Tab` completes (skips `.git` / `target` / `node_modules`)
+- `@path` — attach workdir files to the API message (`Tab` completes); `$skill-id` — attach a **skill** (`Tab` on `$` prefix); paths skip `.git` / `target` / `node_modules`
 - `Esc` — clear input; while busy, **interrupt** the current turn
 - `Esc` / `Ctrl+C` / `Ctrl+Q` while busy — stop streaming (does not quit)
 - `↑` / `↓` — scroll transcript when input is empty
@@ -64,12 +65,11 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
 - `/help` — list commands (`/clear`, `/cwd`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit`, …)
-- `@path` — attach file snippets to the API message; `$skill-id` — attach a **skill** (`SKILL.md` from Cursor, Claude Code, OpenCode, pi, Codex, or `~/.config/lightrs/skills`)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
-- Transcript: **Markdown** (bold/links/blockquotes), **syntect** fenced code, **Mermaid** ASCII previews, collapsible **tool** rows (mouse or `o`), and colorized **unified diff** on `write_file`
+- Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** ASCII, collapsible **tool** rows (mouse or `o`), unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
 - Mouse wheel scrolls the transcript; left-click a tool block to expand/collapse
 
-The agent can **read/write/patch files**, **list directories**, and **run shell commands** under the configured working directory (same privilege as your user).
+The agent can **read/write/patch files**, **`grep`** (literal search in tree), **list directories**, and **run shell commands** under the configured working directory (same privilege as your user).
 
 ### ACP (Agent Client Protocol)
 
@@ -99,7 +99,7 @@ At runtime, lightrs **discovers skills** from that tree plus `~/.cursor/skills`,
 
 - One OpenAI-compatible HTTP client for all backends (optional streaming SSE)
 - Fixed tool set: read/write/list + shell; no in-process MCP/LSP
-- Tokio agent worker + sync TUI thread; per-project session JSON under `~/.config/lightrs/sessions/`
+- Tokio agent worker + sync TUI thread; per-project session JSON under `~/.config/lightrs/sessions/` (user/agent/tool turns; ephemeral `[sys]` omitted)
 - Main crates: `ratatui`, `reqwest`, `pulldown-cmark`, `syntect`, `similar` (write diffs)
 
 See `ARCHITECTURE.md`, `SPEC.md`, and `TODO.md`.

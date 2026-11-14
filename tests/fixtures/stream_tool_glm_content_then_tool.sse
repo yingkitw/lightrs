@@ -1,0 +1,11 @@
+data: {"choices":[{"delta":{"content":"Checking"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"content":"…"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_glm","type":"function","function":{"name":"grep","arguments":"{\"pattern\":"}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"TODO\""}}]}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]

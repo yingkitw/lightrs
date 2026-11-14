@@ -1,5 +1,6 @@
 mod diff;
 mod fs;
+mod grep;
 mod outcome;
 mod schemas;
 mod shell;
@@ -37,6 +38,10 @@ pub fn execute_tool(
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },
         "list_dir" => match parse::<fs::ListDirArgs>(arguments).and_then(|a| fs::list_dir(workdir, a)) {
+            Ok(s) => ToolOutcome::ok(s),
+            Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
+        },
+        "grep" => match parse::<grep::GrepArgs>(arguments).and_then(|a| grep::grep(workdir, a)) {
             Ok(s) => ToolOutcome::ok(s),
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },

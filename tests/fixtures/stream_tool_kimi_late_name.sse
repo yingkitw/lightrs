@@ -1,0 +1,7 @@
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_kimi_1","type":"function","function":{"arguments":"{\"path\":\""}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"list_dir","arguments":"src\"}"}}]}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":42,"completion_tokens":18,"total_tokens":60}}
+
+data: [DONE]

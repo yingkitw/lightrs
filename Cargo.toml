@@ -3,7 +3,8 @@ name = "lightrs"
 version = "0.1.0"
 edition = "2024"
 description = "Lightweight TUI coding agent (GLM, Kimi, MiniMax)"
-license = "MIT"
+license = "Apache-2.0"
+authors = ["Ying Kit WONG"]
 
 [lib]
 name = "lightrs"
@@ -14,10 +15,12 @@ name = "lightrs"
 path = "src/main.rs"
 
 [features]
-default = ["acp", "acp-v2"]
-# TUI-only build: `cargo build --no-default-features`
+default = ["acp", "acp-v2", "syntect"]
+# Smallest TUI: `cargo build --release --no-default-features`
+# TUI + highlight, no ACP: `cargo build --release --no-default-features --features syntect`
 acp = ["dep:agent-client-protocol"]
 acp-v2 = ["acp", "agent-client-protocol?/unstable_protocol_v2"]
+syntect = ["dep:syntect"]
 
 [dependencies]
 agent-client-protocol = { version = "5", features = ["stdio"], optional = true }
@@ -30,6 +33,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 similar = "2"
 pulldown-cmark = "0.13"
-syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"], optional = true }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync"] }
 toml = "1"

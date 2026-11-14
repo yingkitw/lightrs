@@ -5,19 +5,19 @@ lib.rs, main.rs         Library + binary; `run()` in lib
 cli.rs                  Commands: tui (default), acp, import, migrate
 config/                 Provider, env/file/CLI load, validate_work_path
 chat.rs                 ApiMessage, UiMessage, ToolCallUi, FileDiffUi
-session.rs              Per-workdir JSON session save/load
+session.rs              Per-workdir JSON session save/load (`conversation_ui_history` drops `[sys]`)
 paths.rs                ~/.config/lightrs paths (no directories crate)
 provider.rs             HTTP client
 provider/stream.rs      SSE reassembly for streaming + tool_calls
 agent/                  mod, turn, approval, prompt, helpers, tokens — tool loop (max 16)
 skills/                 SKILL.md discovery + rules; `$id` attach + system catalog
 mentions.rs             @file attach for API user messages (workdir-scoped)
-tools/                  schemas, fs/shell, diff (similar), ToolOutcome
+tools/                  schemas, fs/shell/grep, diff (similar), ToolOutcome
 opencode/, migrate/    Import + auto-migrate scanners
 acp/                    Optional ACP v1/v2 server (feature `acp`)
 tui/
   run/ (mod, events, input), app.rs, composer.rs, mentions.rs, slash.rs, info.rs, theme.rs
-  highlight/            markdown (pulldown), syntect, mermaid ASCII, diff render, wrap
+  highlight/            markdown, syntect, mermaid, `highlight/diff`, `sys.rs`, wrap
   ui/                   chrome (header/input/status), transcript (tools + diff + markdown)
 ```
 
@@ -46,12 +46,12 @@ Reference: [Codex `codex-rs/tui`](https://github.com/openai/codex/tree/main/code
 
 | Area | Implementation |
 |------|----------------|
-| Transcript | Markdown, syntect fences, Mermaid ASCII, **unified diff** for `write_file` (`similar` + `tui/highlight/diff.rs`) |
+| Transcript | Markdown, syntect, Mermaid, **unified diff** for `write_file` / `patch_file`; **`[sys]`** via `tui/highlight/sys.rs` (not persisted) |
 | Tool calls | One `UiMessage` per call; collapse/expand via **`o`** or **click**; `FileDiffUi` on writes |
 | Theme | Shared palette `tui/theme.rs` (roles, diff +/-, code blocks) |
 | Composer | Multi-line input, **Ctrl+P/N** history (`tui/composer.rs`) |
 | Lifecycle | Busy spinner; **Esc / Ctrl+C** interrupt |
-| Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/cwd`, `/status`, `/context`, `/quit` |
+| Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/cwd`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit` |
 
 Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses input-pane **y/n** approval when configured (`[shell].require_approval` or allowlist block).
 
@@ -59,9 +59,9 @@ Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses i
 
 `ratatui`, `crossterm`, `pulldown-cmark`, `syntect`, `similar`, `reqwest` (rustls + stream), `tokio`. ACP adds optional `agent-client-protocol`.
 
-Build without ACP: `cargo build --release --no-default-features`.
+Build profiles: default includes ACP + syntect (~13 MB release here). `cargo build --release --no-default-features` drops both (~7.6 MB); add `--features syntect` for highlighting without ACP.
 
-Tests: `tests/docs_sync.rs` (doc alignment); `tests/provider_fixtures.rs` + `tests/fixtures/` (recorded chat JSON + SSE).
+Tests: `tests/docs_sync.rs` (doc alignment); `tests/provider_fixtures.rs` + `tests/fixtures/` (chat JSON + SSE, including Kimi/GLM/MiniMax tool streams).
 
 ## Security notes
 

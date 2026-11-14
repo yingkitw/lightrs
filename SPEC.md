@@ -17,7 +17,7 @@
 ## Non-goals (v0.1)
 
 - In-process MCP server (imported MCP JSON is stored for future wiring)
-- LSP, embedded ripgrep, multi-agent orchestration
+- LSP, full regex/ripgrep parity, multi-agent orchestration
 - Sandboxed containers for shell execution
 - Side-by-side or inline patched diff editor (unified diff in transcript only)
 
@@ -26,6 +26,7 @@
 ### Transcript
 
 - Roles: user, assistant, tool, system, error
+- **`[sys]`**: ephemeral UI-only (`UiRole::System`); styled with `▏ sys` bars (`tui/highlight/sys.rs`); never sent to the API; **excluded** from `session.rs` save/restore
 - **Markdown**: full pulldown pass on message bodies — headings, lists, **bold** / *italic* / ~~strike~~, links (styled), blockquotes (`▏`), pipe tables (`│`), rules; strikethrough/task lists enabled
 - **Fenced code**: syntect highlight + wrap
 - **Mermaid** (`mermaid` / `mmd`): ASCII flow/sequence preview + source
@@ -46,6 +47,7 @@
 
 - `Enter` send; `Shift+Enter` / `Ctrl+J` newline
 - `@relative/path` file mentions in the composer; `Tab` completes paths under **workdir** (status bar shows matches). On send, matching files attach to the **API** user message only (12 KiB per file, 36 KiB total); the transcript shows your composer text unchanged
+- `$skill-id` invokes discovered skills (`Tab` on `$` prefix); skill bodies attach to the API message (see **Skills** below)
 - `Ctrl+P` / `Ctrl+N` prompt history
 - Scroll transcript when input empty (`↑`/`↓`, PgUp/PgDn, Home/End)
 - Interrupt while busy: `Esc`, `Ctrl+C`, `Ctrl+Q` (does not quit)
@@ -59,7 +61,7 @@
 | `/cwd` | Print working directory |
 | `/status` | Session / model details |
 | `/context` | Message count + token usage |
-| `/reload` | Re-read `config.toml` `[shell]` (allowlist, `require_approval`); refresh agent system prompt |
+| `/reload` | Re-read `config.toml` `[shell]`; rescan skills; refresh agent system prompt |
 | `/quiet` | Toggle per-step `[sys]` token lines (`send · ~N ctx`, model in/out); header + `/context` unchanged |
 | `/skills` | List discovered skills (`$id` to invoke on send) |
 | `/quit` | Exit (same as `q` when idle) |
@@ -75,7 +77,8 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - System prompt: concise coding helper; must use tools for filesystem/shell facts
 - Loop: user message → model → (optional) tool calls → tool results → model until text reply or step cap (**16**)
 - **Streaming**: assistant text appended live when supported; tool calls assembled from stream deltas before execution
-- Tools: `read_file`, `write_file`, `patch_file`, `list_dir`, `run_command` (schemas in `tools/schemas.rs`)
+- Tools: `read_file`, `write_file`, `patch_file`, `list_dir`, `grep`, `run_command` (schemas in `tools/schemas.rs`)
+- **`grep`**: literal substring search under workdir; skips `.git` / `target` / `node_modules`; capped matches/files/bytes (`tools/grep.rs`)
 - **Skills**: `skills/mod.rs` scans `SKILL.md` directories (OpenCode import tree, Cursor, Claude Code, pi, Codex, optional `[skills].paths`). Catalog appended to system prompt; `$skill-id` in the user message attaches skill body to the API payload (UI unchanged). `@path` file attach unchanged (`mentions.rs`). Rules from `~/.config/lightrs/rules/*.md` merge into system prompt.
 
 ## Configuration
@@ -109,3 +112,7 @@ paths = []   # extra roots with skill subdirs or SKILL.md
 ```
 
 Disabled when `enabled = false`. Catalog and rules refresh on each send and on `/reload` / `/skills`.
+
+### Auto config refresh
+
+Before each user message, if `config.toml` mtime changed, `[shell]` is reloaded (same as `/reload` shell portion) without restarting the binary.

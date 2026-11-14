@@ -15,6 +15,17 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Agent state lives behind `tokio::sync::Mutex<Agent>`; async worker uses `.lock().await`.
 - TUI thread uses `blocking_lock()` for draw and slash commands — do not use `std::sync::Mutex` across `.await` in `tokio::spawn`.
 
+## Build features (2026-11-14)
+
+- `syntect` Cargo feature (default on): fenced code uses syntect; off → monochrome `theme::code_block()` lines.
+- `cargo build --release --no-default-features` — no ACP, no syntect (smallest TUI binary; ~7.6 MB vs ~13 MB with defaults on this machine).
+
+## grep tool (2026-11-14)
+
+- `tools/grep.rs`: recursive literal search under `validate_work_path`; skip `.git`, `target`, `node_modules`, `.cursor`.
+- Limits: 80 matches default (200 max), 2000 files, 256 KiB read per file; `path:line:col:text` output.
+- Not regex — use distinctive literals; full ripgrep remains non-goal unless scoped later.
+
 ## Tools & security
 
 - Paths must stay under `workdir` after `canonicalize` (`config::validate_work_path`).
@@ -30,6 +41,9 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - `/clear` deletes the session file for the project.
 
 ## Streaming (2026-03-19)
+
+- Fixture tests: `tests/fixtures/stream_tool_*.sse` — Kimi may stream `arguments` before `function.name`; GLM may emit assistant `content` then tool deltas; MiniMax may interleave multiple `index` values in one chunk.
+- `StreamAccumulator` merges by `tool_calls[].index`; always run `into_assistant_message()` after full SSE replay.
 
 - LLM turns use OpenAI-style SSE (`stream: true` on `/chat/completions`); deltas append to the last assistant `UiMessage` and emit `ObserveEvent::AssistantDelta`.
 - If the stream request fails (provider without SSE), the agent falls back to a non-streaming `chat()` call.
@@ -95,6 +109,11 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 - Per-turn `[sys]` lines: `send · ~N ctx` and model in/out from `agent/turn.rs` via `record_send_estimate` / `record_model_usage`.
 - `/quiet` toggles `Agent.quiet_token_sys` (not persisted in session); header + `/context` still show usage.
+- Render: `tui/highlight/sys.rs` — `▏ sys` bars; compact token/cwd styling; multi-line slash output with `/cmd` highlights.
+
+## Session UI (2026-11-14)
+
+- `session::conversation_ui_history` strips `UiRole::System` on save; `restore_session` filters on load — `[sys]` is live-transcript only, not conversation history on disk.
 
 ## Config reload (2026-11-14)
 

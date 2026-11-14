@@ -16,6 +16,7 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
     ("src/paths.rs", "paths.rs"),
     ("src/provider/stream.rs", "stream.rs"),
     ("src/tools/diff.rs", "diff"),
+    ("src/tools/grep.rs", "grep"),
     ("src/tui/theme.rs", "theme.rs"),
     ("src/tui/composer.rs", "composer.rs"),
     ("src/tui/mentions.rs", "mentions"),
@@ -27,9 +28,12 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
     ("src/tui/highlight/markdown.rs", "markdown"),
     ("src/tui/highlight/syntect.rs", "syntect"),
     ("src/tui/highlight/diff.rs", "highlight/diff"),
+    ("src/tui/highlight/sys.rs", "sys.rs"),
 ];
 
-const TOOLS: &[&str] = &["read_file", "write_file", "patch_file", "list_dir", "run_command"];
+const TOOLS: &[&str] = &[
+    "read_file", "write_file", "patch_file", "list_dir", "grep", "run_command",
+];
 
 const SLASH: &[&str] = &[
     "help", "clear", "cwd", "status", "context", "reload", "quiet", "skills", "quit",

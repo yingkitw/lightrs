@@ -60,3 +60,35 @@ fn stream_tool_call_fixture() {
     assert_eq!(calls[0].function.name, "read_file");
     assert!(calls[0].function.arguments.contains("README.md"));
 }
+
+#[test]
+fn stream_kimi_late_function_name() {
+    let acc = replay_sse_body(&fixture("stream_tool_kimi_late_name.sse")).unwrap();
+    assert_eq!(acc.usage.as_ref().and_then(|u| u.total_tokens), Some(60));
+    let msg = acc.into_assistant_message();
+    let calls = msg.tool_calls.expect("calls");
+    assert_eq!(calls[0].function.name, "list_dir");
+    assert!(calls[0].function.arguments.contains("src"));
+}
+
+#[test]
+fn stream_glm_text_then_tool() {
+    let acc = replay_sse_body(&fixture("stream_tool_glm_content_then_tool.sse")).unwrap();
+    assert!(acc.content.contains("Checking"));
+    let msg = acc.into_assistant_message();
+    let calls = msg.tool_calls.expect("calls");
+    assert_eq!(calls[0].function.name, "grep");
+    assert!(calls[0].function.arguments.contains("TODO"));
+}
+
+#[test]
+fn stream_minimax_dual_tool_calls() {
+    let acc = replay_sse_body(&fixture("stream_tool_minimax_dual.sse")).unwrap();
+    let msg = acc.into_assistant_message();
+    let calls = msg.tool_calls.expect("calls");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].function.name, "grep");
+    assert!(calls[0].function.arguments.contains("err"));
+    assert_eq!(calls[1].function.name, "read_file");
+    assert!(calls[1].function.arguments.contains("Cargo.toml"));
+}

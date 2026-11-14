@@ -10,41 +10,39 @@
 - [x] Token usage in header + `/context`
 - [x] Codex-style composer (multi-line, history, interrupt, busy spinner)
 - [x] Collapsible tool-call transcript (`tool_call` UI; click / `o`)
-- [x] Unified diff view for `write_file` (`similar`, `FileDiffUi`)
-- [x] Markdown transcript + syntect + Mermaid ASCII
+- [x] Unified diff view for `write_file` / `patch_file` (`similar`, `FileDiffUi`)
+- [x] Markdown transcript + syntect + Mermaid ASCII + GFM tables
 - [x] Central TUI theme (`tui/theme.rs`)
-- [x] Module split (`config/`, `tools/`, `tui/highlight/`, `provider/stream.rs`)
+- [x] Module split (`config/`, `tools/`, `tui/highlight/`, `provider/stream.rs`, `agent/`, `skills/`)
 - [x] `tests/docs_sync.rs` — doc/tool/slash alignment
-- [x] Recorded HTTP/SSE fixtures (`tests/fixtures/`, `lib.rs` + `provider_fixtures.rs`)
-- [x] Doc audit (ARCHITECTURE, SPEC, TODO, README, MEMORY, AGENTS)
-- [x] Codex-style `@` file mentions in composer (`tui/mentions.rs`, Tab complete)
-- [x] `run_command` prefix allowlist (`[shell].allowlist` in config)
-- [x] Codex-style approval overlay for `run_command` (`require_approval`, allowlist block → **y/n**)
-- [x] Split `agent/` (`turn`, `approval`, `prompt`, `helpers`); unified tool execution + ACP fail-closed without TUI
-- [x] Markdown transcript: styled inline spans (bold/link/strike), blockquotes, tables, always-on parser
-- [x] `/reload` — hot-reload `[shell]` from `config.toml`
-- [x] `patch_file` search/replace tool with unified diff in transcript
-- [x] Split `tui/run/` (`events`, `input`)
-- [x] Auto-reload `[shell]` when `config.toml` mtime changes (before send; `/reload` still manual)
-- [x] GFM table headers in markdown transcript (pulldown `TableHead` cells; bold header row)
-- [x] `/quiet` — hide per-step token `[sys]` lines (header + `/context` unchanged)
-- [x] Agent skills — discover SKILL.md (OpenCode/Cursor/Claude/pi/Codex), system catalog, `$id` attach, `/skills`
+- [x] Recorded HTTP/SSE fixtures (`tests/fixtures/`, `provider_fixtures.rs`)
+- [x] Codex-style `@` file mentions + `$skill` attach; `/skills` catalog
+- [x] `run_command` allowlist + TUI **y/n** approval (`agent/approval.rs`)
+- [x] `/reload`, auto `[shell]` mtime reload, `/quiet` token lines
+- [x] Track `MEMORY.md` in git
+- [x] `[sys]` transcript styling (`tui/highlight/sys.rs`); ephemeral in session JSON
+
+- [x] `grep` tool — literal workdir search (`tools/grep.rs`; caps on matches/files/bytes)
+- [x] Doc audit sync (README/SPEC/ARCHITECTURE/TODO/MEMORY + `docs_sync`)
+- [x] Provider stream fixtures (Kimi / GLM / MiniMax SSE shapes in `tests/fixtures/`)
+
+- [x] Optional `syntect` feature — plain code fences when off (`Cargo.toml` `syntect`)
 
 ## Backlog
 
-- [x] Track `MEMORY.md` in git (removed from `.gitignore`; no secrets in file)
-- [ ] `grep` / ripgrep-style search tool (workdir-scoped, size caps)
-- [ ] Provider-specific tool-call stream fixtures (GLM/Kimi/MiniMax)
+- [ ] Headless `grep` in CI: `cargo test --no-default-features --lib`
+- [ ] MCP config stub → document-only or future `lightrs mcp` (no in-process server)
+- [ ] Session export slash (`/export` → markdown transcript of user/agent)
 
 ## Scorecard (2026-11-14)
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 56 tests; skills + fixtures |
+| Correctness & coverage | 5 | 64 tests; grep + stream fixtures |
 | Agent reliability | 4 | Step cap, interrupt, headless shell policy |
-| UX (TUI) | 5 | Tools, diff, markdown, @mentions, approvals |
-| Maintainability | 5 | `agent/`, `tui/run/`, shared tool path |
-| Docs alignment | 5 | SPEC/README/slash sync; MEMORY tracked |
-| Footprint | 3 | ~8.5 MB release (--no-default-features); syntect weight |
+| UX (TUI) | 5 | Tools, diff, markdown, skills, approvals, sys layout |
+| Maintainability | 5 | `agent/`, `tui/run/`, `skills/`, shared tool path |
+| Docs alignment | 5 | `docs_sync` + root MDs audited to code |
+| Footprint | 4 | `--no-default-features` drops ACP + syntect; syntax highlighting optional |
 
-**Weakest next:** footprint (optional syntect-less build) or docs (track MEMORY in git).
+**Weakest next:** record live provider SSE into fixtures (optional) or MCP wiring.
