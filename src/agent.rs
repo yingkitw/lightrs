@@ -8,13 +8,16 @@ use tokio::sync::watch;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
+use crate::mentions::api_user_content;
 use crate::tui::{AgentEvent, CommandApproval};
 
 pub use tokens::{TokenStats, TokenSummary, context_usage_text};
 
-use crate::chat::{ApiMessage, ApiRole, ChatRequest, UiMessage, UiRole};
+use crate::chat::{ApiMessage, ApiRole, ChatRequest, TokenUsage, UiMessage, UiRole};
 use crate::session::SessionFile;
-use tokens::{apply_usage, estimate_context_tokens};
+use tokens::{
+    apply_usage, estimate_context_tokens, estimate_text_tokens, format_token_count, step_usage_line,
+};
 use crate::provider::LlmClient;
 use crate::tools::{RunCommandArgs, ShellPolicy, execute_tool, tool_schemas};
 
@@ -35,21 +38,14 @@ pub enum ObserveEvent<'a> {
 
 fn system_prompt(workdir: &Path, shell: &ShellPolicy) -> String {
     let mut text = format!(
-        r#"You are lightrs, a minimal terminal coding agent.
-Workdir: {}.
-
-Use tools to read or change the codebase and to run commands — do not invent file contents.
-Prefer small, focused edits. Explain briefly after completing the task.
-If a tool returns an error, fix the issue or ask the user for missing info."#,
+        "lightrs agent. Workdir: {}. Use tools; do not invent file contents. Small edits; brief replies.",
         workdir.display()
     );
     if shell.is_restrictive() {
-        text.push_str(
-            "\nShell allowlist is enabled: only commands matching configured prefixes can run.",
-        );
+        text.push_str(" Shell allowlist active.");
     }
     if shell.requires_all_commands_approved() {
-        text.push_str("\nThe user must approve each shell command in the TUI before it runs.");
+        text.push_str(" User approves shell commands in TUI.");
     }
     text
 }
@@ -132,6 +128,20 @@ impl Agent {
         self.estimated_context_tokens = estimate_context_tokens(&self.api_history);
     }
 
+    fn record_send_estimate(&mut self, api_text: &str) {
+        let est = estimate_text_tokens(api_text);
+        self.push_system(format!(
+            "send · ~{} ctx",
+            format_token_count(u64::from(est))
+        ));
+    }
+
+    fn record_model_usage(&mut self, usage: Option<&TokenUsage>) {
+        if let Some(line) = step_usage_line(usage) {
+            self.push_system(line);
+        }
+    }
+
     pub fn ui_messages(&self) -> Vec<UiMessage> {
         self.ui_history.lock().unwrap().clone()
     }
@@ -191,7 +201,9 @@ impl Agent {
             .lock()
             .unwrap()
             .push(UiMessage::with_role(UiRole::User, user_text.clone()));
-        self.api_history.push(ApiMessage::user(user_text));
+        let api_text = api_user_content(&self.workdir, &user_text);
+        self.api_history.push(ApiMessage::user(api_text.clone()));
+        self.record_send_estimate(&api_text);
         self.refresh_context_estimate();
 
         for _step in 0..MAX_TOOL_STEPS {
@@ -250,6 +262,7 @@ impl Agent {
 
             apply_usage(&mut self.token_stats, usage.as_ref());
             self.refresh_context_estimate();
+            self.record_model_usage(usage.as_ref());
 
             if matches!(finish_reason.as_deref(), Some("length" | "max_tokens")) {
                 self.push_system("Model stopped: output length limit.");
@@ -324,7 +337,9 @@ impl Agent {
                 .lock()
                 .unwrap()
                 .push(UiMessage::with_role(UiRole::User, user_text.clone()));
-            g.api_history.push(ApiMessage::user(user_text));
+            let api_text = api_user_content(&g.workdir, &user_text);
+            g.api_history.push(ApiMessage::user(api_text.clone()));
+            g.record_send_estimate(&api_text);
             g.refresh_context_estimate();
         }
 
@@ -397,6 +412,7 @@ impl Agent {
             let mut g = agent.lock().await;
             apply_usage(&mut g.token_stats, usage.as_ref());
             g.refresh_context_estimate();
+            g.record_model_usage(usage.as_ref());
 
             if matches!(finish_reason.as_deref(), Some("length" | "max_tokens")) {
                 g.push_system("Model stopped: output length limit.");

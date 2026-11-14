@@ -4,6 +4,7 @@ pub mod agent;
 pub mod chat;
 pub mod cli;
 pub mod config;
+pub mod mentions;
 pub mod migrate;
 pub mod opencode;
 pub mod paths;

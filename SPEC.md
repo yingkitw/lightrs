@@ -30,6 +30,7 @@
 - **Fenced code**: syntect highlight + wrap
 - **Mermaid** (`mermaid` / `mmd`): ASCII flow/sequence preview + source
 - **Tool blocks**: single row per call; collapsed shows short args + truncated result; expanded shows full args/result
+- **Tokens**: muted `[sys]` lines per turn — `send · ~N ctx` after your message (estimate), `model · N in + M out` after each API step when the provider reports usage
 - **`write_file`**: colorized unified diff (`+`/`-`/`@@`); `+N −M` in collapsed header; full diff when expanded; API tool body remains a one-line summary
 - **Mouse**: wheel scroll; left-click toggles tool expand (with `o` when input empty)
 - **Busy**: spinner + optional “waiting for model…” when streaming has not started
@@ -44,7 +45,7 @@
 ### Input
 
 - `Enter` send; `Shift+Enter` / `Ctrl+J` newline
-- `@relative/path` file mentions in the composer; `Tab` completes paths under **workdir** (status bar shows matches)
+- `@relative/path` file mentions in the composer; `Tab` completes paths under **workdir** (status bar shows matches). On send, matching files attach to the **API** user message only (12 KiB per file, 36 KiB total); the transcript shows your composer text unchanged
 - `Ctrl+P` / `Ctrl+N` prompt history
 - Scroll transcript when input empty (`↑`/`↓`, PgUp/PgDn, Home/End)
 - Interrupt while busy: `Esc`, `Ctrl+C`, `Ctrl+Q` (does not quit)

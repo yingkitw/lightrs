@@ -44,6 +44,26 @@ pub fn estimate_context_tokens(messages: &[ApiMessage]) -> u32 {
     ((chars + 3) / 4).max(1) as u32
 }
 
+/// Rough token count from text length (~chars/4).
+pub fn estimate_text_tokens(text: &str) -> u32 {
+    ((text.chars().count() + 3) / 4).max(1) as u32
+}
+
+/// One-line transcript hint after an API completion when usage is present.
+pub fn step_usage_line(usage: Option<&TokenUsage>) -> Option<String> {
+    let u = usage?;
+    let prompt = u.prompt_tokens.unwrap_or(0);
+    let completion = u.completion_tokens.unwrap_or(0);
+    if prompt == 0 && completion == 0 {
+        return None;
+    }
+    Some(format!(
+        "model · {} in + {} out",
+        format_token_count(u64::from(prompt)),
+        format_token_count(u64::from(completion)),
+    ))
+}
+
 pub fn apply_usage(stats: &mut TokenStats, usage: Option<&TokenUsage>) {
     stats.last_prompt = 0;
     stats.last_completion = 0;
@@ -97,5 +117,15 @@ mod tests {
     fn estimate_from_text() {
         let msgs = vec![ApiMessage::user("a".repeat(400))];
         assert!(estimate_context_tokens(&msgs) >= 100);
+    }
+
+    #[test]
+    fn step_usage_formats() {
+        let line = step_usage_line(Some(&TokenUsage {
+            prompt_tokens: Some(1200),
+            completion_tokens: Some(48),
+            total_tokens: Some(1248),
+        }));
+        assert_eq!(line.as_deref(), Some("model · 1.20k in + 48 out"));
     }
 }
