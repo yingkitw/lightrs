@@ -5,6 +5,10 @@ edition = "2024"
 description = "Lightweight TUI coding agent (GLM, Kimi, MiniMax)"
 license = "MIT"
 
+[lib]
+name = "lightrs"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lightrs"
 path = "src/main.rs"

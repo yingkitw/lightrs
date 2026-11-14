@@ -1,7 +1,8 @@
 # Architecture
 
 ```
-main.rs, cli.rs         Commands: tui (default), acp, import, migrate
+lib.rs, main.rs         Library + binary; `run()` in lib
+cli.rs                  Commands: tui (default), acp, import, migrate
 config/                 Provider, env/file/CLI load, validate_work_path
 chat.rs                 ApiMessage, UiMessage, ToolCallUi, FileDiffUi
 session.rs              Per-workdir JSON session save/load
@@ -57,6 +58,8 @@ Not in v0.1: Codex bottom-pane modals, `@` mentions, exec approvals, side-by-sid
 `ratatui`, `crossterm`, `pulldown-cmark`, `syntect`, `similar`, `reqwest` (rustls + stream), `tokio`. ACP adds optional `agent-client-protocol`.
 
 Build without ACP: `cargo build --release --no-default-features`.
+
+Tests: `tests/docs_sync.rs` (doc alignment); `tests/provider_fixtures.rs` + `tests/fixtures/` (recorded chat JSON + SSE).
 
 ## Security notes
 

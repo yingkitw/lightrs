@@ -1,10 +1,10 @@
-mod stream;
+pub mod stream;
 
 use anyhow::{Context, Result, bail};
 use tokio::sync::watch;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
-pub use stream::{StreamAccumulator, StreamApply, post_chat_stream};
+pub use stream::{StreamAccumulator, StreamApply, post_chat_stream, replay_sse_body};
 
 use crate::chat::{ApiErrorBody, ChatRequest, ChatResponse};
 

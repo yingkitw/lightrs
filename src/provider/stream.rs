@@ -157,6 +157,18 @@ struct FunctionCallDelta {
     arguments: Option<String>,
 }
 
+/// Replay recorded `data: …` SSE lines (no network) for fixture tests.
+pub fn replay_sse_body(body: &str) -> Result<StreamAccumulator> {
+    let mut acc = StreamAccumulator::default();
+    for line in body.lines() {
+        let line = line.trim_end_matches('\r').trim();
+        if let Some(payload) = line.strip_prefix("data: ") {
+            let _ = acc.apply_chunk_json(payload)?;
+        }
+    }
+    Ok(acc)
+}
+
 pub async fn post_chat_stream(
     http: &reqwest::Client,
     base_url: &str,

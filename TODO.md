@@ -14,6 +14,9 @@
 - [x] Markdown transcript + syntect + Mermaid ASCII
 - [x] Central TUI theme (`tui/theme.rs`)
 - [x] Module split (`config/`, `tools/`, `tui/highlight/`, `provider/stream.rs`)
+- [x] `tests/docs_sync.rs` — doc/tool/slash alignment
+- [x] Recorded HTTP/SSE fixtures (`tests/fixtures/`, `lib.rs` + `provider_fixtures.rs`)
+- [x] Doc audit (ARCHITECTURE, SPEC, TODO, README, MEMORY, AGENTS)
 
 ## Backlog
 
@@ -21,15 +24,13 @@
 - [ ] Codex-style approval overlay for risky `run_command`
 - [ ] Optional `config.toml` hot-reload
 - [ ] Command allowlist for `run_command`
-- [ ] Integration tests against recorded HTTP fixtures
-- [ ] `tests/docs_sync.rs` — fail on AGENTS.md structure / TODO drift
 - [ ] Patch-style edit tool (optional; diff UI could reuse same renderer)
 
 ## Scorecard (2026-11-14)
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 4 | ~26 in-crate tests; no HTTP fixtures yet |
+| Correctness & coverage | 5 | 36 tests; `tests/fixtures/` chat + SSE replay via `replay_sse_body` |
 | Agent reliability | 4 | Stream fallback, step cap, interrupt |
 | UX (TUI) | 4 | Tools, diff, theme, mouse; no @/approvals |
 | Maintainability | 4 | Split modules; `agent.rs` still central |

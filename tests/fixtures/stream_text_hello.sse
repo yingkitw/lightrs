@@ -1,0 +1,7 @@
+data: {"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"total_tokens":5}}
+
+data: [DONE]
