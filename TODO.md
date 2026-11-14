@@ -27,18 +27,18 @@
 - [x] Provider stream fixtures (Kimi / GLM / MiniMax SSE shapes in `tests/fixtures/`)
 
 - [x] Optional `syntect` feature — plain code fences when off (`Cargo.toml` `syntect`)
+- [x] GitHub CI — full tests + `cargo test --no-default-features --lib` (`.github/workflows/ci.yml`)
+- [x] `/export` — markdown transcript under workdir (`session/export.rs`)
 
 ## Backlog
 
-- [ ] Headless `grep` in CI: `cargo test --no-default-features --lib`
-- [ ] MCP config stub → document-only or future `lightrs mcp` (no in-process server)
-- [ ] Session export slash (`/export` → markdown transcript of user/agent)
+- [x] MCP import documented (stored `mcp.json`; no in-process server in v0.1)
 
 ## Scorecard (2026-11-14)
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 64 tests; grep + stream fixtures |
+| Correctness & coverage | 5 | 66 tests; CI + `/export` + session split |
 | Agent reliability | 4 | Step cap, interrupt, headless shell policy |
 | UX (TUI) | 5 | Tools, diff, markdown, skills, approvals, sys layout |
 | Maintainability | 5 | `agent/`, `tui/run/`, `skills/`, shared tool path |

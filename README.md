@@ -64,7 +64,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
-- `/help` — list commands (`/clear`, `/cwd`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit`, …)
+- `/help` — list commands (`/clear`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit`, …)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
 - Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** ASCII, collapsible **tool** rows (mouse or `o`), unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
 - Mouse wheel scrolls the transcript; left-click a tool block to expand/collapse
@@ -92,6 +92,8 @@ lightrs import opencode --config ~/.config/opencode/opencode.json --project ./op
 ```
 
 Writes under `~/.config/lightrs/` (`config.toml` or `opencode-import.toml`, `mcp.json`, `skills/`, `rules/`, `hooks/`). API keys are copied into TOML locally — keep that directory private.
+
+**MCP:** `mcp.json` is saved for your reference (same shape as OpenCode/Cursor). lightrs does not spawn MCP servers in v0.1 — use your editor’s MCP client or a future `lightrs` release if we wire it.
 
 At runtime, lightrs **discovers skills** from that tree plus `~/.cursor/skills`, `~/.claude/skills`, `~/.agents/skills`, `~/.pi/agent/skills`, and `~/.codex/skills`, puts a compact catalog in the system prompt, and loads full skill text when you use `$skill-name` in a message (same idea as OpenCode/pi/Codex-style skills).
 

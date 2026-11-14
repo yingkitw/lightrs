@@ -12,7 +12,8 @@ fn read(rel: &str) -> String {
 
 /// `(source path, substring expected in ARCHITECTURE.md)`.
 const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
-    ("src/session.rs", "session.rs"),
+    ("src/session/mod.rs", "session"),
+    ("src/session/export.rs", "export"),
     ("src/paths.rs", "paths.rs"),
     ("src/provider/stream.rs", "stream.rs"),
     ("src/tools/diff.rs", "diff"),
@@ -36,7 +37,7 @@ const TOOLS: &[&str] = &[
 ];
 
 const SLASH: &[&str] = &[
-    "help", "clear", "cwd", "status", "context", "reload", "quiet", "skills", "quit",
+    "help", "clear", "cwd", "status", "context", "reload", "quiet", "skills", "export", "quit",
 ];
 
 #[test]

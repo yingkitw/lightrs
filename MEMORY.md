@@ -111,6 +111,10 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - `/quiet` toggles `Agent.quiet_token_sys` (not persisted in session); header + `/context` still show usage.
 - Render: `tui/highlight/sys.rs` — `▏ sys` bars; compact token/cwd styling; multi-line slash output with `/cmd` highlights.
 
+## Export (2026-11-14)
+
+- `/export` [path] → `session::export_ui_markdown`; default `lightrs-transcript.md` under workdir; `[sys]` omitted (same as session save filter).
+
 ## Session UI (2026-11-14)
 
 - `session::conversation_ui_history` strips `UiRole::System` on save; `restore_session` filters on load — `[sys]` is live-transcript only, not conversation history on disk.

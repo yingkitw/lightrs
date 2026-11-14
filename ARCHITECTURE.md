@@ -5,7 +5,7 @@ lib.rs, main.rs         Library + binary; `run()` in lib
 cli.rs                  Commands: tui (default), acp, import, migrate
 config/                 Provider, env/file/CLI load, validate_work_path
 chat.rs                 ApiMessage, UiMessage, ToolCallUi, FileDiffUi
-session.rs              Per-workdir JSON session save/load (`conversation_ui_history` drops `[sys]`)
+session/                Per-workdir JSON save/load; `export.rs` markdown transcript export
 paths.rs                ~/.config/lightrs paths (no directories crate)
 provider.rs             HTTP client
 provider/stream.rs      SSE reassembly for streaming + tool_calls
@@ -62,6 +62,8 @@ Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses i
 Build profiles: default includes ACP + syntect (~13 MB release here). `cargo build --release --no-default-features` drops both (~7.6 MB); add `--features syntect` for highlighting without ACP.
 
 Tests: `tests/docs_sync.rs` (doc alignment); `tests/provider_fixtures.rs` + `tests/fixtures/` (chat JSON + SSE, including Kimi/GLM/MiniMax tool streams).
+
+CI (`.github/workflows/ci.yml`): `cargo test`, `cargo test --no-default-features --lib`, release build.
 
 ## Security notes
 

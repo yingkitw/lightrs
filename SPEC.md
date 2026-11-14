@@ -16,7 +16,7 @@
 
 ## Non-goals (v0.1)
 
-- In-process MCP server (imported MCP JSON is stored for future wiring)
+- In-process MCP server — `lightrs import opencode` writes `~/.config/lightrs/mcp.json` only; no stdio MCP host in the agent loop yet
 - LSP, full regex/ripgrep parity, multi-agent orchestration
 - Sandboxed containers for shell execution
 - Side-by-side or inline patched diff editor (unified diff in transcript only)
@@ -64,6 +64,7 @@
 | `/reload` | Re-read `config.toml` `[shell]`; rescan skills; refresh agent system prompt |
 | `/quiet` | Toggle per-step `[sys]` token lines (`send · ~N ctx`, model in/out); header + `/context` unchanged |
 | `/skills` | List discovered skills (`$id` to invoke on send) |
+| `/export` [path] | Write UI transcript to markdown under workdir (default `lightrs-transcript.md`; skips `[sys]`) |
 | `/quit` | Exit (same as `q` when idle) |
 
 `Tab` completes unique slash prefix.

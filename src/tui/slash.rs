@@ -14,6 +14,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("reload", "re-read config.toml [shell] policy"),
     ("quiet", "toggle per-step token sys lines"),
     ("skills", "list discovered agent skills"),
+    ("export", "write UI transcript to markdown in workdir"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +158,26 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                     "{n} skill(s). Invoke with $id on your message:\n{}{extra}",
                     lines.join("\n")
                 ));
+            }
+            SlashAction::Handled
+        }
+        "export" => {
+            let rest = line.trim().split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+            let rel = if rest.is_empty() {
+                None
+            } else {
+                Some(rest.as_str())
+            };
+            match session::export_ui_markdown(agent, app.workdir(), rel) {
+                Ok(path) => {
+                    agent.push_system(format!(
+                        "exported transcript → {}",
+                        path.strip_prefix(app.workdir())
+                            .unwrap_or(&path)
+                            .display()
+                    ));
+                }
+                Err(e) => agent.push_error(format!("export failed: {e:#}")),
             }
             SlashAction::Handled
         }
