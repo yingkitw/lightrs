@@ -106,6 +106,23 @@ mod tests {
     }
 
     #[test]
+    fn inline_code_stays_in_paragraph() {
+        let md = "logic (`stepDemo`, `types`, `constants`) vs layer";
+        let lines = render_message_body(md, 100, Style::default());
+        let flat: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(flat.contains("`stepDemo`"), "{flat}");
+        assert!(flat.contains("`types`"), "{flat}");
+        assert!(
+            lines.len() <= 2,
+            "inline code should not be one line per backtick: {:?}",
+            lines
+        );
+    }
+
+    #[test]
     fn markdown_bold_and_link_styles() {
         let lines = render_message_body("**bold** and [link](https://x.test)", 80, Style::default());
         let bold = lines.iter().any(|l| {

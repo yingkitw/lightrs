@@ -101,11 +101,10 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
                 out.strike_depth = out.strike_depth.saturating_sub(1);
             }
             Event::Code(code) => {
-                out.flush_paragraph();
-                out.out.push(Line::from(Span::styled(
-                    format!(" `{code}` "),
+                out.push_span(Span::styled(
+                    format!("`{code}`"),
                     theme::inline_code(),
-                )));
+                ));
             }
             Event::Start(Tag::Link { .. }) => in_link = true,
             Event::End(TagEnd::Link) => in_link = false,
@@ -124,8 +123,8 @@ pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<L
                 } else if in_heading {
                     heading_buf.push(' ');
                 } else {
-                    // GFM line break: new row in the same block, not a blank separator.
-                    out.flush_paragraph();
+                    // Model replies often use hard breaks mid-sentence; treat as a space in prose.
+                    out.push_span(Span::styled(" ".to_string(), out.inline_style(false)));
                 }
             }
             Event::Start(Tag::Table(_)) => {
