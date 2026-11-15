@@ -1,7 +1,7 @@
 use ratatui::style::Style;
 use ratatui::text::Line;
 
-use crate::tui::theme::{self, palette};
+use crate::tui::theme;
 
 use super::wrap::wrap_plain_lines;
 
@@ -32,11 +32,11 @@ fn diff_line_style(line: &str) -> Style {
     if line.starts_with("+++") || line.starts_with("---") {
         theme::fence_header()
     } else if line.starts_with("@@") {
-        Style::default().fg(palette::diff_hunk())
+        Style::default().fg(theme::active().diff_hunk)
     } else if line.starts_with('+') {
-        Style::default().fg(palette::diff_add())
+        Style::default().fg(theme::active().diff_add)
     } else if line.starts_with('-') {
-        Style::default().fg(palette::diff_del())
+        Style::default().fg(theme::active().diff_del)
     } else {
         theme::body_muted()
     }

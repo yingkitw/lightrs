@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::agent::{Agent, context_usage_text};
 use crate::tui::app::{App, RunState};
-use crate::tui::theme::{self, palette};
+use crate::tui::theme;
 use crate::tui::info::{header_compact, header_lines};
 use crate::skills::skill_hint;
 use crate::tui::mentions::mention_hint;
@@ -54,7 +54,7 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
         .border_style(if app.state == RunState::Busy {
             theme::border()
         } else {
-            Style::default().fg(palette::accent())
+            Style::default().fg(theme::active().accent)
         });
     let inner = block.inner(area);
 

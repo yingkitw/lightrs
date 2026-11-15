@@ -10,6 +10,7 @@ use crate::agent::Agent;
 use crate::config::{self, AppConfig};
 use crate::skills::{SkillCatalog, load, load_settings};
 use crate::tui::composer::Composer;
+use crate::tui::theme;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunState {
@@ -59,6 +60,7 @@ pub struct App {
     /// Detect `config.toml` changes for auto `[shell]` reload before each send.
     config_mtime: Option<SystemTime>,
     pub skill_catalog: SkillCatalog,
+    pub theme: String,
 }
 
 impl App {
@@ -81,6 +83,7 @@ impl App {
             pending_approval: None,
             config_mtime: None,
             skill_catalog: SkillCatalog::default(),
+            theme: theme::normalize_theme_id(config::load_tui_theme()),
         }
     }
 

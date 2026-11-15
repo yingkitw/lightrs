@@ -10,7 +10,7 @@ use crate::tui::app::{App, RunState};
 use crate::tui::highlight::{
     collapse_diff_preview, render_message_body, render_system_body, render_unified_diff,
 };
-use crate::tui::theme::{self, palette};
+use crate::tui::theme;
 
 const COLLAPSED_RESULT_CHARS: usize = 480;
 
@@ -84,7 +84,7 @@ fn transcript_lines(
         if m.role == UiRole::Tool && m.content.starts_with("→") {
             lines.push(Line::from(Span::styled(
                 m.content.clone(),
-                Style::default().fg(palette::tool()),
+                Style::default().fg(theme::active().tool),
             )));
             lines.push(Line::from(""));
             continue;
@@ -146,12 +146,12 @@ fn render_tool_block(
                     "{} +{} −{}",
                     fd.path, fd.lines_added, fd.lines_removed
                 ),
-                Style::default().fg(palette::tool_args()),
+                Style::default().fg(theme::active().tool_args),
             ));
         } else {
             header.push(Span::styled(
                 truncate_inline(&tc.arguments, 72),
-                Style::default().fg(palette::tool_args()),
+                Style::default().fg(theme::active().tool_args),
             ));
         }
     }

@@ -18,7 +18,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("skills", "list discovered agent skills"),
     ("export", "write UI transcript to markdown in workdir"),
     ("copy", "copy last reply (or last ``` fence with /copy code) to clipboard"),
-    ("theme", "list or set TUI color theme (mocha, latte, nord, rosepine, hc)"),
+    ("theme", "list or set TUI color theme (mocha, hc)"),
     ("compact", "compact old tool results in API history (no model call)"),
     ("undo", "restore files edited on the last turn from .lightrs/backups"),
 ];
@@ -170,10 +170,12 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
         "theme" => {
             let args: Vec<&str> = line.split_whitespace().skip(1).collect();
             if args.is_empty() {
-                agent.push_system(theme::theme_list_message());
+                agent.push_system(theme::list_message(&app.theme));
             } else {
-                match theme::set_theme(args[0]) {
-                    Ok(id) => agent.push_system(format!("theme set to `{id}` (saved to ~/.config/lightrs/tui.toml)")),
+                match theme::apply(args[0], app) {
+                    Ok(id) => agent.push_system(format!(
+                        "theme set to `{id}` ([tui] in config.toml)"
+                    )),
                     Err(e) => agent.push_error(e),
                 }
             }

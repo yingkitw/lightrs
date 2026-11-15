@@ -2,7 +2,7 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::tui::theme::{self, palette};
+use crate::tui::theme;
 
 use super::mermaid;
 use super::syntect::{highlight_code, normalize_lang};
@@ -263,7 +263,7 @@ impl MdLines {
                 0,
                 Span::styled(
                     "▏ ",
-                    Style::default().fg(palette::border()),
+                    Style::default().fg(theme::active().border),
                 ),
             );
         }
@@ -275,10 +275,10 @@ impl MdLines {
 
     fn push_heading(&mut self, text: &str, level: HeadingLevel) {
         let color = match level {
-            HeadingLevel::H1 => palette::heading_1(),
-            HeadingLevel::H2 => palette::heading_2(),
-            HeadingLevel::H3 => palette::heading_3(),
-            _ => palette::heading_other(),
+            HeadingLevel::H1 => theme::active().heading_1,
+            HeadingLevel::H2 => theme::active().heading_2,
+            HeadingLevel::H3 => theme::active().heading_3,
+            _ => theme::active().heading_other,
         };
         let indent = match level {
             HeadingLevel::H1 => "",

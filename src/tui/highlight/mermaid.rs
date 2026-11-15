@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::tui::theme::{self, palette};
+use crate::tui::theme;
 
 use super::wrap::wrap_plain_lines;
 
@@ -27,9 +27,9 @@ struct SeqMsg {
 pub fn render_mermaid(source: &str, width: usize) -> Vec<Line<'static>> {
     let view = interpret(source);
     let header_style = Style::default()
-        .fg(palette::mermaid_accent())
+        .fg(crate::tui::theme::active().mermaid_accent)
         .add_modifier(Modifier::BOLD);
-    let edge_style = Style::default().fg(palette::mermaid_edge());
+    let edge_style = Style::default().fg(crate::tui::theme::active().mermaid_edge);
     let note_style = theme::body_muted();
 
     let mut out = Vec::new();

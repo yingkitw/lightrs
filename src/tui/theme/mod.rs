@@ -1,67 +1,69 @@
-//! TUI color themes; switch at runtime with `/theme <name>` (saved to `~/.config/lightrs/tui.toml`).
+//! TUI palettes — `mocha` (default) and `hc`. `/theme` + `config.toml` `[tui]`.
 
 mod palettes;
-mod persist;
 
-use std::sync::RwLock;
+use std::cell::Cell;
 
 use ratatui::style::{Modifier, Style};
 
 use crate::chat::UiRole;
+use crate::config;
 
 pub use palettes::{Palette, THEMES};
 
-static ACTIVE_ID: RwLock<String> = RwLock::new(String::new());
-
-pub fn init() {
-    let id = persist::load_theme_id();
-    if let Ok(mut guard) = ACTIVE_ID.write() {
-        *guard = id;
-    }
+thread_local! {
+    static CURRENT: Cell<&'static str> = const { Cell::new("mocha") };
 }
 
-pub fn active_id() -> String {
-    ensure_init();
-    ACTIVE_ID.read().unwrap().clone()
+/// Call once per frame from `draw()` — ponytail: no `RwLock` on a single-threaded TUI.
+pub fn sync(theme_id: &str) {
+    let key = theme_id.trim().to_lowercase();
+    let id = THEMES
+        .iter()
+        .find(|t| t.id == key.as_str())
+        .map(|t| t.id)
+        .unwrap_or("mocha");
+    CURRENT.with(|c| c.set(id));
 }
 
 pub fn active() -> &'static Palette {
-    ensure_init();
-    let id = ACTIVE_ID.read().unwrap();
-    palettes::by_id(&id).unwrap_or(&palettes::MOCHA)
+    let id = CURRENT.with(|c| c.get());
+    palettes::by_id(id).unwrap_or(&palettes::MOCHA)
 }
 
-fn ensure_init() {
-    if ACTIVE_ID.read().map(|g| g.is_empty()).unwrap_or(true) {
-        init();
-    }
+pub fn normalize_theme_id(raw: Option<String>) -> String {
+    raw.filter(|s| palettes::by_id(s).is_some())
+        .unwrap_or_else(|| "mocha".into())
 }
 
-pub fn set_theme(id: &str) -> Result<String, String> {
-    let key = id.trim().to_lowercase();
+pub fn apply(theme_id: &str, app: &mut crate::tui::App) -> Result<String, String> {
+    let key = theme_id.trim().to_lowercase();
     let entry = THEMES
         .iter()
         .find(|t| t.id == key)
-        .ok_or_else(|| format!("unknown theme `{id}` — try /theme"))?;
-    if let Ok(mut guard) = ACTIVE_ID.write() {
-        *guard = entry.id.to_string();
-    }
-    persist::save_theme_id(entry.id).map_err(|e| format!("{e:#}"))?;
+        .ok_or_else(|| format!("unknown theme `{theme_id}` — /theme lists: mocha, hc"))?;
+    app.theme = entry.id.to_string();
+    sync(&app.theme);
+    config::save_tui_theme(entry.id).map_err(|e| format!("{e:#}"))?;
     Ok(entry.id.to_string())
 }
 
-pub fn theme_list_message() -> String {
-    let current = active_id();
-    let mut lines: Vec<String> = THEMES
+pub fn list_message(current: &str) -> String {
+    let lines: Vec<String> = THEMES
         .iter()
         .map(|t| {
-            let mark = if t.id == current { " ← current" } else { "" };
+            let mark = if t.id == current {
+                " ← current"
+            } else {
+                ""
+            };
             format!("  {} — {}{mark}", t.id, t.label)
         })
         .collect();
-    lines.push(String::new());
-    lines.push("  /theme <id>   apply and save".into());
-    format!("TUI color themes:\n{}", lines.join("\n"))
+    format!(
+        "TUI themes:\n{}\n\n  /theme <id>   (saved under [tui] in config.toml)",
+        lines.join("\n")
+    )
 }
 
 pub fn body() -> Style {
@@ -157,59 +159,4 @@ pub fn link() -> Style {
     Style::default()
         .fg(active().link)
         .add_modifier(Modifier::UNDERLINED)
-}
-
-/// Back-compat alias for code that addressed `palette::DIFF_ADD` etc.
-pub mod palette {
-    use super::active;
-    use ratatui::style::Color;
-
-    pub fn text() -> Color {
-        active().text
-    }
-    pub fn border() -> Color {
-        active().border
-    }
-    pub fn accent() -> Color {
-        active().accent
-    }
-    pub fn tool() -> Color {
-        active().tool
-    }
-    pub fn tool_args() -> Color {
-        active().tool_args
-    }
-    pub fn link() -> Color {
-        active().link
-    }
-    pub fn code_bg() -> Color {
-        active().code_bg
-    }
-    pub fn heading_1() -> Color {
-        active().heading_1
-    }
-    pub fn heading_2() -> Color {
-        active().heading_2
-    }
-    pub fn heading_3() -> Color {
-        active().heading_3
-    }
-    pub fn heading_other() -> Color {
-        active().heading_other
-    }
-    pub fn mermaid_accent() -> Color {
-        active().mermaid_accent
-    }
-    pub fn mermaid_edge() -> Color {
-        active().mermaid_edge
-    }
-    pub fn diff_add() -> Color {
-        active().diff_add
-    }
-    pub fn diff_del() -> Color {
-        active().diff_del
-    }
-    pub fn diff_hunk() -> Color {
-        active().diff_hunk
-    }
 }

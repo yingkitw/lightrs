@@ -83,8 +83,6 @@ pub fn run(cfg: AppConfig) -> Result<()> {
         }
     });
 
-    crate::tui::theme::init();
-
     let mut stdout = std::io::stdout();
     enable_raw_mode()?;
     stdout.execute(EnterAlternateScreen)?;
@@ -93,6 +91,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(cfg.clone());
+    crate::tui::theme::sync(&app.theme);
     app.skill_catalog = catalog;
     app.refresh_config_mtime();
     {

@@ -134,7 +134,7 @@ mod tests {
         let link = lines.iter().any(|l| {
             l.spans.iter().any(|s| {
                 s.content.contains("link")
-                    && s.style.fg == Some(crate::tui::theme::palette::link())
+                    && s.style.fg == Some(crate::tui::theme::active().link)
             })
         });
         assert!(bold, "expected bold span");

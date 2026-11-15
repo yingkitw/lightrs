@@ -9,6 +9,7 @@ use crate::tui::app::{App, RunState};
 use crate::tui::info::header_row_count;
 
 pub fn draw(frame: &mut Frame, app: &mut App, agent: &Agent) {
+    crate::tui::theme::sync(&app.theme);
     let area = frame.area();
     let header_rows = header_row_count(area.height);
     let chunks = Layout::default()

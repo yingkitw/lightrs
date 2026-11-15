@@ -5,6 +5,10 @@ model = ""                  # empty = provider default
 base_url = ""               # empty = built-in default
 workdir = "."               # agent file/shell scope
 
+# Optional TUI palette: mocha (default) or hc
+# [tui]
+# theme = "mocha"
+
 [keys]
 # glm = "..."
 # kimi = "..."

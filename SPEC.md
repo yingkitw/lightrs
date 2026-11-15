@@ -66,7 +66,7 @@
 | `/skills` | List discovered skills (`$id` to invoke on send) |
 | `/export` [path] | Write UI transcript to markdown under workdir (default `lightrs-transcript.md`; skips `[sys]`) |
 | `/copy` [`code`] | Copy latest assistant reply to the OS clipboard; `code` = last fenced ``` block only |
-| `/theme` [`id`] | List TUI palettes or set one (`mocha`, `latte`, `nord`, `rosepine`, `hc`); saved to `~/.config/lightrs/tui.toml` |
+| `/theme` [`id`] | List palettes or set `mocha` / `hc`; saved under `[tui]` in `config.toml` |
 | `/compact` | Replace older API tool bodies with a short placeholder (keeps last 6); no LLM call |
 | `/undo` | Restore files edited since your last message from `.lightrs/backups/` |
 | `/quit` | Exit (same as `q` when idle) |

@@ -16,6 +16,12 @@ pub(crate) struct FileConfig {
     pub keys: Option<FileKeys>,
     pub shell: Option<FileShell>,
     pub skills: Option<FileSkills>,
+    pub tui: Option<FileTui>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct FileTui {
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -60,6 +66,37 @@ pub fn load_config_file() -> Result<Option<FileConfig>> {
 
 pub fn config_path() -> PathBuf {
     lightrs_config_toml()
+}
+
+pub fn load_tui_theme() -> Option<String> {
+    let file = load_config_file().ok().flatten()?;
+    file.tui.and_then(|t| t.theme)
+}
+
+pub fn save_tui_theme(theme: &str) -> Result<()> {
+    let path = config_path();
+    let mut root: toml::Value = if path.exists() {
+        let text = std::fs::read_to_string(&path)?;
+        toml::from_str(&text).unwrap_or(toml::Value::Table(toml::map::Map::new()))
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let toml::Value::Table(ref mut table) = root else {
+        bail!("config.toml root must be a table");
+    };
+    let ui = table
+        .entry("tui")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    if let toml::Value::Table(ui_table) = ui {
+        ui_table.insert("theme".to_string(), toml::Value::String(theme.to_string()));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    std::fs::write(&path, toml::to_string_pretty(&root)?).with_context(|| {
+        format!("write {}", path.display())
+    })?;
+    Ok(())
 }
 
 pub fn resolve_api_key(

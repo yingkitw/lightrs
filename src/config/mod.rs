@@ -10,7 +10,7 @@ use crate::cli::ModelFlags;
 use crate::migrate::{self, format_scan_report, infer_provider_from_env, scan_local_tools};
 use crate::tools::ShellPolicy;
 
-pub use file::config_path;
+pub use file::{config_path, load_tui_theme, save_tui_theme};
 
 /// Last modification time of `config.toml`, if present.
 pub fn config_file_mtime() -> Option<SystemTime> {

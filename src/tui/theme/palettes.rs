@@ -40,7 +40,6 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb(r, g, b)
 }
 
-/// Catppuccin Mocha — default; balanced contrast for long sessions.
 pub const MOCHA: Palette = Palette {
     text: rgb(205, 214, 244),
     muted: rgb(127, 132, 156),
@@ -70,97 +69,6 @@ pub const MOCHA: Palette = Palette {
     diff_hunk: rgb(137, 180, 250),
 };
 
-/// Catppuccin Latte — light background feel (bright terminal / daytime).
-pub const LATTE: Palette = Palette {
-    text: rgb(76, 79, 105),
-    muted: rgb(124, 127, 147),
-    hint: rgb(156, 160, 176),
-    border: rgb(204, 208, 218),
-    user: rgb(30, 102, 245),
-    assistant: rgb(64, 160, 43),
-    tool: rgb(223, 142, 29),
-    system: rgb(140, 144, 162),
-    error: rgb(210, 15, 57),
-    accent: rgb(23, 146, 153),
-    busy: rgb(223, 142, 29),
-    link: rgb(35, 102, 217),
-    code_fg: rgb(76, 79, 105),
-    code_bg: rgb(239, 241, 245),
-    inline_code_fg: rgb(136, 57, 150),
-    inline_code_bg: rgb(220, 224, 232),
-    heading_1: rgb(23, 146, 153),
-    heading_2: rgb(64, 160, 43),
-    heading_3: rgb(136, 57, 150),
-    heading_other: rgb(223, 142, 29),
-    mermaid_accent: rgb(136, 57, 150),
-    mermaid_edge: rgb(35, 102, 217),
-    tool_args: rgb(124, 127, 147),
-    diff_add: rgb(64, 160, 43),
-    diff_del: rgb(210, 15, 57),
-    diff_hunk: rgb(35, 102, 217),
-};
-
-/// Nord — cool, low-blue glare.
-pub const NORD: Palette = Palette {
-    text: rgb(236, 239, 244),
-    muted: rgb(216, 222, 233),
-    hint: rgb(76, 86, 106),
-    border: rgb(67, 76, 94),
-    user: rgb(143, 188, 187),
-    assistant: rgb(163, 190, 140),
-    tool: rgb(235, 203, 139),
-    system: rgb(129, 161, 193),
-    error: rgb(191, 97, 106),
-    accent: rgb(136, 192, 208),
-    busy: rgb(235, 203, 139),
-    link: rgb(129, 161, 193),
-    code_fg: rgb(216, 222, 233),
-    code_bg: rgb(46, 52, 64),
-    inline_code_fg: rgb(180, 142, 173),
-    inline_code_bg: rgb(59, 66, 82),
-    heading_1: rgb(136, 192, 208),
-    heading_2: rgb(163, 190, 140),
-    heading_3: rgb(180, 142, 173),
-    heading_other: rgb(235, 203, 139),
-    mermaid_accent: rgb(180, 142, 173),
-    mermaid_edge: rgb(129, 161, 193),
-    tool_args: rgb(216, 222, 233),
-    diff_add: rgb(163, 190, 140),
-    diff_del: rgb(191, 97, 106),
-    diff_hunk: rgb(136, 192, 208),
-};
-
-/// Rose Pine Moon — warm dusk tones.
-pub const ROSEPINE: Palette = Palette {
-    text: rgb(224, 222, 244),
-    muted: rgb(110, 106, 134),
-    hint: rgb(87, 82, 105),
-    border: rgb(62, 56, 81),
-    user: rgb(156, 207, 216),
-    assistant: rgb(169, 193, 155),
-    tool: rgb(246, 193, 119),
-    system: rgb(196, 167, 231),
-    error: rgb(235, 111, 146),
-    accent: rgb(196, 167, 231),
-    busy: rgb(246, 193, 119),
-    link: rgb(196, 167, 231),
-    code_fg: rgb(224, 222, 244),
-    code_bg: rgb(35, 33, 54),
-    inline_code_fg: rgb(235, 188, 186),
-    inline_code_bg: rgb(57, 53, 82),
-    heading_1: rgb(196, 167, 231),
-    heading_2: rgb(169, 193, 155),
-    heading_3: rgb(235, 188, 186),
-    heading_other: rgb(246, 193, 119),
-    mermaid_accent: rgb(235, 188, 186),
-    mermaid_edge: rgb(156, 207, 216),
-    tool_args: rgb(110, 106, 134),
-    diff_add: rgb(169, 193, 155),
-    diff_del: rgb(235, 111, 146),
-    diff_hunk: rgb(156, 207, 216),
-};
-
-/// High contrast — crisp edges for bright rooms / accessibility.
 pub const HC: Palette = Palette {
     text: rgb(250, 250, 250),
     muted: rgb(200, 200, 200),
@@ -197,21 +105,6 @@ pub const THEMES: &[ThemeEntry] = &[
         palette: MOCHA,
     },
     ThemeEntry {
-        id: "latte",
-        label: "Catppuccin Latte (light)",
-        palette: LATTE,
-    },
-    ThemeEntry {
-        id: "nord",
-        label: "Nord",
-        palette: NORD,
-    },
-    ThemeEntry {
-        id: "rosepine",
-        label: "Rosé Pine Moon",
-        palette: ROSEPINE,
-    },
-    ThemeEntry {
         id: "hc",
         label: "High contrast",
         palette: HC,
@@ -231,7 +124,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_theme_ids_resolve() {
+    fn theme_ids_resolve() {
         for t in THEMES {
             assert!(by_id(t.id).is_some(), "{}", t.id);
         }
