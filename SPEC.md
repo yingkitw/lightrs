@@ -64,7 +64,7 @@
 | `/todo` | Show the task list written by `todo_write` (`.lightrs/todos.json`) |
 | `/editor` | Compose the prompt in `$EDITOR` (e.g. `vim`, `code --wait`); buffer loads into the composer on save |
 | `/status` | Session / model details + token usage |
-| `/context` | Token usage: per-role breakdown, heaviest messages, current-turn in/out |
+| `/context` | Context budgets (`limits:`), wire vs stored turn counts, per-role breakdown, heaviest messages, current-turn in/out — full policy in `docs/context.md` |
 | `/reload` | Re-read `config.toml` `[shell]`; rescan skills; refresh agent system prompt |
 | `/quiet` | Toggle `[sys]` token lines (`send · ~N ctx`, per-step in/out, turn total); header + `/context` unchanged |
 | `/skills` | List discovered skills (`$id` to invoke on send) |

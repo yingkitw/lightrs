@@ -223,7 +223,7 @@ impl Agent {
     }
 
     fn after_model_response(&mut self, usage: Option<&TokenUsage>, finish_reason: Option<&str>) {
-        super::tokens::apply_usage(&mut self.token_stats, usage);
+        super::context::tokens::apply_usage(&mut self.token_stats, usage);
         self.refresh_context_estimate();
         self.record_model_usage(usage);
         self.maybe_context_pressure_sys();

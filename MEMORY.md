@@ -44,7 +44,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - `read_file` default cap 64 KiB (max 512 KiB per request).
 - Optional `[shell].allowlist` in config → `ShellPolicy` prefix match on `run_command` (empty list = allow all). Not a substitute for OS sandboxing; blocks obvious out-of-policy commands.
 - **Shell deny** (`shell_deny.rs`): catastrophic patterns always rejected before spawn (not approval-bypassable).
-- **Redaction** (`redact.rs`): tool API bodies scrubbed in `agent/context::truncate_tool_api`.
+- **Redaction** (`redact.rs`): tool API bodies scrubbed in `agent/context/compact::truncate_tool_api`.
 - **Workdir prompt**: `AGENTS.md` / `AIDER.md` / `.lightrs/AGENTS.md` in `agent/prompt.rs`.
 - **`multi_edit`**: up to 16 `patch_file` ops in one tool call.
 - `[shell].require_approval` or allowlist block → TUI **y/n** before `execute_tool`; `agent/approval.rs` + `agent/turn.rs::execute_one_tool_shared`; `AgentEvent::CommandApproval` + oneshot. No `ui_tx` (ACP) → tool error *requires TUI approval*. Approve on blocked allowlist sets `bypass_shell_allowlist` for that call only.
@@ -132,7 +132,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 ## API context trimming (2026-11-15)
 
-- `agent/context.rs` builds wire messages via `messages_for_request`: composer-only user rows in `api_history`; `@` / `$` expansions live in `active_user_expansion` for the **current turn only** (re-sent on each tool step until the assistant replies).
+- `agent/context/` (`mod`/`wire`/`compact`/`tokens`) builds wire messages via `messages_for_request`: composer-only user rows in `api_history`; `@` / `$` expansions live in `active_user_expansion` for the **current turn only** (re-sent on each tool step until the assistant replies).
 - Older user turns (and legacy sessions): attachment blocks stripped on send; note `[attachments omitted from history]`.
 - Tool bodies to API capped at **6144** chars (`truncate_tool_api`); UI tool blocks may show up to **8000**.
 - Session save / restore slims user messages with `slim_api_history_for_storage`.
@@ -212,6 +212,13 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Thresholds are `chars/4` estimate, not real tokenizers — cheap and close enough.
 - **Two-layer context model**: `messages_for_api` bounds the *wire* copy — last **12** user turns (`MAX_RESENT_TURNS`) then `drop_oldest_turn` until ≤ **48k est** (`WIRE_BUDGET_TOKENS`); `api_history` is never trimmed there so `/rewind` + session save keep everything. `auto_compact_context` shrinks *stored* history (stub 32k / drop 64k) and must measure `api_history` **raw** — `refresh_context_estimate` reports the wire view, so tests asserting raw size need `estimate_context_tokens(&agent.api_history)` directly.
 - Wire-window transparency: one-shot `[sys]` via `wire_window_noted` flag (reset in `clear_conversation`); `/context` leads with `wire: X of Y turns` — windowing is visible, not silent.
+
+## Context module extraction (2026-11-16)
+
+- `agent/context.rs` → `agent/context/` domain module: `wire.rs` (request window: `MAX_RESENT_TURNS=12`, `WIRE_BUDGET_TOKENS=48k`), `compact.rs` (stored-history stubs/drops: `TOOL_API_MAX=6144`, `COMPACT_KEEP_TOOLS=6`), `tokens.rs` (chars/4 estimate, `TokenStats`, breakdown/top/usage lines), `mod.rs` (re-exports + `Agent` context-policy methods + thresholds `AUTO_COMPACT_TOKENS=32k`, `HISTORY_HARD_CAP_TOKENS=64k` — lifted to module consts so `/context`'s `limits:` line can't drift).
+- Thresholds live as named consts next to the policy that uses them; `/context` renders `limits:` from the same consts — never hardcode the numbers in display strings.
+- `tests/support/mod.rs` — shared `TcpListener` mock (`serve_bodies`) captures raw request bodies; `tests/context_budget.rs` asserts the *wire* payload (12-user-turn cap, `"{}"` arg stubs, `[compacted tool result]` markers), `tests/approval_turn.rs` uses it for the mutex-free approval regression. Reuse it for any test needing real `LlmClient` traffic.
+- Full policy spec: `docs/context.md` (linked from README + SPEC `/context` row).
 
 ## Session rewind + atomic save (2026-11-15)
 

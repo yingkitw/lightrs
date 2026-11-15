@@ -9,7 +9,8 @@ session/                Per-workdir JSON save/load; `export.rs` markdown transcr
 paths.rs                ~/.config/lightrs paths (no directories crate)
 provider.rs             HTTP client
 provider/stream.rs      SSE reassembly for streaming + tool_calls
-agent/                  mod, turn, context, approval, prompt, helpers, tokens — tool loop (max 16)
+agent/                  mod, turn, approval, prompt, helpers — tool loop (max 16)
+agent/context/          context budget: wire (request window), compact (stored history), tokens (est/usage) — see docs/context.md
 skills/                 SKILL.md discovery + rules; `$id` attach + system catalog
 commands.rs             `.claude/commands/*.md` → `/name` project slash commands
 audit.rs                `.lightrs/audit.log` JSONL of run_command decisions

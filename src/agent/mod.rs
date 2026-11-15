@@ -2,26 +2,21 @@ mod approval;
 mod context;
 mod helpers;
 mod prompt;
-mod tokens;
 mod turn;
 mod workdir_context;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-pub use tokens::{ContextBreakdown, TokenStats, TokenSummary, context_usage_text};
+pub use context::tokens::{ContextBreakdown, TokenStats, TokenSummary, context_usage_text};
 
-use crate::chat::{ApiMessage, ApiRole, TokenUsage, UiMessage, UiRole};
+use crate::chat::{ApiMessage, ApiRole, UiMessage, UiRole};
 use crate::session::SessionFile;
 use crate::provider::LlmClient;
 use crate::skills::SkillCatalog;
 use crate::tools::ShellPolicy;
 use prompt::system_prompt;
-use tokens::{
-    CONTEXT_WARN_TOKENS, context_breakdown, context_pressure_line, estimate_context_tokens,
-    estimate_text_tokens, format_breakdown, format_token_count, step_usage_line, top_consumers,
-    turn_usage_line,
-};
+use context::tokens::turn_usage_line;
 use helpers::remove_trailing_empty_assistant;
 
 pub enum ObserveEvent<'a> {
@@ -115,32 +110,6 @@ impl Agent {
         }
     }
 
-    /// `/context` detail: where the outgoing tokens sit (per-role breakdown +
-    /// heaviest single messages) and the current turn's real usage so far.
-    pub fn context_report(&self) -> String {
-        let msgs = self.messages_for_request();
-        let wire_turns = context::user_turn_count(&msgs);
-        let history_turns = context::user_turn_count(&self.api_history);
-        let mut out = format!(
-            "wire: {wire_turns} of {history_turns} turns · {} msgs\nbreakdown: {}",
-            msgs.len(),
-            format_breakdown(&context_breakdown(&msgs))
-        );
-        let top = top_consumers(&msgs, 3);
-        if !top.is_empty() {
-            out.push_str(&format!("\ntop: {}", top.join(" · ")));
-        }
-        let t = &self.token_stats;
-        if t.turn_calls > 0 {
-            out.push_str(&format!(
-                "\nturn: {} call(s) · {} in + {} out",
-                t.turn_calls,
-                format_token_count(t.turn_prompt),
-                format_token_count(t.turn_completion)
-            ));
-        }
-        out
-    }
 
     pub fn restore_session(&mut self, saved: SessionFile) {
         self.active_user_expansion = None;
@@ -191,100 +160,6 @@ impl Agent {
         }
     }
 
-    pub fn token_summary(&self) -> TokenSummary {
-        TokenSummary {
-            stats: self.token_stats,
-            estimate: self.estimated_context_tokens,
-        }
-    }
-
-    pub(crate) fn refresh_context_estimate(&mut self) {
-        self.estimated_context_tokens =
-            estimate_context_tokens(&self.messages_for_request());
-    }
-
-    /// Compact stale *stored* context before a request is built (auto `/compact`):
-    /// above `AUTO_COMPACT_TOKENS` stub old tool bodies + tool_call args in
-    /// `api_history`; above `HISTORY_HARD_CAP_TOKENS` drop whole oldest turns
-    /// permanently. Triggered on the raw history estimate — the wire payload
-    /// has its own tighter window in `context::messages_for_api`.
-    pub(crate) fn auto_compact_context(&mut self) {
-        const AUTO_COMPACT_TOKENS: u32 = 32_000;
-        const HISTORY_HARD_CAP_TOKENS: u32 = 64_000;
-
-        let raw_est = estimate_context_tokens(&self.api_history);
-        if raw_est < AUTO_COMPACT_TOKENS {
-            return;
-        }
-        let n_tools =
-            context::compact_tool_messages(&mut self.api_history, context::COMPACT_KEEP_TOOLS);
-        let n_args =
-            context::compact_tool_call_args(&mut self.api_history, context::COMPACT_KEEP_TOOLS);
-        let mut dropped = 0usize;
-        while estimate_context_tokens(&self.api_history) > HISTORY_HARD_CAP_TOKENS
-            && context::drop_oldest_turn(&mut self.api_history)
-        {
-            dropped += 1;
-        }
-        if n_tools + n_args + dropped > 0 {
-            self.refresh_context_estimate();
-            self.push_system(format!(
-                "context auto-compact: {n_tools} tool result(s), {n_args} call arg(s), {dropped} old turn(s) dropped (~{raw_est} → ~{} est)",
-                self.estimated_context_tokens
-            ));
-        }
-        self.context_warned_above = self.context_warned_above.max(raw_est);
-    }
-
-    /// Show a `[sys]` hint when API history is large (`/quiet` suppresses).
-    pub(crate) fn maybe_context_pressure_sys(&mut self) {
-        if self.quiet_token_sys {
-            return;
-        }
-        let est = self.estimated_context_tokens;
-        if est < CONTEXT_WARN_TOKENS {
-            return;
-        }
-        const REWARN_DELTA: u32 = 4_000;
-        if self.context_warned_above > 0
-            && est < self.context_warned_above.saturating_add(REWARN_DELTA)
-        {
-            return;
-        }
-        if let Some(line) = context_pressure_line(est) {
-            self.context_warned_above = est;
-            self.push_system(line);
-        }
-    }
-
-    pub fn set_quiet_token_sys(&mut self, quiet: bool) {
-        self.quiet_token_sys = quiet;
-    }
-
-    pub fn quiet_token_sys(&self) -> bool {
-        self.quiet_token_sys
-    }
-
-    pub(crate) fn record_send_estimate(&mut self, api_text: &str) {
-        if self.quiet_token_sys {
-            return;
-        }
-        let est = estimate_text_tokens(api_text);
-        self.push_system(format!(
-            "send · ~{} ctx",
-            format_token_count(u64::from(est))
-        ));
-    }
-
-    pub(crate) fn record_model_usage(&mut self, usage: Option<&TokenUsage>) {
-        if self.quiet_token_sys {
-            return;
-        }
-        if let Some(line) = step_usage_line(usage) {
-            self.push_system(line);
-        }
-    }
-
     pub fn ui_messages(&self) -> Vec<UiMessage> {
         self.ui_history.lock().unwrap().clone()
     }
@@ -310,10 +185,6 @@ impl Agent {
             .rev()
             .find(|m| m.role == UiRole::Assistant && !m.content.trim().is_empty())
             .map(|m| m.content.clone())
-    }
-
-    pub fn api_context_len(&self) -> usize {
-        self.api_history.len()
     }
 
     pub fn push_system(&mut self, content: impl Into<String>) {
@@ -391,18 +262,6 @@ impl Agent {
         dropped
     }
 
-    pub fn compact_history(&mut self) -> usize {
-        let n = context::compact_tool_messages(&mut self.api_history, context::COMPACT_KEEP_TOOLS)
-            + context::compact_tool_call_args(
-                &mut self.api_history,
-                context::COMPACT_KEEP_TOOLS,
-            );
-        self.ensure_system_prompt();
-        self.context_warned_above = 0;
-        self.refresh_context_estimate();
-        n
-    }
-
     pub fn clear_conversation(&mut self) {
         self.active_user_expansion = None;
         self.api_history.clear();
@@ -460,7 +319,7 @@ mod streaming_tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use crate::agent::estimate_context_tokens;
+    use crate::agent::context::tokens::estimate_context_tokens;
     use crate::chat::{ApiMessage, ApiRole, FunctionCall, ToolCall, UiMessage, UiRole};
     use crate::provider::LlmClient;
     use crate::tools::ShellPolicy;
