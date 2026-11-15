@@ -146,7 +146,13 @@ fn render_tool_block(
     app: &App,
 ) {
     let expanded = app.expanded_tools.contains(&idx);
-    let marker = if expanded { "▼" } else { "▸" };
+    let marker = if m.pending {
+        "◌"
+    } else if expanded {
+        "▼"
+    } else {
+        "▸"
+    };
     let mut header = vec![Span::styled(
         format!("{marker} {} ", tc.name),
         theme::tool_header(expanded),
@@ -166,8 +172,16 @@ fn render_tool_block(
             Style::default().fg(theme::active().tool_args),
         ));
     }
+    if let Some(ms) = m.elapsed_ms {
+        header.push(Span::styled(
+            format!(" · {}", crate::chat::fmt_elapsed(ms)),
+            Style::default().fg(theme::active().tool_args),
+        ));
+    }
     header.push(Span::styled(
-        if expanded {
+        if m.pending {
+            "  running…"
+        } else if expanded {
             "  (click or o collapse)"
         } else {
             "  (click or o expand)"

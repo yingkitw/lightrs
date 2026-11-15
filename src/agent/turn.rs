@@ -20,6 +20,7 @@ impl Agent {
     fn begin_user_turn(&mut self, user_text: String) {
         self.heal_ran = 0;
         self.weak_active = self.weak_model.is_some();
+        self.turn_started = Some(std::time::Instant::now());
         self.token_stats.begin_turn();
         self.ui_history
             .lock()
@@ -256,9 +257,32 @@ impl Agent {
         text
     }
 
+    /// Show the tool row immediately as `◌ … running` so slow calls are
+    /// visible; `record_tool_*` replaces this row in place with the result.
+    fn start_tool_ui(&mut self, name: &str, args: &str) {
+        let mut row = UiMessage::tool_result(name, args, "running…", None);
+        row.pending = true;
+        let mut ui = self.ui_history.lock().unwrap();
+        ui.push(row);
+        self.pending_tool = Some((ui.len() - 1, std::time::Instant::now()));
+    }
+
+    /// Replace the pending tool row (or push when none — e.g. restored paths).
+    fn finish_tool_ui(&mut self, mut row: UiMessage) {
+        if let Some((idx, started)) = self.pending_tool.take() {
+            let mut ui = self.ui_history.lock().unwrap();
+            if ui.get(idx).is_some_and(|m| m.pending) {
+                row.elapsed_ms = Some(started.elapsed().as_millis() as u64);
+                ui[idx] = row;
+                return;
+            }
+        }
+        self.ui_history.lock().unwrap().push(row);
+    }
+
     /// Push a denied-tool result into both histories.
     fn record_tool_denial(&mut self, name: &str, args: &str, call_id: &str, msg: &str) {
-        self.ui_history.lock().unwrap().push(UiMessage::tool_result(
+        self.finish_tool_ui(UiMessage::tool_result(
             name,
             args,
             truncate_tool_ui(msg),
@@ -281,7 +305,7 @@ impl Agent {
         body: &str,
         file_diff: Option<crate::chat::FileDiffUi>,
     ) {
-        self.ui_history.lock().unwrap().push(UiMessage::tool_result(
+        self.finish_tool_ui(UiMessage::tool_result(
             name,
             args,
             truncate_tool_ui(body),
@@ -346,6 +370,7 @@ async fn execute_one_tool_shared(
         name,
         arguments: args,
     });
+    agent.lock().await.start_tool_ui(name, args);
     let ctx = shell_ctx(name, args, shell_policy);
     let bypass =
         match resolve_shell_gate(name, args, shell_policy, shell_verdict, ui_tx.is_none())? {
@@ -624,6 +649,39 @@ mod model_tests {
         assert_eq!(a.build_chat_request().model, "weak");
         a.weak_active = false;
         assert_eq!(a.build_chat_request().model, "m");
+    }
+
+    #[test]
+    fn pending_tool_row_replaced_in_place_with_elapsed() {
+        let mut a = agent();
+        let before = a.ui_history.lock().unwrap().len();
+        a.start_tool_ui("run_command", "{\"command\":\"x\"}");
+        {
+            let ui = a.ui_history.lock().unwrap();
+            assert_eq!(ui.len(), before + 1);
+            assert!(ui[before].pending, "row starts pending");
+        }
+        a.record_tool_outcome("run_command", "{}", "c1", "done-body", None);
+        {
+            let ui = a.ui_history.lock().unwrap();
+            assert_eq!(ui.len(), before + 1, "result replaced in place");
+            assert!(!ui[before].pending);
+            assert_eq!(ui[before].content, "done-body");
+            assert!(ui[before].elapsed_ms.is_some());
+        }
+        assert!(a.pending_tool.is_none(), "pending slot consumed");
+    }
+
+    #[test]
+    fn interrupted_turn_unsticks_pending_row() {
+        let mut a = agent();
+        a.start_tool_ui("run_command", "{}");
+        let idx = a.ui_history.lock().unwrap().len() - 1;
+        a.finish_user_turn_api();
+        let ui = a.ui_history.lock().unwrap();
+        assert!(!ui[idx].pending);
+        assert_eq!(ui[idx].content, "(interrupted)");
+        assert!(ui[idx].elapsed_ms.is_some());
     }
 
     #[test]

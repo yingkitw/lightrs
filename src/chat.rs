@@ -35,6 +35,28 @@ pub struct UiMessage {
     /// Unified diff for `write_file` (UI only; API tool body stays a short summary).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_diff: Option<FileDiffUi>,
+    /// True while the tool call is still executing (transcript shows `◌ … running`);
+    /// replaced in place by the result.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pending: bool,
+    /// Wall-clock exec time, shown as `· 1.2s` in the tool row header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+/// Compact wall-clock: `320ms`, `1.4s`, `12s`, `2m05s`.
+pub fn fmt_elapsed(ms: u64) -> String {
+    if ms < 1_000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1_000.0)
+    } else {
+        format!("{}m{:02}s", ms / 60_000, (ms % 60_000) / 1_000)
+    }
 }
 
 impl UiMessage {
@@ -52,6 +74,8 @@ impl UiMessage {
                 arguments: arguments.into(),
             }),
             file_diff,
+            pending: false,
+            elapsed_ms: None,
         }
     }
 
@@ -65,6 +89,8 @@ impl UiMessage {
             content: content.into(),
             tool_call: None,
             file_diff: None,
+            pending: false,
+            elapsed_ms: None,
         }
     }
 }
@@ -188,6 +214,15 @@ pub struct ApiErrorDetail {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn elapsed_formats() {
+        assert_eq!(super::fmt_elapsed(0), "0ms");
+        assert_eq!(super::fmt_elapsed(999), "999ms");
+        assert_eq!(super::fmt_elapsed(1_000), "1.0s");
+        assert_eq!(super::fmt_elapsed(59_950), "60.0s");
+        assert_eq!(super::fmt_elapsed(125_000), "2m05s");
+    }
+
     use super::*;
 
     #[test]

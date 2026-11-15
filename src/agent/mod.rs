@@ -50,6 +50,11 @@ pub struct Agent {
     pub(crate) weak_model: Option<String>,
     /// Whether the current turn is still running on `weak_model`.
     pub(crate) weak_active: bool,
+    /// In-flight tool's transcript row + start time — replaced in place by the
+    /// result so slow tools are visible while running.
+    pub(crate) pending_tool: Option<(usize, std::time::Instant)>,
+    /// Turn wall-clock start, for the `turn · … · Ns` close line.
+    pub(crate) turn_started: Option<std::time::Instant>,
     pub(crate) workdir: Arc<Path>,
     pub(crate) shell_policy: ShellPolicy,
     pub(crate) api_history: Vec<ApiMessage>,
@@ -85,6 +90,8 @@ impl Agent {
             fallback_client: None,
             weak_model: None,
             weak_active: false,
+            pending_tool: None,
+            turn_started: None,
             workdir,
             shell_policy,
             api_history,
@@ -109,11 +116,29 @@ impl Agent {
 
     pub(crate) fn finish_user_turn_api(&mut self) {
         self.active_user_expansion = None;
+        // Turn ended mid-tool (interrupt/error): unstick any `◌ running` row.
+        if let Some((idx, started)) = self.pending_tool.take() {
+            let mut ui = self.ui_history.lock().unwrap();
+            if let Some(m) = ui.get_mut(idx)
+                && m.pending
+            {
+                m.pending = false;
+                m.elapsed_ms = Some(started.elapsed().as_millis() as u64);
+                m.content = "(interrupted)".into();
+            }
+        }
         helpers::trim_ui_history(&self.ui_history);
         if !self.quiet_token_sys
             && let Some(line) = turn_usage_line(&self.token_stats)
         {
-            self.push_system(line);
+            let elapsed = self
+                .turn_started
+                .take()
+                .map(|t| format!(" · {}", crate::chat::fmt_elapsed(t.elapsed().as_millis() as u64)))
+                .unwrap_or_default();
+            self.push_system(format!("{line}{elapsed}"));
+        } else {
+            self.turn_started = None;
         }
     }
 
@@ -126,6 +151,14 @@ impl Agent {
         self.ensure_system_prompt();
         *self.ui_history.lock().unwrap() =
             crate::session::conversation_ui_history(saved.ui_history);
+        // A row pending at save-time (crash/quit mid-tool) must not restore as
+        // `◌ running` — mark it finished-but-interrupted.
+        for m in self.ui_history.lock().unwrap().iter_mut() {
+            if m.pending {
+                m.pending = false;
+                m.content = "(interrupted)".into();
+            }
+        }
         helpers::trim_ui_history(&self.ui_history);
         self.token_stats = saved.token_stats;
         self.refresh_context_estimate();
