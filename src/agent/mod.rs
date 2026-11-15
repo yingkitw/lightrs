@@ -12,7 +12,7 @@ pub use context::tokens::{ContextBreakdown, TokenStats, TokenSummary, context_us
 
 use crate::chat::{ApiMessage, ApiRole, UiMessage, UiRole};
 use crate::session::SessionFile;
-use crate::provider::LlmClient;
+use crate::provider::ModelClient;
 use crate::skills::SkillCatalog;
 use crate::tools::ShellPolicy;
 use prompt::system_prompt;
@@ -42,9 +42,9 @@ pub struct HealSetting {
 }
 
 pub struct Agent {
-    pub(crate) client: LlmClient,
+    pub(crate) client: Arc<dyn ModelClient>,
     /// Optional secondary model client retried once when the primary errors mid-turn.
-    pub(crate) fallback_client: Option<LlmClient>,
+    pub(crate) fallback_client: Option<Arc<dyn ModelClient>>,
     /// Cheaper model name for read-only steps (`weak_model`); escalates to
     /// `client.model()` once a step calls a write/exec tool.
     pub(crate) weak_model: Option<String>,
@@ -72,7 +72,7 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(client: LlmClient, workdir: Arc<Path>, shell_policy: ShellPolicy) -> Self {
+    pub fn new(client: impl ModelClient + 'static, workdir: Arc<Path>, shell_policy: ShellPolicy) -> Self {
         let mut api_history = Vec::new();
         let skill_catalog = SkillCatalog::default();
         api_history.push(ApiMessage::system(system_prompt(
@@ -81,7 +81,7 @@ impl Agent {
             &skill_catalog,
         )));
         let mut agent = Self {
-            client,
+            client: Arc::new(client),
             fallback_client: None,
             weak_model: None,
             weak_active: false,
@@ -220,8 +220,8 @@ impl Agent {
         self.ensure_system_prompt();
     }
 
-    pub fn set_fallback_client(&mut self, client: Option<LlmClient>) {
-        self.fallback_client = client;
+    pub fn set_fallback_client(&mut self, client: Option<impl ModelClient + 'static>) {
+        self.fallback_client = client.map(|c| Arc::new(c) as Arc<dyn ModelClient>);
     }
 
     /// Model name used for read-only steps until a write/exec tool appears

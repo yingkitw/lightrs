@@ -80,7 +80,7 @@ pub(crate) fn handle_agent_event(
 }
 
 pub(crate) fn is_interrupted(err: &anyhow::Error) -> bool {
-    err.to_string().contains("turn interrupted")
+    crate::provider::is_interrupted(err)
 }
 
 pub(crate) fn request_interrupt(cancel_tx: &watch::Sender<bool>) {

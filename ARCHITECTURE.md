@@ -7,7 +7,7 @@ config/                 Provider, env/file/CLI load, validate_work_path
 chat.rs                 ApiMessage, UiMessage, ToolCallUi, FileDiffUi
 session/                Per-workdir JSON save/load; `export.rs` markdown transcript export
 paths.rs                ~/.config/lightrs paths (no directories crate)
-provider.rs             HTTP client
+provider.rs             `ModelClient` trait + `LlmClient` HTTP impl (SSE→non-stream fallback inside `send`)
 provider/stream.rs      SSE reassembly for streaming + tool_calls
 agent/                  mod, turn, approval, prompt, helpers — tool loop (max 16)
 agent/context/          context budget: wire (request window), compact (stored history), tokens (est/usage) — see docs/context.md

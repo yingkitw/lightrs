@@ -198,7 +198,7 @@ pub async fn post_chat_stream(
 
     loop {
         if *cancel.borrow() {
-            bail!("turn interrupted");
+            bail!(super::INTERRUPTED);
         }
         let Some(chunk) = response.chunk().await.context("stream chunk")? else {
             break;

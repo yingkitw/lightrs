@@ -57,10 +57,6 @@ pub(crate) fn remove_trailing_empty_assistant(ui_history: &Arc<Mutex<Vec<UiMessa
         }
 }
 
-pub(crate) fn is_interrupted(err: &anyhow::Error) -> bool {
-    err.to_string().contains("turn interrupted")
-}
-
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();

@@ -5,13 +5,13 @@ use anyhow::Result;
 use tokio::sync::{mpsc, watch};
 
 use crate::chat::{ApiMessage, ChatRequest, TokenUsage, UiMessage, UiRole};
-use crate::provider::LlmClient;
+use crate::provider::{ModelClient, is_interrupted};
 use crate::tools::{ShellPolicy, execute_tool, tool_schemas};
 use crate::tui::AgentEvent;
 
 use super::approval::{ShellGate, resolve_shell_gate};
 use super::helpers::{
-    MAX_TOOL_STEPS, append_assistant_delta, is_interrupted, normalize_assistant_text,
+    MAX_TOOL_STEPS, append_assistant_delta, normalize_assistant_text,
     remove_trailing_empty_assistant, truncate_tool_ui,
 };
 use super::{Agent, ObserveEvent};
@@ -60,7 +60,7 @@ impl Agent {
 
         for _step in 0..MAX_TOOL_STEPS {
             if *cancel.borrow() {
-                anyhow::bail!("turn interrupted");
+                anyhow::bail!(crate::provider::INTERRUPTED);
             }
 
             let (client, fallback, request, ui_history, workdir, shell_policy) = {
@@ -157,14 +157,19 @@ impl Agent {
 
     /// One model fetch; on a non-interrupt error, retry once on the fallback client.
     async fn fetch_model_message(
-        client: &LlmClient,
-        fallback: Option<&LlmClient>,
+        client: &Arc<dyn ModelClient>,
+        fallback: Option<&Arc<dyn ModelClient>>,
         request: ChatRequest,
         ui_history: &Arc<Mutex<Vec<UiMessage>>>,
-        on: &mut impl FnMut(ObserveEvent<'_>),
+        on: &mut (impl FnMut(ObserveEvent<'_>) + Send),
         cancel: watch::Receiver<bool>,
-    ) -> Result<(ApiMessage, Option<String>, Option<TokenUsage>)> {
-        match Self::fetch_once(client, request.clone(), ui_history, on, cancel.clone()).await {
+    ) -> Result<crate::provider::ModelReply> {
+        on(ObserveEvent::ModelWait);
+        let mut on_delta = |text: &str| append_assistant_delta(ui_history, text, on);
+        match client
+            .send(request.clone(), &mut on_delta, cancel.clone())
+            .await
+        {
             Err(e) if is_interrupted(&e) => Err(e),
             Err(e) => {
                 let Some(fb) = fallback else { return Err(e) };
@@ -174,57 +179,9 @@ impl Agent {
                 ));
                 let mut retry = request;
                 retry.model = fb.model().to_string();
-                Self::fetch_once(fb, retry, ui_history, on, cancel).await
+                fb.send(retry, &mut on_delta, cancel).await
             }
             ok => ok,
-        }
-    }
-
-    async fn fetch_once(
-        client: &LlmClient,
-        request: ChatRequest,
-        ui_history: &Arc<Mutex<Vec<UiMessage>>>,
-        on: &mut impl FnMut(ObserveEvent<'_>),
-        cancel: watch::Receiver<bool>,
-    ) -> Result<(ApiMessage, Option<String>, Option<TokenUsage>)> {
-        on(ObserveEvent::ModelWait);
-        let messages = request.messages.clone();
-        let model = request.model.clone();
-        match client
-            .chat_stream(
-                request,
-                |apply| {
-                    if let crate::provider::StreamApply::ContentDelta(text) = apply {
-                        append_assistant_delta(ui_history, &text, on);
-                    }
-                },
-                cancel,
-            )
-            .await
-        {
-            Ok(acc) => {
-                let finish_reason = acc.finish_reason.clone();
-                let usage = acc.usage;
-                Ok((acc.into_assistant_message(), finish_reason, usage))
-            }
-            Err(e) if is_interrupted(&e) => Err(e),
-            Err(_) => {
-                let response = client
-                    .chat(ChatRequest {
-                        model,
-                        messages,
-                        tools: Some(tool_schemas()),
-                        tool_choice: Some(serde_json::json!("auto")),
-                        stream: None,
-                    })
-                    .await?;
-                let choice = response
-                    .choices
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("empty choices"))?;
-                Ok((choice.message, choice.finish_reason, response.usage))
-            }
         }
     }
 
@@ -577,5 +534,118 @@ mod heal_tests {
         let mut agent = make_agent(None, 3);
         run_heal(&mut agent, &dir, "write_file", "wrote");
         assert_eq!(agent.heal_ran, 0);
+    }
+}
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+    use crate::chat::{FunctionCall, ToolCall};
+    use crate::provider::{MockModel, ModelClient};
+
+    fn agent() -> Agent {
+        Agent::new(
+            MockModel::text("m", "hi"),
+            Arc::from(std::path::Path::new(".")),
+            ShellPolicy::default(),
+        )
+    }
+
+    fn chat_request() -> ChatRequest {
+        ChatRequest {
+            model: "m".into(),
+            messages: vec![],
+            tools: None,
+            tool_choice: None,
+            stream: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn fallback_retries_on_primary_error() {
+        let primary: Arc<dyn ModelClient> =
+            Arc::new(MockModel::new("m", vec![Err(anyhow::anyhow!("boom"))]));
+        let fb = Arc::new(MockModel::text("fb", "rescued"));
+        let fb_dyn: Arc<dyn ModelClient> = fb.clone();
+        let ui = Arc::new(Mutex::new(Vec::new()));
+        let (_tx, rx) = watch::channel(false);
+        let (msg, _, _) = Agent::fetch_model_message(
+            &primary,
+            Some(&fb_dyn),
+            chat_request(),
+            &ui,
+            &mut |_| {},
+            rx,
+        )
+        .await
+        .expect("fallback rescues the step");
+
+        assert_eq!(msg.text_content().unwrap(), "rescued");
+        let reqs = fb.requests.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+        assert_eq!(reqs[0].model, "fb", "request rewritten to fallback model");
+        assert!(
+            ui.lock()
+                .unwrap()
+                .iter()
+                .any(|m| m.content.contains("retrying with fallback"))
+        );
+    }
+
+    #[tokio::test]
+    async fn interrupt_never_retries_fallback() {
+        let primary: Arc<dyn ModelClient> = Arc::new(MockModel::new(
+            "m",
+            vec![Err(anyhow::anyhow!("turn interrupted"))],
+        ));
+        let fb = Arc::new(MockModel::text("fb", "rescued"));
+        let fb_dyn: Arc<dyn ModelClient> = fb.clone();
+        let ui = Arc::new(Mutex::new(Vec::new()));
+        let (_tx, rx) = watch::channel(false);
+        let err = Agent::fetch_model_message(
+            &primary,
+            Some(&fb_dyn),
+            chat_request(),
+            &ui,
+            &mut |_| {},
+            rx,
+        )
+        .await
+        .expect_err("interrupt propagates");
+
+        assert!(is_interrupted(&err));
+        assert_eq!(fb.requests.lock().unwrap().len(), 0, "no fallback retry");
+    }
+
+    #[test]
+    fn weak_model_used_while_active() {
+        let mut a = agent();
+        a.set_weak_model(Some("weak".into()));
+        a.weak_active = true;
+        assert_eq!(a.build_chat_request().model, "weak");
+        a.weak_active = false;
+        assert_eq!(a.build_chat_request().model, "m");
+    }
+
+    #[test]
+    fn write_tool_escalates_weak_to_primary() {
+        let mut a = agent();
+        a.set_weak_model(Some("weak".into()));
+        a.weak_active = true;
+        let call = |name: &str| ToolCall {
+            id: "c".into(),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: name.into(),
+                arguments: "{}".into(),
+            },
+        };
+        a.escalate_from_weak(&[call("read_file")]);
+        assert!(a.weak_active, "read-only stays weak");
+        a.escalate_from_weak(&[call("write_file")]);
+        assert!(!a.weak_active, "write escalates");
+        let sys = a.ui_history.lock().unwrap();
+        assert!(sys
+            .iter()
+            .any(|m| matches!(m.role, UiRole::System) && m.content.contains("weak model → m")));
     }
 }
