@@ -295,6 +295,10 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Panel styling: `Canvas.kind` grid (0=edge, 1=box border, 2=box label) survives layout → `segment_row` splits each row into styled spans over the `code_bg`/`inline_code_bg`/`muted`/`text` ladder, padded to a solid rectangle. Reuses existing palette colors — no new theme fields.
 - Fallbacks → flat edge list: cycles (Kahn leaves nodes unprocessed), `BT`/`RL` directions, `width < 24` or canvas > width, >48 nodes. `flowchart`/`graph` default to TD when no direction keyword.
 
+## Release footprint (2026-11-15)
+
+- `[profile.release]` had **no** LTO/strip — adding `lto = true` + `codegen-units = 1` + `strip = "symbols"` cut the binary ~32%: default 11M→7.4M, `--no-default-features` 8.1M→5.6M, `--features full` →9.0M. `panic = "abort"` was skipped on purpose — the TUI installs a panic hook to restore the terminal, and abort kills unwinding before the hook path runs. `opt-level = "z"` also skipped — trades render/regex speed for a marginal size win.
+
 ## Patterns to harvest next
 
 - Tool-call JSON differences between GLM / Kimi / MiniMax

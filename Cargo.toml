@@ -23,6 +23,11 @@ acp = ["dep:agent-client-protocol"]
 acp-v2 = ["acp", "agent-client-protocol?/unstable_protocol_v2"]
 syntect = ["dep:syntect"]
 
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"
+
 [dependencies]
 agent-client-protocol = { version = "5", default-features = false, features = ["stdio"], optional = true }
 anyhow = "1"

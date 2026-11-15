@@ -67,11 +67,11 @@ shows both so you can eyeball calibration.
 
 | Where | What it shows |
 |---|---|
-| Header | `N msg · ~Xk ctx est · Yk session · last A in + B out` |
-| `/context` | `limits:` all budgets · `wire: M of N turns · K msgs` · `breakdown:` by role (sys/user/asst/tool-out/call-args) · `top:` heaviest messages · `turn:` real usage |
+| Header | `N msg · ~Xk ctx est (P%) · Yk session · last A in + B out` — `(P%)` when the model's window is known (`config::model_context_window`) |
+| `/context` | `limits:` `window Nk` + all budgets · `wire: M of N turns · K msgs · ~P% of window` · `breakdown:` by role (sys/user/asst/tool-out/call-args) · `top:` heaviest messages · `turn:` real usage |
 | `/status` | Session + the same `tokens:` line |
 | Per step | `model · X in + Y out` real usage lines |
-| Turn end | `turn · N call(s) · X in + Y out` |
+| Turn end | `turn · N call(s) · X in + Y out · Ns` (wall-clock) |
 | First trim | `[sys] context window: sending last M of N turns …` (once per session) |
 | `/quiet` | Suppresses the routine sys lines only — header and `/context` unaffected |
 

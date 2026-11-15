@@ -115,7 +115,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 
 ## Configuration
 
-Priority: **CLI > environment > project overlay > config file > defaults** (`config/file.rs`, `config.example.toml`).
+Priority: **CLI/env > project overlay > config file > defaults** (`config/file.rs`, `config.example.toml`). API-key env vars feed the CLI tier via clap `env=` args.
 
 **Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, `weak_model`, and `[shell]` are applied — a project `[shell]` section replaces the global one entirely. `provider`, `base_url`, `keys`, and `workdir` are parsed but ignored, so a repo file cannot redirect API calls or inject credentials.
 

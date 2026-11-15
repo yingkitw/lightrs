@@ -7,10 +7,10 @@ A minimal terminal coding agent inspired by pi / opencode. Single Rust binary, O
 ```bash
 cargo install --path .
 # or
-cargo build --release          # default: TUI + syntect (no ACP)
+cargo build --release          # default: TUI + syntect (no ACP) — ~7 MB binary
 
 # ACP server (Zed, JetBrains): `cargo build --release --features full`
-# Smallest TUI (plain code fences): `cargo build --release --no-default-features`
+# Smallest TUI (~5.6 MB, plain code fences): `cargo build --release --no-default-features`
 ```
 
 ## API keys
@@ -75,7 +75,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
-- `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/undo`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/todo`, `/editor`, `/quit`, …)
+- `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/undo`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/cwd`, `/todo`, `/editor`, `/quit`, …)
 - `/cd <path>` — switch working directory mid-session (keeps the conversation); `/editor` — draft the prompt in `$EDITOR`; `/todo` — show the agent's task list
 - `.claude/commands/*.md` — project slash commands (`/name` sends the file body to the model, args appended)
 - Session header shows **version, provider, model, path:git-branch, context size (+ % of the model's window), API host**; `/status` prints full details and `/context` shows where the tokens sit (per-role breakdown, heaviest messages, current-turn real usage). A `turn · N calls · X in + Y out · Ns` line closes each turn (`/quiet` silences routine token lines)
@@ -123,7 +123,7 @@ At runtime, lightrs **discovers skills** from that tree plus `~/.cursor/skills`,
 ## Design
 
 - One OpenAI-compatible HTTP client for all backends (optional streaming SSE)
-- Fixed tool set: read/write/list + shell; no in-process MCP/LSP
+- Fixed tool set (9): fs read/write/patch, `grep`, `list_dir`, `glob_file_search`, `run_command`, `todo_write`; no in-process MCP/LSP
 - Tokio agent worker + sync TUI thread; per-project session JSON under `~/.config/lightrs/sessions/` (user/agent/tool turns; ephemeral `[sys]` omitted)
 - Main crates: `ratatui`, `reqwest`, `pulldown-cmark`, `syntect`, `similar` (write diffs)
 

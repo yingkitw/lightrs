@@ -2,14 +2,14 @@
 
 ```
 lib.rs, main.rs         Library + binary; `run()` in lib
-cli.rs                  Commands: tui (default), acp, import, migrate
+cli.rs                  Commands: tui (default), acp, import, migrate (alias `doctor`), exec
 config/                 Provider, env/file/CLI load, validate_work_path
 chat.rs                 ApiMessage, UiMessage, ToolCallUi, FileDiffUi
-session/                Per-workdir JSON save/load; `export.rs` markdown transcript export
+session/                Per-workdir JSON save/load; `export.rs` markdown export, `undo.rs` file-restore
 paths.rs                ~/.config/lightrs paths (no directories crate)
 provider.rs             `ModelClient` trait + `LlmClient` HTTP impl (SSE→non-stream fallback inside `send`)
 provider/stream.rs      SSE reassembly for streaming + tool_calls
-agent/                  mod, turn, approval, prompt, helpers — tool loop (max 16)
+agent/                  mod, turn, approval, prompt, helpers, workdir_context — tool loop (max 16)
 agent/context/          context budget: wire (request window), compact (stored history), tokens (est/usage) — see docs/context.md
 skills/                 SKILL.md discovery + rules; `$id` attach + system catalog
 commands.rs             `.claude/commands/*.md` → `/name` project slash commands
@@ -20,7 +20,7 @@ tools/                  schemas, fs/shell/grep, diff (similar), ToolOutcome, tod
 opencode/, migrate/    Import + auto-migrate scanners
 acp/                    Optional ACP v1/v2 server (feature `acp`)
 tui/
-  run/ (mod, events, input), app.rs, composer.rs, mentions.rs, slash.rs, info.rs, theme.rs
+  run/ (mod, events, input, observe), app.rs, composer.rs, mentions.rs, slash.rs, info.rs, theme/, clipboard.rs
   editor.rs             `/editor` — suspend TUI, compose prompt in `$EDITOR`
   highlight/            markdown, syntect, mermaid, `highlight/diff`, `sys.rs`, wrap
   ui/                   chrome (header/input/status), transcript (tools + diff + markdown)
@@ -63,7 +63,7 @@ Reference: [Codex `codex-rs/tui`](https://github.com/openai/codex/tree/main/code
 | Theme | Shared palette `tui/theme.rs` (roles, diff +/-, code blocks) |
 | Composer | Multi-line input, **Ctrl+P/N** history (`tui/composer.rs`) |
 | Lifecycle | Busy spinner; **Esc / Ctrl+C** interrupt |
-| Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/cwd`, `/cd`, `/todo`, `/editor`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit` |
+| Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/compact`, `/context`, `/copy`, `/cwd`, `/cd`, `/editor`, `/export`, `/quiet`, `/quit`, `/reload`, `/rewind`, `/skills`, `/status`, `/theme`, `/todo`, `/undo` |
 
 Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses input-pane **y/n** approval when configured (`[shell].require_approval` or allowlist block); one prompt covers all `run_command` calls in a model step (`approval::resolve_shell_approvals`).
 
@@ -71,9 +71,9 @@ Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses i
 
 `ratatui`, `crossterm`, `pulldown-cmark` (no default features), `syntect` (optional, `regex-fancy`), `similar`, `reqwest` (rustls + stream), `tokio`. ACP adds optional `agent-client-protocol`. `glob_file_search` uses in-tree `glob_pattern` (no `glob` crate).
 
-Build profiles: default is TUI + syntect only (~398 crates in the resolve graph here). `--features full` adds ACP (`acp`, `acp-v2`). `cargo build --release --no-default-features` is the smallest TUI (~377 crates; plain code fences).
+Build profiles: default is TUI + syntect only (~407 crates in the resolve graph, ~7.4 MB release). `[profile.release]` uses `lto` + `codegen-units = 1` + `strip` (~32% smaller than untuned). `--no-default-features` ≈ 5.6 MB, `--features full` ≈ 9.0 MB. `--features full` adds ACP (`acp`, `acp-v2`). `cargo build --release --no-default-features` is the smallest TUI (~381 crates, ~5.6 MB; plain code fences).
 
-Tests: `tests/docs_sync.rs` (doc alignment); `tests/provider_fixtures.rs` + `tests/fixtures/` (chat JSON + SSE, including Kimi/GLM/MiniMax tool streams). Run locally: `cargo test`, `cargo test --no-default-features --lib`, `cargo build --release`.
+Tests: `tests/docs_sync.rs` (doc drift — tools, slash lists in SPEC+ARCH, context budget constants vs source, tests/ inventory in AGENTS); `tests/provider_fixtures.rs` + `tests/fixtures/` (chat JSON + SSE, including Kimi/GLM/MiniMax tool streams); `tests/support/` (shared mock that records request bodies) backs `tests/approval_turn.rs` (mutex/approval regression), `tests/context_budget.rs` (wire-window + compaction on real requests), `tests/weak_model.rs` (weak→primary escalation), `tests/tui_busy_spec.rs`. Run locally: `cargo test`, `cargo test --no-default-features --lib`, `cargo build --release`.
 
 ## Security notes
 

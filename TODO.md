@@ -74,19 +74,19 @@
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 191 tests; request-capture e2e (approval, wire budget, weak-model) on the shared mock |
+| Correctness & coverage | 5 | 210 tests; request-capture e2e (approval, wire budget, weak-model) on the shared mock |
 | Agent reliability | 5 | Step cap, interrupt, heal loop, fallback + weak-model routing, single turn loop |
-| UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, native copy + scroll |
+| UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, native copy + scroll; OpenCode signals (ctx %, `path:branch`, jump-to-latest); mermaid ASCII layout panel |
 | Maintainability | 5 | `agent/context/` domain module; duplicated turn loop deleted (net -108) |
 | Docs alignment | 5 | `docs_sync` + `docs/context.md` + root MDs audited to code |
-| Footprint | 4 | `--no-default-features` drops ACP + syntect; syntax highlighting optional |
+| Footprint | 5 | `lto`+`codegen-units=1`+`strip` in release → 7.4M default / 5.6M minimal / 9.0M full (−32%); `--no-default-features` drops ACP + syntect |
 | Token efficiency | 5 | Wire window (12 turns/48k) + stored compact (32k/64k) + weak-model routing; `chars/4` estimate (documented) |
 
 **Weakest next:** MCP wiring (out of v0.1 scope) or optional live SSE capture into `tests/fixtures/`.
 
 ## Brainstorm (unprioritized)
 
-- Release binary size badge in CI (`--no-default-features` vs default)
+- Release binary size badge in CI (sizes now: 7.4M default / 5.6M `--no-default-features` / 9.0M `full` after `[profile.release]` lto+strip)
 
 ## Competitive intel — craftine + vendored minicode (2026-11-15)
 
@@ -101,7 +101,7 @@ Shipped 2026-11-15 (see Done): queued input while `Busy`, interrupt keywords, `/
 - ~~**Approval batching**~~ — shipped: `resolve_shell_approvals` pre-scans the step, one prompt, all-or-nothing verdict.
 - ~~**Audit log**~~ — shipped: `.lightrs/audit.log` JSONL per `run_command` decision.
 - ~~**Weak model routing**~~ — shipped: `weak_model` config/flag; per-turn escalation on write/exec tools.
-- ~~**Per-project config overlay**~~ — shipped: safe-subset `.lightrs/config.toml` (model/fallback/`[shell]`).
+- ~~**Per-project config overlay**~~ — shipped: safe-subset `.lightrs/config.toml` (model/fallback/weak/`[shell]`).
 - ~~**Prompt-injection warning**~~ — shipped: `tools/injection.rs` scans tool results; flagged prefix goes into API history + `[sys]` notice.
 - ~~**Atomic session save**~~ — shipped: temp file + same-dir rename.
 
