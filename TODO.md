@@ -55,6 +55,7 @@
 - [x] Token transparency — `TokenStats` gains per-turn totals (`turn_prompt/completion/calls`, `begin_turn`); `/context` adds per-role breakdown + top-3 consumers + turn in/out; `turn · N calls · X in + Y out` closes each turn; `/status` now shows the tokens line; `/quiet` gates all routine token sys lines
 - [x] Wire context window — `messages_for_api` trims the request payload to last **12** user turns / ≤**48k est** (non-destructive; `/rewind`+session keep full history); stored-history auto-compact unchanged (stub 32k / drop 64k raw); one-shot `[sys]` note + `/context` `wire: X of Y turns`
 - [x] Ponytail audit — single turn loop: deleted `&mut self` path (`drive_turn_loop`, `handle_model_message`, sync `execute_one_tool`); exec/ACP use `run_user_turn_headless` over the shared loop; ACP sessions hold `Arc<Mutex<Agent>>` (sessions lock no longer spans turns); fixed dead `not(acp-v2)` match arm that broke `--features acp` build
+- [x] Native copy without losing scroll — mouse reporting narrowed to `?1000h`+`?1006h` (`tui::MOUSE_ON/OFF`); `?1002` drag tracking off → terminal drag-select + Cmd/Ctrl+C work while wheel scroll and tool-row clicks are unaffected
 
 ## Backlog
 

@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use crossterm::ExecutableCommand;
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use crate::tui::{MOUSE_OFF, MOUSE_ON};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -38,7 +38,7 @@ pub fn compose_into_input(
     let args: Vec<&str> = parts.collect();
 
     disable_raw_mode()?;
-    let _ = terminal.backend_mut().execute(DisableMouseCapture);
+    let _ = std::io::Write::write_all(&mut *terminal.backend_mut(), MOUSE_OFF.as_bytes());
     let leave = terminal.backend_mut().execute(LeaveAlternateScreen);
     let status = if leave.is_ok() {
         Command::new(prog).args(&args).arg(&path).status()
@@ -46,7 +46,7 @@ pub fn compose_into_input(
         Err(std::io::Error::other("leave alternate screen"))
     };
     let _ = terminal.backend_mut().execute(EnterAlternateScreen);
-    let _ = terminal.backend_mut().execute(EnableMouseCapture);
+    let _ = std::io::Write::write_all(&mut *terminal.backend_mut(), MOUSE_ON.as_bytes());
     enable_raw_mode()?;
     terminal.clear()?;
     let status = status.context("run $EDITOR")?;

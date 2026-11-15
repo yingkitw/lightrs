@@ -33,7 +33,7 @@
 - **Tool blocks**: header row keeps a one-line call summary (args or file +/−) in both states; collapsed shows truncated result, expanded shows full args/result. Results beginning `error:` render in the error color; other results use the normal body color
 - **Tokens**: muted `[sys]` lines per turn — `send · ~N ctx` after your message (estimate), `model · N in + M out` after each API step when the provider reports usage
 - **`write_file`** / **`patch_file`**: colorized unified diff (`+`/`-`/`@@`); `+N −M` in collapsed header; full diff when expanded; API tool body remains a one-line summary
-- **Mouse**: wheel scroll; left-click toggles tool expand (with `o` when input empty)
+- **Mouse**: wheel scroll; left-click toggles tool expand (with `o` when input empty); drag = native terminal selection (copy) — the app only requests `?1000` click/scroll reporting, never `?1002` drag tracking
 - **Busy**: spinner + optional “waiting for model…” when streaming has not started
 
 ### Chrome

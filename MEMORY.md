@@ -263,6 +263,12 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Security**: `provider`, `base_url`, `keys`, `workdir` are parsed but never applied — a hostile repo file must not redirect API calls or inject keys. AGENTS.md remains a bigger injection surface regardless; this keeps config from adding another.
 - mtime watching: `App::watched_config_mtime` = max(global, project) — project file create/delete both trigger the auto `[shell]` reload before send; `/cd` + `/reload` re-sync `agent.heal` via `sync_heal` (latent gap: `/reload` previously never refreshed heal).
 
+## Mouse reporting vs native copy (2026-11-15)
+
+- Crossterm `EnableMouseCapture` = `?1000h;?1002h;?1006h` — `?1002` drag reporting is what kills terminal drag-select (the app eats every drag, copy impossible). lightrs never uses `Drag`/`Moved`/`Up` events, so it writes **`tui::{MOUSE_ON,MOUSE_OFF}`** (`?1000h;?1006h` only) directly instead — clicks + wheel still reported, drags fall back to native selection (Cmd+C copy). Do NOT "fix" back to `EnableMouseCapture`.
+- Applied in `run/mod.rs` (enter/exit) and `editor.rs` (suspend/resume for `$EDITOR`); `MOUSE_OFF` also clears `?1002` in case a prior session leaked it.
+- Paste path is separate and already worked: `EnableBracketedPaste` → `Event::Paste` → composer `insert_text`.
+
 ## Patterns to harvest next
 
 - Tool-call JSON differences between GLM / Kimi / MiniMax

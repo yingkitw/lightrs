@@ -82,6 +82,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - The model never gets the full history: requests are windowed to the **last 12 user turns** and **~48k est tokens** (stored history stays intact for `/rewind`; `/context` shows `wire: X of Y turns`)
 - Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** ASCII, collapsible **tool** rows (mouse or `o`), unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
 - **Mouse wheel**, **↑/↓**, **PgUp/PgDn**, **Home/End** — scroll transcript (when the input line is empty)
+- **Drag-select + Cmd/Ctrl+C** — copy any transcript text (drags are left to the terminal, so selection always works)
 - **Click** a tool row or **`o`** — expand/collapse tool detail; **`/copy`** for clean clipboard text
 
 The agent can **read/write/patch files** (patch tolerates minor whitespace drift), **`grep`** (literal search in tree), **list directories**, **run shell commands** (64 KiB output cap per stream), and maintain a **`todo_write`** task list (`.lightrs/todos.json`) under the configured working directory (same privilege as your user).

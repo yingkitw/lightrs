@@ -7,12 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-};
+use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use crate::tui::{MOUSE_OFF, MOUSE_ON};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -121,8 +120,9 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     stdout.execute(EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    // Wheel + tool-row clicks need mouse reporting; use /copy or Option+drag to select text.
-    terminal.backend_mut().execute(EnableMouseCapture)?;
+    // Wheel + tool-row clicks need mouse reporting; drags stay unreported so
+    // native terminal selection (copy) keeps working.
+    std::io::Write::write_all(&mut *terminal.backend_mut(), MOUSE_ON.as_bytes())?;
 
     let mut app = App::new(cfg.clone());
     crate::tui::theme::sync(&app.theme);
@@ -198,7 +198,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
         let _ = session::save(&guard, app.workdir());
     }
 
-    terminal.backend_mut().execute(DisableMouseCapture)?;
+    std::io::Write::write_all(&mut *terminal.backend_mut(), MOUSE_OFF.as_bytes())?;
     terminal.backend_mut().execute(DisableBracketedPaste)?;
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
