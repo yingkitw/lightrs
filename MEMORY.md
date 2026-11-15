@@ -210,6 +210,8 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - `Agent::auto_compact_context` runs inside `build_chat_request` (per step): ≥32k est → stub tool bodies+args; ≥64k est → `drop_oldest_turn` prunes whole user turns at `User` boundaries (never splits tool_call/tool pairs, refuses to eat the in-flight turn).
 - `build_chat_request` is `&mut self` for this — `run_user_turn_shared` locks the mutex for request build anyway.
 - Thresholds are `chars/4` estimate, not real tokenizers — cheap and close enough.
+- **Two-layer context model**: `messages_for_api` bounds the *wire* copy — last **12** user turns (`MAX_RESENT_TURNS`) then `drop_oldest_turn` until ≤ **48k est** (`WIRE_BUDGET_TOKENS`); `api_history` is never trimmed there so `/rewind` + session save keep everything. `auto_compact_context` shrinks *stored* history (stub 32k / drop 64k) and must measure `api_history` **raw** — `refresh_context_estimate` reports the wire view, so tests asserting raw size need `estimate_context_tokens(&agent.api_history)` directly.
+- Wire-window transparency: one-shot `[sys]` via `wire_window_noted` flag (reset in `clear_conversation`); `/context` leads with `wire: X of Y turns` — windowing is visible, not silent.
 
 ## Session rewind + atomic save (2026-11-15)
 

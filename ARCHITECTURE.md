@@ -48,6 +48,7 @@ URLs omit trailing slashes; paths are joined as `{base}/chat/completions`. Strea
 - Agent `tokio::Mutex` is **not** held across SSE reads; UI transcript is `Arc<Mutex<Vec<UiMessage>>>` for live streaming redraws
 - **Lock discipline** (`run_user_turn_shared`): the agent mutex is only held for short record/mutate sections. The model fetch, the batched approval oneshot, tool execution, and heal subprocesses all run with the mutex free — `execute_one_tool_shared` uses `spawn_blocking` for sync tool work and re-locks per call. Holding it across the approval wait deadlocks the TUI (it needs `blocking_lock` to draw the prompt); `tests/approval_turn.rs` guards this.
 - `ui_history` is capped at 500 messages (`helpers::trim_ui_history`, applied at turn end and session restore) — bounds session JSON and per-frame render cost
+- Two context layers: `context::messages_for_api` bounds the **wire** payload (last 12 user turns, ≤48k est) without touching `api_history`; `auto_compact_context` bounds the **stored** history (stub 32k / drop 64k, raw estimate) — `/rewind` and session save keep the full record
 
 ## TUI (Codex-aligned patterns)
 

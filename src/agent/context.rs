@@ -20,7 +20,16 @@ pub(crate) fn user_expansion_suffix(full: &str, composer: &str) -> Option<String
     Some(tail.to_string())
 }
 
-/// Build the message list actually sent on the wire (lean history + one-turn expansions).
+/// Wire payload bounds (history itself is NOT trimmed — `/rewind` and session
+/// save keep everything): at most this many user turns reach the model…
+pub(crate) const MAX_RESENT_TURNS: usize = 12;
+/// …and at most this estimated size (`chars/4`); oldest whole turns drop first.
+pub(crate) const WIRE_BUDGET_TOKENS: u32 = 48_000;
+
+/// Build the message list actually sent on the wire: lean history + one-turn
+/// expansions, then a sliding window — keep only the last `MAX_RESENT_TURNS`
+/// user turns and stay under `WIRE_BUDGET_TOKENS`. Non-destructive: callers
+/// get a trimmed copy while `api_history` keeps the full conversation.
 pub(crate) fn messages_for_api(
     history: &[ApiMessage],
     active_user_expansion: Option<&str>,
@@ -47,7 +56,28 @@ pub(crate) fn messages_for_api(
         };
         out.push(ApiMessage::user(text));
     }
+    drop_excess_turns(&mut out, MAX_RESENT_TURNS);
+    while super::tokens::estimate_context_tokens(&out) > WIRE_BUDGET_TOKENS
+        && drop_oldest_turn(&mut out)
+    {}
     out
+}
+
+/// Drop oldest complete user turns until at most `max_turns` user messages
+/// remain. Returns turns dropped; the newest (in-flight) turn is never removed.
+pub(crate) fn drop_excess_turns(history: &mut Vec<ApiMessage>, max_turns: usize) -> usize {
+    let mut dropped = 0;
+    while history.iter().filter(|m| m.role == ApiRole::User).count() > max_turns
+        && drop_oldest_turn(history)
+    {
+        dropped += 1;
+    }
+    dropped
+}
+
+/// Count of `User` messages (one per turn) — used for wire-vs-history reporting.
+pub(crate) fn user_turn_count(history: &[ApiMessage]) -> usize {
+    history.iter().filter(|m| m.role == ApiRole::User).count()
 }
 
 /// Drop `@` / `$` attachment blocks (session save / restore migration).
@@ -318,5 +348,48 @@ mod tests {
         ];
         assert!(!drop_oldest_turn(&mut h));
         assert_eq!(h.len(), 3);
+    }
+
+    #[test]
+    fn wire_window_keeps_only_last_n_turns() {
+        let mut history = vec![ApiMessage::system("s")];
+        for i in 0..20 {
+            history.push(ApiMessage::user(format!("u{i}")));
+            history.push(ApiMessage::tool_result(format!("t{i}"), "x", "r"));
+        }
+        let original_len = history.len();
+        let wire = messages_for_api(&history, None);
+        assert_eq!(user_turn_count(&wire), MAX_RESENT_TURNS);
+        assert_eq!(wire[0].role, ApiRole::System);
+        // Last turns survive, oldest dropped at whole-turn boundaries.
+        let last_user = wire.iter().rev().find(|m| m.role == ApiRole::User).unwrap();
+        assert_eq!(last_user.text_content().unwrap(), "u19");
+        // History itself untouched — windowing is wire-only.
+        assert_eq!(history.len(), original_len);
+    }
+
+    #[test]
+    fn wire_budget_drops_oldest_turns() {
+        let mut history = vec![ApiMessage::system("s")];
+        for i in 0..6 {
+            history.push(ApiMessage::user("x".repeat(40_000)));
+            history.push(ApiMessage::tool_result(format!("t{i}"), "x", "r"));
+        }
+        let wire = messages_for_api(&history, None);
+        assert!(super::super::tokens::estimate_context_tokens(&wire) <= WIRE_BUDGET_TOKENS + 1);
+        assert_eq!(wire[0].role, ApiRole::System);
+        // In-flight turn is never dropped even when over budget.
+        assert!(wire.iter().any(|m| m.role == ApiRole::User));
+    }
+
+    #[test]
+    fn wire_window_under_limits_is_identity() {
+        let history = vec![
+            ApiMessage::system("s"),
+            ApiMessage::user("u1"),
+            ApiMessage::tool_result("t1", "x", "r"),
+        ];
+        let wire = messages_for_api(&history, None);
+        assert_eq!(wire.len(), history.len());
     }
 }

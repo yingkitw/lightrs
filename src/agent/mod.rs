@@ -67,6 +67,8 @@ pub struct Agent {
     pub(crate) heal: Option<HealSetting>,
     /// Heal runs so far this user turn (reset in `begin_user_turn`).
     pub(crate) heal_ran: u32,
+    /// One-shot `[sys]` note once the wire window first sends fewer turns than history holds.
+    pub(crate) wire_window_noted: bool,
 }
 
 impl Agent {
@@ -93,6 +95,7 @@ impl Agent {
             active_user_expansion: None,
             heal: None,
             heal_ran: 0,
+            wire_window_noted: false,
         };
         agent.refresh_context_estimate();
         agent
@@ -116,7 +119,13 @@ impl Agent {
     /// heaviest single messages) and the current turn's real usage so far.
     pub fn context_report(&self) -> String {
         let msgs = self.messages_for_request();
-        let mut out = format!("breakdown: {}", format_breakdown(&context_breakdown(&msgs)));
+        let wire_turns = context::user_turn_count(&msgs);
+        let history_turns = context::user_turn_count(&self.api_history);
+        let mut out = format!(
+            "wire: {wire_turns} of {history_turns} turns · {} msgs\nbreakdown: {}",
+            msgs.len(),
+            format_breakdown(&context_breakdown(&msgs))
+        );
         let top = top_consumers(&msgs, 3);
         if !top.is_empty() {
             out.push_str(&format!("\ntop: {}", top.join(" · ")));
@@ -194,16 +203,17 @@ impl Agent {
             estimate_context_tokens(&self.messages_for_request());
     }
 
-    /// Compact stale context before a request is built (auto `/compact`):
-    /// above `AUTO_COMPACT_TOKENS` stub old tool bodies + tool_call args;
-    /// above `HISTORY_HARD_CAP_TOKENS` drop whole oldest user turns.
+    /// Compact stale *stored* context before a request is built (auto `/compact`):
+    /// above `AUTO_COMPACT_TOKENS` stub old tool bodies + tool_call args in
+    /// `api_history`; above `HISTORY_HARD_CAP_TOKENS` drop whole oldest turns
+    /// permanently. Triggered on the raw history estimate — the wire payload
+    /// has its own tighter window in `context::messages_for_api`.
     pub(crate) fn auto_compact_context(&mut self) {
         const AUTO_COMPACT_TOKENS: u32 = 32_000;
         const HISTORY_HARD_CAP_TOKENS: u32 = 64_000;
 
-        self.refresh_context_estimate();
-        let est = self.estimated_context_tokens;
-        if est < AUTO_COMPACT_TOKENS {
+        let raw_est = estimate_context_tokens(&self.api_history);
+        if raw_est < AUTO_COMPACT_TOKENS {
             return;
         }
         let n_tools =
@@ -219,11 +229,11 @@ impl Agent {
         if n_tools + n_args + dropped > 0 {
             self.refresh_context_estimate();
             self.push_system(format!(
-                "context auto-compact: {n_tools} tool result(s), {n_args} call arg(s), {dropped} old turn(s) dropped (~{est} → ~{} est)",
+                "context auto-compact: {n_tools} tool result(s), {n_args} call arg(s), {dropped} old turn(s) dropped (~{raw_est} → ~{} est)",
                 self.estimated_context_tokens
             ));
         }
-        self.context_warned_above = self.context_warned_above.max(self.estimated_context_tokens);
+        self.context_warned_above = self.context_warned_above.max(raw_est);
     }
 
     /// Show a `[sys]` hint when API history is large (`/quiet` suppresses).
@@ -410,6 +420,7 @@ impl Agent {
         drop(ui);
         self.token_stats = TokenStats::default();
         self.context_warned_above = 0;
+        self.wire_window_noted = false;
         self.refresh_context_estimate();
     }
 }
@@ -449,6 +460,7 @@ mod streaming_tests {
     use std::path::Path;
     use std::sync::Arc;
 
+    use crate::agent::estimate_context_tokens;
     use crate::chat::{ApiMessage, ApiRole, FunctionCall, ToolCall, UiMessage, UiRole};
     use crate::provider::LlmClient;
     use crate::tools::ShellPolicy;
@@ -518,14 +530,14 @@ mod streaming_tests {
                 "b".repeat(6_000),
             ));
         }
-        agent.refresh_context_estimate();
-        let before = agent.token_summary().estimate;
+        // Raw stored history (not the bounded wire estimate) must exceed the cap.
+        let before = estimate_context_tokens(&agent.api_history);
         assert!(before > 64_000, "fixture should exceed the hard cap");
         let len_before = agent.api_history.len();
 
         agent.auto_compact_context();
 
-        assert!(agent.token_summary().estimate < before);
+        assert!(estimate_context_tokens(&agent.api_history) < before);
         assert!(agent.api_history.len() < len_before);
         // The in-flight (most recent) user turn is never dropped.
         let last_user = agent
@@ -535,7 +547,7 @@ mod streaming_tests {
             .unwrap();
         assert_eq!(agent.api_history[last_user].text_content().unwrap(), "u7");
         // And the history fits under the hard cap.
-        assert!(agent.token_summary().estimate <= 64_000);
+        assert!(estimate_context_tokens(&agent.api_history) <= 64_000);
     }
 
     #[test]

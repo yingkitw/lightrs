@@ -173,9 +173,19 @@ impl Agent {
 
     fn build_chat_request(&mut self) -> ChatRequest {
         self.auto_compact_context();
+        let messages = self.messages_for_request();
+        // One-time transparency note when the wire window first trims history.
+        let wire_turns = super::context::user_turn_count(&messages);
+        let history_turns = super::context::user_turn_count(&self.api_history);
+        if wire_turns < history_turns && !self.wire_window_noted {
+            self.wire_window_noted = true;
+            self.push_system(format!(
+                "context window: sending last {wire_turns} of {history_turns} turns to the model (history kept for /rewind; /clear resets)"
+            ));
+        }
         ChatRequest {
             model: self.client.model().to_string(),
-            messages: self.messages_for_request(),
+            messages,
             tools: Some(tool_schemas()),
             tool_choice: Some(serde_json::json!("auto")),
             stream: None,
