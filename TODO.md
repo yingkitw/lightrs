@@ -47,6 +47,10 @@
 - [x] Clippy cleanup — zero warnings on `cargo clippy --all-targets` (collapsed ifs, let-chains, dead `streaming` branch)
 - [x] Atomic session save — temp file + same-dir rename (`session/mod.rs`)
 - [x] `/rewind [n]` — drop last n user turns from API+UI history at user boundaries, resave session
+- [x] `.lightrs/audit.log` — JSONL record per `run_command` decision (`src/audit.rs`, redacted, best-effort)
+- [x] Prompt-injection scan — tool output flagged inline for the model + `[sys]` warning (`tools/injection.rs`)
+- [x] Per-project config overlay — `.lightrs/config.toml` applies model/fallback/`[shell]` only (provider/base_url/keys ignored); `/reload`, auto-mtime, and `/cd` all re-sync (heal included)
+- [x] Approval batching — one y/n prompt covers all `run_command` calls needing approval in a single model step (`agent/approval.rs::resolve_shell_approvals`)
 
 ## Backlog
 
@@ -80,11 +84,11 @@ Shipped 2026-11-15 (see Done): queued input while `Busy`, interrupt keywords, `/
 
 ### Tier B — moderate weight
 
-- **Approval batching** — single banner listing all pending calls in a multi-tool step instead of serial y/n.
-- **Audit log** — `.lightrs/audit.log` append of tool approvals/denials + `run_command` invocations (minicode `safety/`).
+- ~~**Approval batching**~~ — shipped: `resolve_shell_approvals` pre-scans the step, one prompt, all-or-nothing verdict.
+- ~~**Audit log**~~ — shipped: `.lightrs/audit.log` JSONL per `run_command` decision.
 - **Weak model routing** — read-only tools served by a cheaper `[provider].weak_model` until first write/exec; token-frugal (craftine `--weak-model`).
-- **Per-project config overlay** — `.lightrs/config.toml` overrides global config (craftine `.craftine/config.json`).
-- **Prompt-injection warning** — scan tool output for instruction-override patterns before sending to model; transcript warning (minicode `security.rs`).
+- ~~**Per-project config overlay**~~ — shipped: safe-subset `.lightrs/config.toml` (model/fallback/`[shell]`).
+- ~~**Prompt-injection warning**~~ — shipped: `tools/injection.rs` scans tool results; flagged prefix goes into API history + `[sys]` notice.
 - ~~**Atomic session save**~~ — shipped: temp file + same-dir rename.
 
 ### Patterns worth borrowing (not features)

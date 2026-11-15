@@ -1,6 +1,7 @@
 #[cfg(feature = "acp")]
 pub mod acp;
 pub mod agent;
+pub mod audit;
 pub mod chat;
 pub mod cli;
 pub mod commands;

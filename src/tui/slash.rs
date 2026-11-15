@@ -163,7 +163,16 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                     let _ = session::save(agent, app.workdir());
                     app.config.workdir = dir.clone();
                     agent.set_workdir(std::sync::Arc::from(dir.as_path()));
+                    // Pick up the new workdir's .lightrs/config.toml overlay.
+                    let reload = app.config.reload_shell_from_file().ok();
+                    agent.set_shell_policy(app.config.shell_policy.clone());
+                    sync_heal(agent, app);
                     agent.push_system(format!("cwd → {}", dir.display()));
+                    if let Some(msg) = reload
+                        && msg.contains("project")
+                    {
+                        agent.push_system(msg);
+                    }
                 }
                 Err(e) => agent.push_error(format!("{e:#}")),
             }
@@ -328,6 +337,7 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
         "reload" => match app.config.reload_shell_from_file() {
             Ok(msg) => {
                 agent.set_shell_policy(app.config.shell_policy.clone());
+                sync_heal(agent, app);
                 app.refresh_skill_catalog(agent);
                 agent.push_system(format!(
                     "{msg}\n(model/provider/base URL still need restart; skills rescanned)"
@@ -354,6 +364,16 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             SlashAction::Handled
         }
     }
+}
+
+/// Keep `agent.heal` in sync with the (possibly project-overlaid) `[shell]` config.
+fn sync_heal(agent: &mut Agent, app: &App) {
+    agent.set_heal(app.config.test_command.clone().map(|command| {
+        crate::agent::HealSetting {
+            command,
+            max_steps: app.config.heal_steps,
+        }
+    }));
 }
 
 /// `/cd` target: `~`, `~/x`, absolute, or relative to the current workdir. Must be a directory.

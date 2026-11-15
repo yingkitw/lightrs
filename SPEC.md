@@ -105,13 +105,17 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - **CLI `doctor --check`**: health report (config, keys, workdir, `rg`, rustc, local agent configs) without importing
 - **Shell deny list** (`tools/shell_deny.rs`): hard-block catastrophic commands (e.g. `rm -rf /`, fork bomb, `curl | sh`); not bypassed by TUI approval
 - **Secret redaction**: tool results scrubbed for common key/token shapes before API history (`tools/redact.rs`, via `truncate_tool_api`)
+- **Audit log**: every `run_command` decision appends a JSON line to `.lightrs/audit.log` — `{ts, tool, command, decision, result}` where decision is `auto` / `approved` / `approved_bypass` / `denied` / `denied_headless`. Command text is redacted; `result` is a short status line. Best-effort (failures are ignored).
+- **Prompt-injection scan** (`tools/injection.rs`): tool results matching instruction-override patterns ("ignore previous instructions", "system prompt:", …) get a `[warning: …]` prefix prepended to the **API** history copy plus a `[sys]` transcript notice. Also applies to `[heal]` test output. Warning only — the result is still sent.
 - **Workdir context**: `AGENTS.md`, `AIDER.md`, or `.lightrs/AGENTS.md` in workdir merged into system prompt (4 KiB cap each)
 - **Skills**: `skills/mod.rs` scans `SKILL.md` directories (OpenCode import tree, Cursor, Claude Code, pi, Codex, optional `[skills].paths`). Catalog appended to system prompt; `$skill-id` in the user message attaches skill body to the API payload (UI unchanged). `@path` file attach unchanged (`mentions.rs`). Rules from `~/.config/lightrs/rules/*.md` merge into system prompt. A `trigger:` frontmatter keyword shows a non-blocking `[sys]` hint when the user input contains it (and `$id` wasn't already used).
 - **Heal loop** (`agent/turn.rs::maybe_run_heal`): when `[shell].test_command` is set, it runs after each successful `write_file`/`patch_file`/`multi_edit` (max `heal_steps` per user turn, default 3; bypasses allowlist, deny list still applies). A pass shows `heal ok` in the transcript; a failure appends the output to the API history so the model can fix it
 
 ## Configuration
 
-Priority: **CLI > environment > config file > defaults** (`config/file.rs`, `config.example.toml`).
+Priority: **CLI > environment > project overlay > config file > defaults** (`config/file.rs`, `config.example.toml`).
+
+**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, and `[shell]` are applied — a project `[shell]` section replaces the global one entirely. `provider`, `base_url`, `keys`, and `workdir` are parsed but ignored, so a repo file cannot redirect API calls or inject credentials.
 
 ### Shell allowlist
 
@@ -129,7 +133,9 @@ When non-empty, `run_command` only runs if the command string equals or starts w
 require_approval = true
 ```
 
-When `require_approval` is true, the TUI prompts **y/n** before `run_command`, except **likely read-only** commands (`ls`, `git status`, `cargo check`, …) auto-run (`tools/shell_readonly.rs`; deny list still wins). When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command string and other keys are ignored. **ACP / headless** auto-runs the same read-only set; other commands fail closed without a TUI.
+When `require_approval` is true, the TUI prompts **y/n** before `run_command`, except **likely read-only** commands (`ls`, `git status`, `cargo check`, …) auto-run (`tools/shell_readonly.rs`; deny list still wins). When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command(s) and other keys are ignored.
+
+**Batched**: all `run_command` calls in one model step that need approval are collected into a **single** prompt (up to 3 command lines shown + `… +n more`); **y** approves every command in the step, **n** denies all. Read-only calls in the same step still auto-run. **ACP / headless** auto-runs the same read-only set; other commands fail closed without a TUI.
 
 ### Heal / post-edit check
 
@@ -157,4 +163,4 @@ Disabled when `enabled = false`. Catalog and rules refresh on each send and on `
 
 ### Auto config refresh
 
-Before each user message, if `config.toml` mtime changed, `[shell]` is reloaded (same as `/reload` shell portion) without restarting the binary.
+Before each user message, if `config.toml` **or** `.lightrs/config.toml` mtime changed, `[shell]` is reloaded (same as `/reload` shell portion) without restarting the binary; `agent.heal` is re-synced too. `/cd` also re-reads the overlay for the new workdir.

@@ -89,6 +89,8 @@ The agent can **read/write/patch files** (patch tolerates minor whitespace drift
 
 **Context stays bounded:** past ~32k estimated tokens, old tool results and `tool_calls` argument bodies are stubbed automatically; past ~64k, the oldest user turns are dropped (current turn is never touched). `/compact` does the same on demand.
 
+**Per-project config:** `<workdir>/.lightrs/config.toml` can set `model`, `fallback_model`, and `[shell]` for just that repo (e.g. its own `test_command` for the heal loop). Provider, base URL, and keys are ignored there — see `config.example.toml`.
+
 ### ACP (Agent Client Protocol)
 
 Run as an ACP **agent** on stdio for editors (Zed, JetBrains, etc.):

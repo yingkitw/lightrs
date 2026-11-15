@@ -24,6 +24,8 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
     ("src/mentions.rs", "mentions"),
     ("src/skills/mod.rs", "skills"),
     ("src/commands.rs", "commands.rs"),
+    ("src/audit.rs", "audit.rs"),
+    ("src/tools/injection.rs", "injection"),
     ("src/agent/mod.rs", "agent/"),
     ("src/agent/context.rs", "context"),
     ("src/agent/turn.rs", "turn"),

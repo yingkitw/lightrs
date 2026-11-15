@@ -253,7 +253,13 @@ impl Agent {
             && !calls.is_empty() {
                 remove_trailing_empty_assistant(&self.ui_history);
                 self.api_history.push(message);
-                for call in calls {
+                let shell_verdict = super::approval::resolve_shell_approvals(
+                    &calls,
+                    &self.shell_policy.clone(),
+                    ui_tx,
+                )
+                .await?;
+                for call in &calls {
                     execute_one_tool(
                         self,
                         workdir,
@@ -261,6 +267,7 @@ impl Agent {
                         &call.function.name,
                         &call.function.arguments,
                         &call.id,
+                        shell_verdict,
                         on,
                         ui_tx,
                     )
@@ -311,6 +318,7 @@ async fn execute_one_tool(
     name: &str,
     args: &str,
     call_id: &str,
+    shell_verdict: Option<bool>,
     on: &mut (impl FnMut(ObserveEvent<'_>) + Send),
     ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
 ) -> Result<()> {
@@ -318,8 +326,24 @@ async fn execute_one_tool(
         name,
         arguments: args,
     });
-    let bypass = match resolve_shell_gate(name, args, shell_policy, ui_tx).await? {
+    // For audit: command string + whether the policy would have asked.
+    let shell_ctx = (name == "run_command").then(|| {
+        let cmd = serde_json::from_str::<crate::tools::RunCommandArgs>(args)
+            .map(|a| a.command)
+            .unwrap_or_default();
+        let needs_approval = shell_policy.needs_interactive_approval(&cmd);
+        (cmd, needs_approval)
+    });
+    let bypass = match resolve_shell_gate(name, args, shell_policy, shell_verdict, ui_tx.is_none())? {
         ShellGate::Denied(msg) => {
+            if let Some((cmd, _)) = &shell_ctx {
+                let decision = if ui_tx.is_none() {
+                    "denied_headless"
+                } else {
+                    "denied"
+                };
+                crate::audit::log_shell(workdir, cmd, decision, &crate::audit::result_head(&msg));
+            }
             on(ObserveEvent::ToolEnd { body: &msg });
             agent.ui_history.lock().unwrap().push(UiMessage::tool_result(
                 name,
@@ -340,6 +364,14 @@ async fn execute_one_tool(
         } => bypass_allowlist,
     };
     let outcome = execute_tool(workdir, name, args, shell_policy, bypass);
+    if let Some((cmd, needs)) = &shell_ctx {
+        let decision = match (*needs, bypass) {
+            (true, true) => "approved_bypass",
+            (true, false) => "approved",
+            _ => "auto",
+        };
+        crate::audit::log_shell(workdir, cmd, decision, &crate::audit::result_head(&outcome.body));
+    }
     on(ObserveEvent::ToolEnd { body: &outcome.body });
     agent.ui_history.lock().unwrap().push(UiMessage::tool_result(
         name,
@@ -347,11 +379,14 @@ async fn execute_one_tool(
         truncate_tool_ui(&outcome.body),
         outcome.file_diff.clone(),
     ));
-    agent.api_history.push(ApiMessage::tool_result(
-        call_id,
-        name,
-        super::context::truncate_tool_api(&outcome.body),
-    ));
+    let mut api_body = super::context::truncate_tool_api(&outcome.body);
+    if let Some(pat) = crate::tools::injection::detect(&outcome.body) {
+        agent.push_system(format!(
+            "tool `{name}` output matched injection pattern {pat:?} — flagged for the model"
+        ));
+        api_body = format!("{}{api_body}", crate::tools::injection::flag_prefix(pat));
+    }
+    agent.api_history.push(ApiMessage::tool_result(call_id, name, api_body));
     maybe_run_heal(agent, workdir, name, &outcome.body, on);
     Ok(())
 }
@@ -406,11 +441,18 @@ fn maybe_run_heal(
     if passed {
         agent.push_system(format!("heal ok: `{}`", heal.command));
     } else {
-        agent.api_history.push(ApiMessage::user(format!(
+        let mut api = format!(
             "[heal] `{}` failed after your edit — fix the errors before continuing.\n{}",
             heal.command,
             super::context::truncate_tool_api(&body)
-        )));
+        );
+        if let Some(pat) = crate::tools::injection::detect(&body) {
+            agent.push_system(format!(
+                "heal output matched injection pattern {pat:?} — flagged for the model"
+            ));
+            api = format!("{}{api}", crate::tools::injection::flag_prefix(pat));
+        }
+        agent.api_history.push(ApiMessage::user(api));
     }
 }
 

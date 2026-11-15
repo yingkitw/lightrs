@@ -26,3 +26,10 @@ workdir = "."               # agent file/shell scope
 # [skills]
 # enabled = true
 # paths = ["/extra/skill/root"]
+
+# ──────────────────────────────────────────────────────────────
+# Per-project overlay: <workdir>/.lightrs/config.toml
+# Same schema; only model, fallback_model, and [shell] are applied
+# (a project [shell] replaces the global one entirely).
+# provider / base_url / keys / workdir are ignored in the project file.
+# Precedence: CLI flags > project overlay > this global file.

@@ -12,8 +12,10 @@ provider/stream.rs      SSE reassembly for streaming + tool_calls
 agent/                  mod, turn, context, approval, prompt, helpers, tokens — tool loop (max 16)
 skills/                 SKILL.md discovery + rules; `$id` attach + system catalog
 commands.rs             `.claude/commands/*.md` → `/name` project slash commands
+audit.rs                `.lightrs/audit.log` JSONL of run_command decisions
 mentions.rs             @file attach for API user messages (workdir-scoped)
-tools/                  schemas, fs/shell/grep, diff (similar), ToolOutcome, todo.rs (task list)
+tools/                  schemas, fs/shell/grep, diff (similar), ToolOutcome, todo.rs (task list),
+                        redact (secrets), injection (prompt-injection scan on tool output)
 opencode/, migrate/    Import + auto-migrate scanners
 acp/                    Optional ACP v1/v2 server (feature `acp`)
 tui/
@@ -58,7 +60,7 @@ Reference: [Codex `codex-rs/tui`](https://github.com/openai/codex/tree/main/code
 | Lifecycle | Busy spinner; **Esc / Ctrl+C** interrupt |
 | Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/cwd`, `/cd`, `/todo`, `/editor`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit` |
 
-Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses input-pane **y/n** approval when configured (`[shell].require_approval` or allowlist block).
+Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses input-pane **y/n** approval when configured (`[shell].require_approval` or allowlist block); one prompt covers all `run_command` calls in a model step (`approval::resolve_shell_approvals`).
 
 ## Key dependencies (TUI)
 

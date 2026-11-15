@@ -66,7 +66,21 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
     let inner = block.inner(area);
 
     let input_lines: Vec<Line> = if let Some(ref ap) = app.pending_approval {
-        vec![Line::from(Span::styled(&ap.command, theme::busy()))]
+        // Inner height fits ~3 command lines; overflow is summarized.
+        const MAX_APPROVAL_LINES: usize = 3;
+        let mut rows: Vec<Line> = ap
+            .commands
+            .iter()
+            .take(MAX_APPROVAL_LINES)
+            .map(|c| Line::from(Span::styled(c.clone(), theme::busy())))
+            .collect();
+        if ap.commands.len() > MAX_APPROVAL_LINES {
+            rows.push(Line::from(Span::styled(
+                format!("… +{} more", ap.commands.len() - MAX_APPROVAL_LINES),
+                theme::busy(),
+            )));
+        }
+        rows
     } else if app.input.is_empty() && app.state == RunState::Ready {
         vec![Line::from(vec![Span::styled(
             "Message…  Enter send · @ file · $ skill · Tab · / commands",

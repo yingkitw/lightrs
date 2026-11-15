@@ -10,7 +10,7 @@ use crate::cli::ModelFlags;
 use crate::migrate::{self, format_scan_report, infer_provider_from_env, scan_local_tools};
 use crate::tools::ShellPolicy;
 
-pub use file::{config_path, load_tui_theme, save_tui_theme};
+pub use file::{config_path, load_tui_theme, project_config_mtime, save_tui_theme};
 
 /// Last modification time of `config.toml`, if present.
 pub fn config_file_mtime() -> Option<SystemTime> {
@@ -84,9 +84,26 @@ impl AppConfig {
             .provider
             .or_else(|| file.as_ref().and_then(|f| f.provider))
             .unwrap_or_else(infer_provider_from_env);
+
+        let workdir = if flags.workdir == *"." {
+            file.as_ref()
+                .and_then(|f| f.workdir.clone())
+                .unwrap_or_else(|| flags.workdir.clone())
+        } else {
+            flags.workdir.clone()
+        }
+        .canonicalize()
+        .or_else(|_| std::env::current_dir())
+        .context("resolve working directory")?;
+
+        // Per-project overlay: `<workdir>/.lightrs/config.toml` (safe subset only).
+        let project = file::load_project_config_file(&workdir)?;
+
+        // Precedence: CLI flags > project overlay > global file.
         let model = flags
             .model
             .clone()
+            .or_else(|| project.as_ref().and_then(|f| f.model.clone()))
             .or_else(|| file.as_ref().and_then(|f| f.model.clone()));
         let model = model.ok_or_else(|| {
             let hint = provider.default_model();
@@ -102,31 +119,10 @@ impl AppConfig {
             .or_else(|| file.as_ref().and_then(|f| f.base_url.clone()))
             .unwrap_or_else(|| provider.default_base_url().to_string());
 
-        let workdir = if flags.workdir == *"." {
-            file.as_ref()
-                .and_then(|f| f.workdir.clone())
-                .unwrap_or_else(|| flags.workdir.clone())
-        } else {
-            flags.workdir.clone()
-        }
-        .canonicalize()
-        .or_else(|_| std::env::current_dir())
-        .context("resolve working directory")?;
-
         let api_key = file::resolve_api_key(flags, file.as_ref(), provider)?;
 
-        let (allowlist, require_approval, test_command, heal_steps) = file
-            .as_ref()
-            .and_then(|f| f.shell.as_ref())
-            .map(|s| {
-                (
-                    s.allowlist.clone(),
-                    s.require_approval,
-                    s.test_command.clone(),
-                    s.heal_steps.unwrap_or(3),
-                )
-            })
-            .unwrap_or((Vec::new(), false, None, 3));
+        let (allowlist, require_approval, test_command, heal_steps) =
+            file::shell_from_files(project.as_ref(), file.as_ref());
 
         Ok(Self {
             provider,
@@ -134,6 +130,7 @@ impl AppConfig {
             fallback_model: flags
                 .fallback_model
                 .clone()
+                .or_else(|| project.as_ref().and_then(|f| f.fallback_model.clone()))
                 .or_else(|| file.as_ref().and_then(|f| f.fallback_model.clone())),
             base_url,
             api_key,
@@ -144,28 +141,25 @@ impl AppConfig {
         })
     }
 
-    /// Re-read `~/.config/lightrs/config.toml` and apply `[shell]` (model/provider need restart).
+    /// Re-read `config.toml` + `.lightrs/config.toml` and apply `[shell]` (model/provider need restart).
     pub fn reload_shell_from_file(&mut self) -> Result<String> {
         let path = config_path();
         let file = file::load_config_file()?;
-        let (allowlist, require_approval, test_command, heal_steps) = file
-            .as_ref()
-            .and_then(|f| f.shell.as_ref())
-            .map(|s| {
-                (
-                    s.allowlist.clone(),
-                    s.require_approval,
-                    s.test_command.clone(),
-                    s.heal_steps.unwrap_or(3),
-                )
-            })
-            .unwrap_or((Vec::new(), false, None, 3));
+        let project = file::load_project_config_file(&self.workdir)?;
+        let (allowlist, require_approval, test_command, heal_steps) =
+            file::shell_from_files(project.as_ref(), file.as_ref());
         self.shell_policy = shell_policy_from_parts(allowlist, require_approval);
         self.test_command = test_command;
         self.heal_steps = heal_steps;
+        let project_note = if project.is_some() {
+            " + project .lightrs/config.toml"
+        } else {
+            ""
+        };
         Ok(format!(
-            "Reloaded [shell] from {} — allowlist {} · require_approval={}",
+            "Reloaded [shell] from {}{} — allowlist {} · require_approval={}",
             path.display(),
+            project_note,
             if self.shell_policy.is_restrictive() {
                 "on"
             } else {

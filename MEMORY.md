@@ -217,6 +217,31 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Session `save` writes `<hash>.json.tmp` then `fs::rename` — same-dir rename is atomic; a crash mid-write can't leave truncated JSON. Orphaned `.tmp` after a crash is ignored by `load` (only reads `.json`).
 - Rewind also clears `active_user_expansion` — a rewound turn must not carry stale `@`/`$` attach state.
 
+## Shell audit log (2026-11-15)
+
+- `src/audit.rs::log_shell` appends `{ts, tool, command, decision, result}` JSONL to `.lightrs/audit.log` — command redacted via `redact_secrets`, `result` is `result_head` (first nonblank line, 160 chars) not full output.
+- Decision labels derive in `execute_one_tool` from `needs_interactive_approval` + gate outcome: `auto` / `approved` / `approved_bypass` / `denied` / `denied_headless`.
+- Best-effort semantics: `create_dir_all`/`OpenOptions` errors swallowed — audit failure must never break a tool call.
+
+## Prompt-injection scan (2026-11-15)
+
+- `tools/injection.rs::detect` — lowercase substring match against craftine's curated pattern list (low-FP by design; docs about injection will flag, that's fine — warning not block).
+- The flag goes **into** `api_history` (prepended `[warning: …]` prefix in `execute_one_tool`) so the model sees it inline, plus an ephemeral `[sys]` line. Scanning UI-only would leave the model blind.
+- Scan points: `execute_one_tool` api push (all tools) + `maybe_run_heal` `[heal]` output — any path where external text enters API history needs it.
+
+## Approval batching (2026-11-15)
+
+- `resolve_shell_approvals` pre-scans a step's `tool_calls` **before** the exec loop: collects every `run_command` needing `needs_interactive_approval`, sends ONE `CommandApproval { commands: Vec<String>, reply }`. Verdict is all-or-nothing for the step — `Ok(None)` = nothing needed approval OR headless (denial wording picked by `ui_tx.is_none()` in the gate).
+- `resolve_shell_gate` is now **sync** — the only `.await` in the approval path is the batch oneshot in `handle_model_message`. Per-call gate just maps `verdict: Option<bool>` → Run/Denied; `Some(true)` + allowlist-blocked → `bypass_allowlist`.
+- Audit decisions (`auto`/`approved`/`approved_bypass`/`denied`/`denied_headless`) unchanged — batch approval still reads as `approved*` per call.
+- Input-area banner: fixed 5-row block → cap display at 3 command lines + `… +n more`.
+
+## Per-project config overlay (2026-11-15)
+
+- `<workdir>/.lightrs/config.toml` reuses `FileConfig`; applied via `file::shell_from_files` + model/fallback precedence (CLI > project > global). Project `[shell]` replaces global wholesale — `allowlist` is `Vec` not `Option`, so presence-vs-empty can't be distinguished; whole-section replace avoids that ambiguity.
+- **Security**: `provider`, `base_url`, `keys`, `workdir` are parsed but never applied — a hostile repo file must not redirect API calls or inject keys. AGENTS.md remains a bigger injection surface regardless; this keeps config from adding another.
+- mtime watching: `App::watched_config_mtime` = max(global, project) — project file create/delete both trigger the auto `[shell]` reload before send; `/cd` + `/reload` re-sync `agent.heal` via `sync_heal` (latent gap: `/reload` previously never refreshed heal).
+
 ## Patterns to harvest next
 
 - Tool-call JSON differences between GLM / Kimi / MiniMax

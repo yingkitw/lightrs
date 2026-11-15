@@ -19,7 +19,8 @@ pub enum RunState {
 }
 
 pub struct CommandApproval {
-    pub command: String,
+    /// All `run_command` calls in the step needing approval — one prompt covers all.
+    pub commands: Vec<String>,
     pub reply: tokio::sync::oneshot::Sender<bool>,
 }
 
@@ -107,11 +108,22 @@ impl App {
     }
 
     pub fn refresh_config_mtime(&mut self) {
-        self.config_mtime = config::config_file_mtime();
+        self.config_mtime = self.watched_config_mtime();
+    }
+
+    /// Latest mtime of global `config.toml` or project `.lightrs/config.toml`.
+    fn watched_config_mtime(&self) -> Option<SystemTime> {
+        [
+            config::config_file_mtime(),
+            config::project_config_mtime(self.workdir()),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
     }
 
     pub fn maybe_reload_shell(&mut self, agent: &Arc<Mutex<Agent>>) {
-        let Some(mtime) = config::config_file_mtime() else {
+        let Some(mtime) = self.watched_config_mtime() else {
             return;
         };
         if self.config_mtime == Some(mtime) {
