@@ -30,7 +30,7 @@
 - **Markdown**: full pulldown pass on message bodies — headings, lists, **bold** / *italic* / ~~strike~~, links (styled), blockquotes (`▏`), pipe tables (`│`), rules; strikethrough/task lists enabled
 - **Fenced code**: syntect highlight + wrap
 - **Mermaid** (`mermaid` / `mmd`): ASCII flow/sequence preview + source
-- **Tool blocks**: `◌ name args … running` while the call executes, replaced in place by the result with an elapsed suffix (`· 1.2s`); header row keeps a one-line call summary (args or file +/−) in both states; collapsed shows truncated result, expanded shows full args/result. Results beginning `error:` render in the error color; other results use the normal body color
+- **Tool blocks**: `◌ name args … running` while the call executes, replaced in place by the result with an elapsed suffix (`· 1.2s`); header row keeps a one-line call summary (args or file +/−) in both states; collapsed shows truncated result, expanded shows full args/result — tool bodies render **preformatted** (literal lines, no markdown), and ANSI escape sequences are stripped at capture and render. Results beginning `error:` render in the error color; other results use the normal body color
 - **Tokens**: muted `[sys]` lines per turn — `send · ~N ctx` after your message (estimate), `model · N in + M out` after each API step when the provider reports usage, and a `turn · N calls · X in + Y out · Ns` close line (real usage + wall-clock)
 - **`write_file`** / **`patch_file`**: colorized unified diff (`+`/`-`/`@@`); `+N −M` in collapsed header; full diff when expanded; API tool body remains a one-line summary
 - **Mouse**: wheel scroll; left-click toggles tool expand (with `o` when input empty); drag = native terminal selection (copy) — the app only requests `?1000` click/scroll reporting, never `?1002` drag tracking
@@ -92,7 +92,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - **Streaming**: assistant text appended live when supported; tool calls assembled from stream deltas before execution
 - Tools: `read_file`, `write_file`, `patch_file`, `multi_edit`, `list_dir`, `grep`, `glob_file_search`, `run_command`, `todo_write` (schemas in `tools/schemas.rs`)
 - **`patch_file`**: exact match first; single-occurrence edits fall back to whitespace/indent-tolerant match (`tools/edit_match.rs`). **`replace_all`** requires exact `old_string` matches.
-- **`run_command`**: stdout and stderr each capped at **64 KiB** with a truncation note in the tool result.
+- **`run_command`**: stdout and stderr each capped at **64 KiB** with a truncation note in the tool result; ANSI escape sequences stripped.
 - **`todo_write`**: replaces the whole task list (`items[].content`, `items[].status` ∈ `pending|in_progress|completed`, max 32) persisted to `.lightrs/todos.json` (`tools/todo.rs`); view with `/todo`
 - **HTTP**: chat requests use 120s timeout, 30s connect timeout, up to **3** retries on 429/5xx and transient transport errors (`provider/http.rs`).
 - **Fallback model**: `--fallback-model <m>` or `fallback_model` in `config.toml` retries a failed model fetch **once** on the secondary model (any non-interrupt error); a `[sys]` line notes the switch

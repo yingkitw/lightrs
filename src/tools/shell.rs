@@ -50,14 +50,14 @@ pub fn run_command(
             let mut out_trunc = false;
             if let Some(mut stdout) = child.stdout.take() {
                 let (text, truncated) = read_limited(&mut stdout, MAX_SHELL_STREAM_BYTES)?;
-                out = text;
+                out = strip_ansi(&text);
                 out_trunc = truncated;
             }
             let mut err = String::new();
             let mut err_trunc = false;
             if let Some(mut stderr) = child.stderr.take() {
                 let (text, truncated) = read_limited(&mut stderr, MAX_SHELL_STREAM_BYTES)?;
-                err = text;
+                err = strip_ansi(&text);
                 err_trunc = truncated;
             }
             let mut body = format!(
@@ -84,6 +84,43 @@ pub fn run_command(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Strip ANSI escape sequences (CSI `ESC[…final`, OSC `ESC]…BEL`/`ESC\`,
+/// two-char `ESC x`) — command output stays clean for API tokens and the
+/// transcript, which can't render escapes anyway.
+pub(crate) fn strip_ansi(s: &str) -> String {
+    if !s.contains('\u{1b}') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                let mut prev_esc = false;
+                for c in chars.by_ref() {
+                    if c == '\u{7}' || (prev_esc && c == '\\') {
+                        break;
+                    }
+                    prev_esc = c == '\u{1b}';
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn read_limited(r: &mut impl Read, max: usize) -> Result<(String, bool)> {
@@ -117,6 +154,18 @@ fn read_limited(r: &mut impl Read, max: usize) -> Result<(String, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strips_ansi_from_csi_osc_and_two_char() {
+        assert_eq!(strip_ansi("plain"), "plain");
+        assert_eq!(strip_ansi("\u{1b}[32mok\u{1b}[0m!"), "ok!");
+        assert_eq!(strip_ansi("a\u{1b}[1;31mred\u{1b}[m b"), "ared b");
+        assert_eq!(strip_ansi("x\u{1b}[2Jy"), "xy"); // clear-screen CSI
+        assert_eq!(strip_ansi("t\u{1b}]0;title\u{7}z"), "tz"); // OSC…BEL
+        assert_eq!(strip_ansi("t\u{1b}]8;;u\u{1b}\\z"), "tz"); // OSC…ESC-backslash
+        assert_eq!(strip_ansi("p\u{1b}cq"), "pq"); // two-char ESC c
+        assert_eq!(strip_ansi("end\u{1b}"), "end"); // trailing lone ESC
+    }
 
     #[test]
     fn caps_noisy_stdout() {

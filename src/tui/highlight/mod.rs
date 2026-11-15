@@ -24,6 +24,14 @@ pub fn render_message_body(content: &str, width: usize, base: Style) -> Vec<Line
     strip_trailing_blank_lines(lines)
 }
 
+/// Tool bodies render preformatted — command output is literal text, not
+/// markdown; ANSI escapes are stripped (defense for non-shell tools).
+pub fn render_pre_body(content: &str, width: usize, base: Style) -> Vec<Line<'static>> {
+    let content = crate::tools::shell::strip_ansi(content);
+    let lines = wrap::wrap_plain_lines(content.trim_end(), width, base);
+    strip_trailing_blank_lines(lines)
+}
+
 fn strip_trailing_blank_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
     while let Some(last) = lines.last() {
         if last.spans.iter().all(|s| s.content.trim().is_empty()) {
@@ -49,6 +57,17 @@ mod tests {
             .collect();
         assert!(joined.contains("mermaid"));
         assert!(joined.contains("One"));
+    }
+
+    #[test]
+    fn pre_body_keeps_markdown_chars_literal_and_strips_ansi() {
+        let lines = render_pre_body("\u{1b}[31m# not a heading | a|b\u{1b}[0m", 80, Style::default());
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("# not a heading | a|b"));
+        assert!(!joined.contains('\u{1b}'), "no raw escapes: {joined:?}");
     }
 
     #[test]

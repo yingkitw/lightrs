@@ -8,7 +8,7 @@ use crate::agent::Agent;
 use crate::chat::{UiMessage, UiRole};
 use crate::tui::app::{App, RunState};
 use crate::tui::highlight::{
-    collapse_diff_preview, render_message_body, render_system_body, render_unified_diff,
+    collapse_diff_preview, render_message_body, render_pre_body, render_system_body, render_unified_diff,
 };
 use crate::tui::theme;
 
@@ -194,7 +194,7 @@ fn render_tool_block(
             "arguments:",
             theme::body_muted().add_modifier(Modifier::ITALIC),
         )));
-        lines.extend(render_message_body(
+        lines.extend(render_pre_body(
             &format_args_detail(&tc.arguments),
             width,
             theme::body(),
@@ -224,7 +224,7 @@ fn render_tool_block(
                 "summary:",
                 theme::body_muted().add_modifier(Modifier::ITALIC),
             )));
-            lines.extend(render_message_body(&m.content, width, result_style(&m.content)));
+            lines.extend(render_pre_body(&m.content, width, result_style(&m.content)));
         }
     } else {
         let body = if expanded {
@@ -236,7 +236,7 @@ fn render_tool_block(
             "result:",
             result_style(&body).add_modifier(Modifier::ITALIC),
         )));
-        lines.extend(render_message_body(&body, width, result_style(&body)));
+        lines.extend(render_pre_body(&body, width, result_style(&body)));
     }
     lines.push(Line::from(""));
 }
