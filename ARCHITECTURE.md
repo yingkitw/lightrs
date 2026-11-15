@@ -61,9 +61,7 @@ Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses i
 
 Build profiles: default is TUI + syntect only (~398 crates in the resolve graph here). `--features full` adds ACP (`acp`, `acp-v2`). `cargo build --release --no-default-features` is the smallest TUI (~377 crates; plain code fences).
 
-Tests: `tests/docs_sync.rs` (doc alignment); `tests/provider_fixtures.rs` + `tests/fixtures/` (chat JSON + SSE, including Kimi/GLM/MiniMax tool streams).
-
-CI (`.github/workflows/ci.yml`): `cargo test`, `cargo test --no-default-features --lib`, release build.
+Tests: `tests/docs_sync.rs` (doc alignment); `tests/provider_fixtures.rs` + `tests/fixtures/` (chat JSON + SSE, including Kimi/GLM/MiniMax tool streams). Run locally: `cargo test`, `cargo test --no-default-features --lib`, `cargo build --release`.
 
 ## Security notes
 

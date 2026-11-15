@@ -27,7 +27,6 @@
 - [x] Provider stream fixtures (Kimi / GLM / MiniMax SSE shapes in `tests/fixtures/`)
 
 - [x] Optional `syntect` feature — plain code fences when off (`Cargo.toml` `syntect`)
-- [x] GitHub CI — full tests + `cargo test --no-default-features --lib` (`.github/workflows/ci.yml`)
 - [x] `/export` — markdown transcript under workdir (`session/export.rs`)
 - [x] `/export` tests — tool/diff markdown, workdir write, path escape guard
 - [x] Fix `/export` default path — `resolve_work_output_path` (file need not exist pre-write)
