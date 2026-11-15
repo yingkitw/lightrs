@@ -207,12 +207,21 @@ pub fn context_pressure_line(estimate: u32) -> Option<String> {
     ))
 }
 
-pub fn context_usage_text(summary: TokenSummary, api_messages: usize) -> String {
+pub fn context_usage_text(
+    summary: TokenSummary,
+    api_messages: usize,
+    window: Option<u32>,
+) -> String {
     let TokenSummary { stats, estimate } = summary;
-    let mut parts = vec![
-        format!("{api_messages} msg"),
-        format!("~{} ctx est", format_token_count(u64::from(estimate))),
-    ];
+    let est = match window {
+        Some(w) if w > 0 => format!(
+            "~{} ctx est ({}%)",
+            format_token_count(u64::from(estimate)),
+            u64::from(estimate) * 100 / u64::from(w)
+        ),
+        _ => format!("~{} ctx est", format_token_count(u64::from(estimate))),
+    };
+    let mut parts = vec![format!("{api_messages} msg"), est];
     if stats.session_total() > 0 {
         parts.push(format!(
             "{} session",
@@ -231,6 +240,28 @@ pub fn context_usage_text(summary: TokenSummary, api_messages: usize) -> String 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn usage_text_shows_window_percent() {
+        let text = super::context_usage_text(
+            super::TokenSummary {
+                stats: super::TokenStats::default(),
+                estimate: 12_288,
+            },
+            3,
+            Some(204_800),
+        );
+        assert!(text.contains("ctx est (6%)"), "{text}");
+        let plain = super::context_usage_text(
+            super::TokenSummary {
+                stats: super::TokenStats::default(),
+                estimate: 100,
+            },
+            1,
+            None,
+        );
+        assert!(!plain.contains('%'), "{plain}");
+    }
+
     use super::*;
 
     #[test]

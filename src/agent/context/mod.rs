@@ -134,14 +134,23 @@ impl Agent {
         let msgs = self.messages_for_request();
         let wire_turns = user_turn_count(&msgs);
         let history_turns = user_turn_count(&self.api_history);
+        let window = crate::config::model_context_window(self.client.model());
+        let win_label = window.map_or_else(
+            || "window ?".to_string(),
+            |w| format!("window {}k", w / 1_000),
+        );
         let mut out = format!(
-            "limits: wire ≤{MAX_RESENT_TURNS} turns / ~{}k est · stored stub ≥{}k / drop ≥{}k · tool ≤{}B · ui ≤{}\nwire: {wire_turns} of {history_turns} turns · {} msgs\nbreakdown: {}",
+            "limits: {win_label} · wire ≤{MAX_RESENT_TURNS} turns / ~{}k est · stored stub ≥{}k / drop ≥{}k · tool ≤{}B · ui ≤{}\nwire: {wire_turns} of {history_turns} turns · {} msgs{}\nbreakdown: {}",
             WIRE_BUDGET_TOKENS / 1_000,
             AUTO_COMPACT_TOKENS / 1_000,
             HISTORY_HARD_CAP_TOKENS / 1_000,
             TOOL_API_MAX,
             crate::agent::helpers::MAX_UI_MESSAGES,
             msgs.len(),
+            window.map_or_else(String::new, |w| format!(
+                " · ~{}% of window",
+                u64::from(estimate_context_tokens(&msgs)) * 100 / u64::from(w)
+            )),
             format_breakdown(&context_breakdown(&msgs))
         );
         let top = top_consumers(&msgs, 3);

@@ -86,8 +86,13 @@ pub fn header_lines(cfg: &AppConfig, context_usage: &str, app: &App, width: u16)
     let api_host = api_host_label(&cfg.base_url);
     let path = cfg.workdir.display().to_string();
     let path_short = truncate_middle(&path, w.saturating_sub(24).max(16));
+    let branch = app
+        .git_branch
+        .as_deref()
+        .map(|b| format!(":{b}"))
+        .unwrap_or_default();
     let line2 = truncate_end(
-        &format!("path: {path_short} · {context_usage} · {api_host}"),
+        &format!("path: {path_short}{branch} · {context_usage} · {api_host}"),
         w,
     );
     [line1, line2]
@@ -99,6 +104,15 @@ pub fn header_compact(cfg: &AppConfig, context_usage: &str, app: &App, width: u1
         RunState::Ready => "ready".into(),
         RunState::Busy => app.busy_label(),
     };
+    let branch = app
+        .git_branch
+        .as_deref()
+        .map(|b| format!(":{b}"))
+        .unwrap_or_default();
+    let path_branch = format!(
+        "{}{branch}",
+        truncate_middle(&cfg.workdir.display().to_string(), 20)
+    );
     truncate_end(
         &format!(
             "lightrs · {} · {} · {} · {} · {}",
@@ -106,7 +120,7 @@ pub fn header_compact(cfg: &AppConfig, context_usage: &str, app: &App, width: u1
             cfg.model,
             state_label,
             context_usage,
-            truncate_middle(&cfg.workdir.display().to_string(), 20),
+            path_branch,
         ),
         w,
     )
@@ -148,6 +162,33 @@ pub fn truncate_middle(s: &str, max: usize) -> String {
     format!("{start}…{end}")
 }
 
+/// Current git branch for the header path label (`work:main`). Reads
+/// `.git/HEAD` directly — handles linked worktrees (`.git` file) and detached
+/// HEAD (short sha). `None` outside a repo.
+pub fn git_branch_label(dir: &std::path::Path) -> Option<String> {
+    let git = dir.join(".git");
+    let head = if git.is_file() {
+        // Worktree/submodule: `.git` is a file pointing at the real gitdir.
+        let text = std::fs::read_to_string(&git).ok()?;
+        let gd = text.trim().strip_prefix("gitdir:")?.trim();
+        let gd = if std::path::Path::new(gd).is_absolute() {
+            std::path::PathBuf::from(gd)
+        } else {
+            dir.join(gd)
+        };
+        gd.join("HEAD")
+    } else {
+        git.join("HEAD")
+    };
+    let head = std::fs::read_to_string(head).ok()?;
+    let head = head.trim();
+    if let Some(r) = head.strip_prefix("ref: refs/heads/") {
+        return Some(r.to_string());
+    }
+    // Detached HEAD — short sha.
+    Some(head.chars().take(7).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,4 +199,30 @@ mod tests {
         assert!(s.contains('…'));
         assert!(s.chars().count() <= 20);
     }
+
+    #[test]
+    fn git_branch_from_head_and_worktree_file() {
+        let dir = std::env::temp_dir().join(format!("lb-branch-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/feature/x\n").unwrap();
+        assert_eq!(super::git_branch_label(&dir).as_deref(), Some("feature/x"));
+
+        // Linked worktree: `.git` is a file → gitdir/HEAD.
+        let wt = dir.join("wt");
+        let gd = dir.join("gitdir-x");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::create_dir_all(&gd).unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}", gd.display())).unwrap();
+        std::fs::write(gd.join("HEAD"), "ref: refs/heads/wt-branch\n").unwrap();
+        assert_eq!(super::git_branch_label(&wt).as_deref(), Some("wt-branch"));
+
+        // Detached HEAD → short sha.
+        let det = dir.join("det");
+        std::fs::create_dir_all(det.join(".git")).unwrap();
+        std::fs::write(det.join(".git/HEAD"), "0123456789abcdef").unwrap();
+        assert_eq!(super::git_branch_label(&det).as_deref(), Some("0123456"));
+
+        assert_eq!(super::git_branch_label(&dir.join("nope")), None);
+    }
 }
+

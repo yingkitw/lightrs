@@ -38,9 +38,9 @@
 
 ### Chrome
 
-- Header: version, provider, model, state, workdir, token/context estimate, API host
+- Header: version, provider, model, state, `workdir:branch` (git branch from `.git/HEAD`, worktree-safe), context estimate + `%` of the model window when known (`config::model_context_window`), API host
 - Multi-line composer (not single-line only); placeholder hints when empty
-- Status bar: slash hints, scroll/tool hints, or busy/error text
+- Status bar: slash hints, scroll/tool hints, or busy/error text; when scrolled up it shows `↑N scrolled · End latest`
 - **Theme**: selectable palettes via `/theme` (`tui/theme/`; default `mocha`)
 
 ### Input

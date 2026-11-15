@@ -20,7 +20,11 @@ pub fn draw_header(frame: &mut Frame, area: Rect, app: &App, agent: &Agent, rows
     } else {
         theme::ready_accent()
     };
-    let ctx = context_usage_text(agent.token_summary(), agent.api_context_len());
+    let ctx = context_usage_text(
+        agent.token_summary(),
+        agent.api_context_len(),
+        crate::config::model_context_window(&app.config.model),
+    );
     let text = if rows == 1 {
         Text::from(Line::styled(
             header_compact(&app.config, &ctx, app, area.width),
@@ -154,6 +158,8 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
             skill
         } else if !app.input.is_empty() {
             "Enter send · Esc clear · Ctrl+U clear".into()
+        } else if app.scroll > 0 {
+            format!("↑{} scrolled · End latest · /help · q quit", app.scroll)
         } else {
             "↑↓ scroll · click/o tool detail · /help · q quit".into()
         }

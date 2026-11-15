@@ -282,6 +282,12 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Applied in `run/mod.rs` (enter/exit) and `editor.rs` (suspend/resume for `$EDITOR`); `MOUSE_OFF` also clears `?1002` in case a prior session leaked it.
 - Paste path is separate and already worked: `EnableBracketedPaste` → `Event::Paste` → composer `insert_text`.
 
+## TUI header/status signals (2026-11-15)
+
+- `tui::info::git_branch_label(dir)` reads `.git/HEAD` directly — worktree-safe (`.git` file → `gitdir:` path, absolute or relative) and detached-HEAD → 7-char sha. Never spawn `git` per frame; cache in `App.git_branch`, refresh only on `/cd`.
+- `config::model_context_window(model)` — static prefix table (longest match): glm-4.6/M2.1 → 204_800, kimi-k2-0905 → 262_144, glm-4.5/kimi-k2-0711 → 131_072, unknown → `None`. Fed to `context_usage_text` → `ctx est (N%)`; `None` omits the `%` rather than guessing.
+- Status line when `app.scroll > 0`: `↑N scrolled · End latest` — the affordance appears only when needed.
+
 ## Patterns to harvest next
 
 - Tool-call JSON differences between GLM / Kimi / MiniMax

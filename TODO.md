@@ -2,6 +2,8 @@
 
 ## Done
 
+- [x] OpenCode-style UX signals: `path:branch` in header (`.git/HEAD`, worktree-safe, refreshed on `/cd`), context `%` of model window (`model_context_window` table; glm-4.6/M2.1 204.8k, kimi-k2 256k), `↑N scrolled · End latest` hint
+
 - [x] Scaffold Rust TUI agent with GLM / Kimi / MiniMax
 - [x] ACP v1/v2 agent mode (`lightrs acp`, optional via features)
 - [x] OpenCode settings import + machine migrate scan

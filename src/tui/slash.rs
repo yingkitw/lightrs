@@ -162,6 +162,7 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                 Ok(dir) => {
                     let _ = session::save(agent, app.workdir());
                     app.config.workdir = dir.clone();
+                    app.git_branch = crate::tui::info::git_branch_label(&dir);
                     agent.set_workdir(std::sync::Arc::from(dir.as_path()));
                     // Pick up the new workdir's .lightrs/config.toml overlay.
                     let reload = app.config.reload_shell_from_file().ok();
@@ -190,13 +191,21 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
         "editor" => SlashAction::Editor,
         "status" => {
             let n = agent.api_context_len();
-            let usage = context_usage_text(agent.token_summary(), n);
+            let usage = context_usage_text(
+                agent.token_summary(),
+                n,
+                crate::config::model_context_window(&app.config.model),
+            );
             agent.push_system(context_details(&app.config, n, &usage, "status"));
             SlashAction::Handled
         }
         "context" => {
             let n = agent.api_context_len();
-            let usage = context_usage_text(agent.token_summary(), n);
+            let usage = context_usage_text(
+                agent.token_summary(),
+                n,
+                crate::config::model_context_window(&app.config.model),
+            );
             let mut msg = context_details(&app.config, n, &usage, "context");
             msg.push('\n');
             msg.push_str(&agent.context_report());

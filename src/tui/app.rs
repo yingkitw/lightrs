@@ -70,10 +70,13 @@ pub struct App {
     pub stream_chars: usize,
     /// User lines submitted while `Busy`; drained when the turn ends.
     pub queued: VecDeque<String>,
+    /// Git branch for the header path label; refreshed on `/cd`.
+    pub git_branch: Option<String>,
 }
 
 impl App {
     pub fn new(config: AppConfig) -> Self {
+        let git_branch = crate::tui::info::git_branch_label(&config.workdir);
         Self {
             status: String::new(),
             config,
@@ -96,6 +99,7 @@ impl App {
             theme: theme::normalize_theme_id(config::load_tui_theme()),
             stream_chars: 0,
             queued: VecDeque::new(),
+            git_branch,
         }
     }
 

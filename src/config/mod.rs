@@ -58,6 +58,26 @@ impl Provider {
     }
 }
 
+/// Published context-window size for a model name (prefix match, most-specific
+/// first). `None` for unknown models — callers then show tokens without a %.
+/// Numbers are provider-documented limits, not measured values.
+pub fn model_context_window(model: &str) -> Option<u32> {
+    let m = model.to_ascii_lowercase();
+    const TABLE: &[(&str, u32)] = &[
+        ("kimi-k2-0905", 262_144),
+        ("kimi-k2", 131_072),
+        ("moonshot-v1-128k", 131_072),
+        ("moonshot-v1-32k", 32_768),
+        ("moonshot-v1-8k", 8_192),
+        ("glm-4.6", 204_800),
+        ("glm-4.5", 131_072),
+        ("glm-4", 131_072),
+        ("minimax-m2", 204_800),
+        ("minimax-m1", 1_048_576),
+    ];
+    TABLE.iter().find(|(p, _)| m.starts_with(p)).map(|(_, w)| *w)
+}
+
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub provider: Provider,
@@ -183,6 +203,16 @@ fn shell_policy_from_parts(allowlist: Vec<String>, require_approval: bool) -> Sh
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn context_window_known_models() {
+        assert_eq!(super::model_context_window("glm-4.6"), Some(204_800));
+        assert_eq!(super::model_context_window("glm-4.5-air"), Some(131_072));
+        assert_eq!(super::model_context_window("kimi-k2-0905-preview"), Some(262_144));
+        assert_eq!(super::model_context_window("kimi-k2-0711"), Some(131_072));
+        assert_eq!(super::model_context_window("MiniMax-M2.1"), Some(204_800));
+        assert_eq!(super::model_context_window("some-other-model"), None);
+    }
+
     use super::*;
 
     #[test]
