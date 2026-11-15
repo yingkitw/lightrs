@@ -30,21 +30,21 @@ fn redact_line(line: &str) -> String {
     s = redact_tokens(&s, "ghp_", 8);
     s = redact_tokens(&s, "gho_", 8);
     s = redact_tokens(&s, "github_pat_", 8);
-    if let Some(i) = s.to_ascii_lowercase().find("bearer ") {
-        if let Some(rest) = s.get(i + 7..) {
-            let token = rest.split_whitespace().next().unwrap_or("");
-            if token.len() >= 12 {
-                s.replace_range(i..i + 7 + token.len(), &format!("Bearer {REDACTED}"));
-            }
+    if let Some(i) = s.to_ascii_lowercase().find("bearer ")
+        && let Some(rest) = s.get(i + 7..)
+    {
+        let token = rest.split_whitespace().next().unwrap_or("");
+        if token.len() >= 12 {
+            s.replace_range(i..i + 7 + token.len(), &format!("Bearer {REDACTED}"));
         }
     }
     if s.contains("-----BEGIN") && s.contains("PRIVATE KEY-----") {
         return REDACTED.into();
     }
-    if looks_like_env_secret(line) {
-        if let Some((k, _v)) = line.split_once('=') {
-            return format!("{k}={REDACTED}");
-        }
+    if looks_like_env_secret(line)
+        && let Some((k, _v)) = line.split_once('=')
+    {
+        return format!("{k}={REDACTED}");
     }
     s
 }

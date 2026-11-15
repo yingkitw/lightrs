@@ -19,7 +19,7 @@ pub fn set_text(text: &str) -> Result<()> {
             stdin.write_all(text.as_bytes()).context("write pbcopy")?;
         }
         child.wait().context("pbcopy wait")?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]

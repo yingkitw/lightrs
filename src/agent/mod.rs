@@ -325,6 +325,33 @@ impl Agent {
         &self.skill_catalog
     }
 
+    /// `/rewind n` — truncate API + UI history back n complete user turns.
+    /// Truncates at a `User` boundary so tool_call pairs are never split.
+    /// Returns the number of turns actually dropped.
+    pub fn rewind_turns(&mut self, n: usize) -> usize {
+        let n = n.max(1);
+        let cut = nth_last_user_index(&self.api_history, n);
+        let Some(api_cut) = cut else {
+            return 0;
+        };
+        // Count turns being removed for the report.
+        let dropped = self.api_history[api_cut..]
+            .iter()
+            .filter(|m| m.role == crate::chat::ApiRole::User)
+            .count()
+            .max(1);
+        self.api_history.truncate(api_cut);
+        self.active_user_expansion = None;
+        let mut ui = self.ui_history.lock().unwrap();
+        if let Some(ui_cut) = nth_last_ui_user_index(&ui, n) {
+            ui.truncate(ui_cut);
+        }
+        drop(ui);
+        self.context_warned_above = 0;
+        self.refresh_context_estimate();
+        dropped
+    }
+
     pub fn compact_history(&mut self) -> usize {
         let n = context::compact_tool_messages(&mut self.api_history, context::COMPACT_KEEP_TOOLS)
             + context::compact_tool_call_args(
@@ -356,6 +383,36 @@ impl Agent {
         self.context_warned_above = 0;
         self.refresh_context_estimate();
     }
+}
+
+/// Index where the `n`th-from-last `User` message starts; clamps to the first
+/// user turn when fewer than `n` exist. `None` when no user messages at all.
+fn nth_last_user_index(history: &[ApiMessage], n: usize) -> Option<usize> {
+    let mut seen = 0usize;
+    for (i, m) in history.iter().enumerate().rev() {
+        if m.role == crate::chat::ApiRole::User {
+            seen += 1;
+            if seen == n {
+                return Some(i);
+            }
+        }
+    }
+    history
+        .iter()
+        .position(|m| m.role == crate::chat::ApiRole::User)
+}
+
+fn nth_last_ui_user_index(ui: &[UiMessage], n: usize) -> Option<usize> {
+    let mut seen = 0usize;
+    for (i, m) in ui.iter().enumerate().rev() {
+        if m.role == UiRole::User {
+            seen += 1;
+            if seen == n {
+                return Some(i);
+            }
+        }
+    }
+    ui.iter().position(|m| m.role == UiRole::User)
 }
 
 #[cfg(test)]
@@ -450,5 +507,53 @@ mod streaming_tests {
         assert_eq!(agent.api_history[last_user].text_content().unwrap(), "u7");
         // And the history fits under the hard cap.
         assert!(agent.token_summary().estimate <= 64_000);
+    }
+
+    #[test]
+    fn rewind_drops_turns_at_user_boundary() {
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let mut agent = Agent::new(client, Arc::from(Path::new(".")), ShellPolicy::default());
+        for i in 0..3 {
+            agent.api_history.push(ApiMessage::user(format!("u{i}")));
+            agent
+                .api_history
+                .push(ApiMessage::tool_result(format!("t{i}"), "read_file", "b"));
+        }
+        {
+            let mut ui = agent.ui_history.lock().unwrap();
+            ui.push(UiMessage::with_role(UiRole::User, "u2"));
+            ui.push(UiMessage::with_role(UiRole::Assistant, "a2"));
+        }
+
+        assert_eq!(agent.rewind_turns(1), 1);
+        // sys + u0/t0 + u1/t1 remain; the u2 turn and its tools are gone.
+        assert_eq!(agent.api_history.len(), 5);
+        assert_eq!(
+            agent.api_history.last().unwrap().name.as_deref(),
+            Some("read_file")
+        );
+        assert!(
+            agent
+                .ui_history
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|m| m.role != UiRole::User)
+        );
+    }
+
+    #[test]
+    fn rewind_more_than_available_drops_all_turns() {
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let mut agent = Agent::new(client, Arc::from(Path::new(".")), ShellPolicy::default());
+        for i in 0..2 {
+            agent.api_history.push(ApiMessage::user(format!("u{i}")));
+            agent
+                .api_history
+                .push(ApiMessage::tool_result(format!("t{i}"), "read_file", "b"));
+        }
+        assert_eq!(agent.rewind_turns(5), 2);
+        assert_eq!(agent.api_history.len(), 1); // system prompt only
+        assert_eq!(agent.rewind_turns(1), 0); // nothing left to rewind
     }
 }

@@ -82,7 +82,10 @@ pub fn save(agent: &Agent, workdir: &Path) -> Result<()> {
     };
     let path = session_path(workdir);
     let json = serde_json::to_string_pretty(&file).context("serialize session")?;
-    fs::write(&path, json).with_context(|| format!("write {}", path.display()))?;
+    // Temp file + same-dir rename: a crash leaves old or new, never half JSON.
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json).with_context(|| format!("write {}", tmp.display()))?;
+    fs::rename(&tmp, &path).with_context(|| format!("rename {}", path.display()))?;
     Ok(())
 }
 

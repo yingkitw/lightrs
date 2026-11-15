@@ -75,7 +75,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
-- `/help` — list commands (`/clear`, `/compact`, `/undo`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/todo`, `/editor`, `/quit`, …)
+- `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/undo`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/todo`, `/editor`, `/quit`, …)
 - `/cd <path>` — switch working directory mid-session (keeps the conversation); `/editor` — draft the prompt in `$EDITOR`; `/todo` — show the agent's task list
 - `.claude/commands/*.md` — project slash commands (`/name` sends the file body to the model, args appended)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details

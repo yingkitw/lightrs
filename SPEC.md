@@ -72,6 +72,7 @@
 | `/copy` [`code`] | Copy latest assistant reply to the OS clipboard; `code` = last fenced ``` block only |
 | `/theme` [`id`] | List palettes or set `mocha` / `hc`; saved under `[tui]` in `config.toml` |
 | `/compact` | Replace older API tool bodies + assistant `tool_calls` argument blobs with placeholders (keeps last 6 tool results); no LLM call |
+| `/rewind` [`n`] | Drop the last `n` user turns (default 1) from API + UI history at user-turn boundaries, then resave the session |
 | `/undo` | Restore files edited since your last message from `.lightrs/backups/` |
 | `/quit` | Exit (same as `q` when idle) |
 
@@ -81,7 +82,7 @@
 
 ### Session resume
 
-Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API history, UI messages (including `tool_call`, `file_diff`), and token stats. **`[sys]` lines are ephemeral**: shown in the live transcript but omitted from session save/restore. `/clear` wipes disk + memory.
+Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API history, UI messages (including `tool_call`, `file_diff`), and token stats. **`[sys]` lines are ephemeral**: shown in the live transcript but omitted from session save/restore. `/clear` wipes disk + memory. Saves are atomic (temp file + same-dir rename — a crash leaves the old or new file, never partial JSON).
 
 ## Agent behavior
 

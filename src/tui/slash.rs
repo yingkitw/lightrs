@@ -28,6 +28,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("copy", "copy last reply (or last ``` fence with /copy code) to clipboard"),
     ("theme", "list or set TUI color theme (mocha, hc)"),
     ("compact", "compact old tool results in API history (no model call)"),
+    ("rewind", "drop the last n user turns from history (/rewind [n])"),
     ("undo", "restore files edited on the last turn from .lightrs/backups"),
 ];
 
@@ -295,6 +296,23 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                 let est = agent.token_summary().estimate;
                 agent.push_system(format!(
                     "compacted {n} older tool result(s); ~{est} tokens in context now"
+                ));
+            }
+            SlashAction::Handled
+        }
+        "rewind" => {
+            let n: usize = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|a| a.parse().ok())
+                .unwrap_or(1);
+            let dropped = agent.rewind_turns(n);
+            if dropped == 0 {
+                agent.push_system("nothing to rewind");
+            } else {
+                let _ = session::save(agent, app.workdir());
+                agent.push_system(format!(
+                    "rewound {dropped} turn(s) — history and session file updated"
                 ));
             }
             SlashAction::Handled

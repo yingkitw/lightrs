@@ -44,6 +44,9 @@
 - [x] Skill `trigger` hint — frontmatter keyword prints a non-blocking `tip:` line when input matches (no auto-attach)
 - [x] `.claude/commands/*.md` → `/name` project slash commands (`src/commands.rs`; body sent to model, args appended)
 - [x] Context auto-compact — `tool_calls` arg stubbing + oldest-turn drop (32k/64k est thresholds); `/compact` now stubs args too
+- [x] Clippy cleanup — zero warnings on `cargo clippy --all-targets` (collapsed ifs, let-chains, dead `streaming` branch)
+- [x] Atomic session save — temp file + same-dir rename (`session/mod.rs`)
+- [x] `/rewind [n]` — drop last n user turns from API+UI history at user boundaries, resave session
 
 ## Backlog
 
@@ -59,12 +62,12 @@
 | Maintainability | 5 | `agent/`, `tui/run/`, `skills/`, shared tool path |
 | Docs alignment | 5 | `docs_sync` + root MDs audited to code |
 | Footprint | 4 | `--no-default-features` drops ACP + syntect; syntax highlighting optional |
+| Token efficiency | 4 | Auto-compact at 32k/64k est; 6 KiB tool cap; `tool_calls` args stubbed; estimate is `chars/4` (no real tokenizer) |
 
 **Weakest next:** MCP wiring (out of v0.1 scope) or optional live SSE capture into `tests/fixtures/`.
 
 ## Brainstorm (unprioritized)
 
-- Clippy cleanup batch (27 lib warnings; not CI-blocking yet)
 - Release binary size badge in CI (`--no-default-features` vs default)
 
 ## Competitive intel — craftine + vendored minicode (2026-11-15)
@@ -77,13 +80,12 @@ Shipped 2026-11-15 (see Done): queued input while `Busy`, interrupt keywords, `/
 
 ### Tier B — moderate weight
 
-- **Session `/rewind [n]`** — drop last n turns from API+UI history and resave (cheap fork; craftine's full checkpoint/replay is heavier).
 - **Approval batching** — single banner listing all pending calls in a multi-tool step instead of serial y/n.
 - **Audit log** — `.lightrs/audit.log` append of tool approvals/denials + `run_command` invocations (minicode `safety/`).
 - **Weak model routing** — read-only tools served by a cheaper `[provider].weak_model` until first write/exec; token-frugal (craftine `--weak-model`).
 - **Per-project config overlay** — `.lightrs/config.toml` overrides global config (craftine `.craftine/config.json`).
 - **Prompt-injection warning** — scan tool output for instruction-override patterns before sending to model; transcript warning (minicode `security.rs`).
-- **Atomic session save** — write temp file + rename; crash-safe (craftine JSONL is heavier; atomic rename gets most of it).
+- ~~**Atomic session save**~~ — shipped: temp file + same-dir rename.
 
 ### Patterns worth borrowing (not features)
 

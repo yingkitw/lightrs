@@ -211,6 +211,12 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - `build_chat_request` is `&mut self` for this — `run_user_turn_shared` locks the mutex for request build anyway.
 - Thresholds are `chars/4` estimate, not real tokenizers — cheap and close enough.
 
+## Session rewind + atomic save (2026-11-15)
+
+- `/rewind n` → `Agent::rewind_turns`: truncate `api_history`/`ui_history` at the nth-from-last `User` index (clamps to first user when fewer turns exist). Truncating at a `User` boundary removes whole turns — same protocol-safety rule as `drop_oldest_turn` (never split tool_call pairs).
+- Session `save` writes `<hash>.json.tmp` then `fs::rename` — same-dir rename is atomic; a crash mid-write can't leave truncated JSON. Orphaned `.tmp` after a crash is ignored by `load` (only reads `.json`).
+- Rewind also clears `active_user_expansion` — a rewound turn must not carry stale `@`/`$` attach state.
+
 ## Patterns to harvest next
 
 - Tool-call JSON differences between GLM / Kimi / MiniMax

@@ -287,10 +287,10 @@ impl Agent {
             .is_some_and(|m| m.role == UiRole::Assistant && !m.content.is_empty());
         if streamed {
             let mut ui = self.ui_history.lock().unwrap();
-            if let Some(last) = ui.last_mut() {
-                if last.role == UiRole::Assistant {
-                    last.content = text.clone();
-                }
+            if let Some(last) = ui.last_mut()
+                && last.role == UiRole::Assistant
+            {
+                last.content = text.clone();
             }
         } else {
             self.ui_history.lock().unwrap().push(UiMessage::with_role(

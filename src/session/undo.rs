@@ -13,10 +13,10 @@ pub fn paths_from_last_turn(ui: &[UiMessage]) -> Vec<String> {
         .unwrap_or(0);
     let mut out = Vec::new();
     for m in &ui[start..] {
-        if let Some(diff) = &m.file_diff {
-            if !out.contains(&diff.path) {
-                out.push(diff.path.clone());
-            }
+        if let Some(diff) = &m.file_diff
+            && !out.contains(&diff.path)
+        {
+            out.push(diff.path.clone());
         }
     }
     out
