@@ -132,7 +132,7 @@ async fn shared_turn_prompts_once_and_releases_mutex_during_approval() {
         "run the commands".into(),
         |_| {},
         cancel_rx,
-        ui_tx,
+        Some(&ui_tx),
     )
     .await
     .expect("turn completes");

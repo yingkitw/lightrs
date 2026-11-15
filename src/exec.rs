@@ -35,7 +35,8 @@ pub async fn run_prompt(cfg: AppConfig, prompt: String, json: bool, approve_shel
     }
     let catalog = crate::skills::load(&crate::skills::load_settings());
     agent.set_skill_catalog(catalog);
-    let text = agent.run_user_turn(prompt).await?;
+    let agent = Arc::new(tokio::sync::Mutex::new(agent));
+    let text = Agent::run_user_turn_headless(agent, prompt, |_| {}).await?;
     if json {
         println!(
             "{}",

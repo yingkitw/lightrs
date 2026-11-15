@@ -17,7 +17,7 @@ use crate::agent::Agent as LightAgent;
 use crate::config::AppConfig;
 
 struct SessionEntry {
-    agent: LightAgent,
+    agent: Arc<Mutex<LightAgent>>,
 }
 
 struct AcpV1State {
@@ -44,7 +44,12 @@ impl AcpV1State {
     async fn insert_session(&self, cwd: PathBuf) -> anyhow::Result<SessionId> {
         let agent = make_agent(&self.defaults, cwd)?;
         let id = self.alloc_session_id().await;
-        self.sessions.lock().await.insert(id.clone(), SessionEntry { agent });
+        self.sessions.lock().await.insert(
+            id.clone(),
+            SessionEntry {
+                agent: Arc::new(Mutex::new(agent)),
+            },
+        );
         Ok(id)
     }
 
@@ -108,8 +113,13 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                     connection.spawn({
                         let state = Arc::clone(&state);
                         async move {
-                            let mut sessions = state.sessions.lock().await;
-                            let Some(entry) = sessions.get_mut(&session_id) else {
+                            let agent = {
+                                let sessions = state.sessions.lock().await;
+                                sessions
+                                    .get(&session_id)
+                                    .map(|entry| Arc::clone(&entry.agent))
+                            };
+                            let Some(agent) = agent else {
                                 let _ = responder.respond_with_error(
                                     Error::invalid_params()
                                         .data(format!("unknown session {session_id}")),
@@ -118,14 +128,12 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                             };
 
                             let turn = run_turn_v1(
-                                &mut entry.agent,
+                                agent,
                                 user_text,
                                 &task_conn,
                                 &session_id,
                             )
                             .await;
-
-                            drop(sessions);
 
                             match turn {
                                 Ok(reply) => {

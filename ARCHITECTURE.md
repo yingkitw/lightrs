@@ -47,6 +47,7 @@ URLs omit trailing slashes; paths are joined as `{base}/chat/completions`. Strea
 - `[shell].test_command` heal check runs after successful write/edit tools (`agent/turn.rs::heal_plan`/`heal_record`, capped by `heal_steps`)
 - Agent `tokio::Mutex` is **not** held across SSE reads; UI transcript is `Arc<Mutex<Vec<UiMessage>>>` for live streaming redraws
 - **Lock discipline** (`run_user_turn_shared`): the agent mutex is only held for short record/mutate sections. The model fetch, the batched approval oneshot, tool execution, and heal subprocesses all run with the mutex free — `execute_one_tool_shared` uses `spawn_blocking` for sync tool work and re-locks per call. Holding it across the approval wait deadlocks the TUI (it needs `blocking_lock` to draw the prompt); `tests/approval_turn.rs` guards this.
+- One turn loop for all frontends: TUI calls `run_user_turn_shared` with a `ui_tx` channel; exec/ACP call `run_user_turn_headless` (no cancel, `ui_tx: None` → approval-needing commands are denied headless). ACP sessions hold `Arc<Mutex<Agent>>` and clone it under the sessions lock — the map is free during turns.
 - `ui_history` is capped at 500 messages (`helpers::trim_ui_history`, applied at turn end and session restore) — bounds session JSON and per-frame render cost
 - Two context layers: `context::messages_for_api` bounds the **wire** payload (last 12 user turns, ≤48k est) without touching `api_history`; `auto_compact_context` bounds the **stored** history (stub 32k / drop 64k, raw estimate) — `/rewind` and session save keep the full record
 

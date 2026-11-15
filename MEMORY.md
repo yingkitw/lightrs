@@ -47,7 +47,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Redaction** (`redact.rs`): tool API bodies scrubbed in `agent/context::truncate_tool_api`.
 - **Workdir prompt**: `AGENTS.md` / `AIDER.md` / `.lightrs/AGENTS.md` in `agent/prompt.rs`.
 - **`multi_edit`**: up to 16 `patch_file` ops in one tool call.
-- `[shell].require_approval` or allowlist block → TUI **y/n** before `execute_tool`; `agent/approval.rs` + `agent/turn.rs::execute_one_tool`; `AgentEvent::CommandApproval` + oneshot. No `ui_tx` (ACP) → tool error *requires TUI approval*. Approve on blocked allowlist sets `bypass_shell_allowlist` for that call only.
+- `[shell].require_approval` or allowlist block → TUI **y/n** before `execute_tool`; `agent/approval.rs` + `agent/turn.rs::execute_one_tool_shared`; `AgentEvent::CommandApproval` + oneshot. No `ui_tx` (ACP) → tool error *requires TUI approval*. Approve on blocked allowlist sets `bypass_shell_allowlist` for that call only.
 
 ## Session persistence (2026-03-19)
 
@@ -104,8 +104,8 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 ## Agent module (2026-11-14)
 
-- `src/agent/`: `mod.rs` (lifecycle), `turn.rs` (stream loop + `execute_one_tool`), `approval.rs`, `prompt.rs`, `helpers.rs`, `tokens.rs`.
-- Single tool path for TUI (`run_user_turn_shared`) and ACP (`run_user_turn_observed`) via optional `ui_tx`.
+- `src/agent/`: `mod.rs` (lifecycle), `turn.rs` (stream loop + `execute_one_tool_shared`), `approval.rs`, `prompt.rs`, `helpers.rs`, `tokens.rs`.
+- Single turn loop `run_user_turn_shared` for TUI + `run_user_turn_headless` for exec/ACP via optional `ui_tx`.
 - `approval.rs`: `resolve_shell_gate(..., None)` → `ShellGate::Denied` when `require_approval` (headless/ACP fail-closed); covered by `headless_resolve_denies_require_approval` tokio test.
 
 ## Markdown transcript (2026-11-14)
@@ -183,7 +183,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 ## Heal loop (2026-11-15)
 
-- `agent::turn::maybe_run_heal` runs `[shell].test_command` via `sh -c` after successful write/edit tool results only (`HEAL_TOOLS`; skips `error:` bodies and the `heal_steps` cap).
+- `agent::turn` heal stage (`heal_plan`/`heal_record`) runs `[shell].test_command` via `sh -c` after successful write/edit tool results only (`HEAL_TOOLS`; skips `error:` bodies and the `heal_steps` cap).
 - Failures are pushed to `api_history` as a synthetic `[heal]` user message (truncated via `context::truncate_tool_api`) so the model fixes them next step — success only adds an ephemeral `[sys]` line.
 - `Agent.heal_ran` counts per-turn runs; reset in `run_user_turn*` entry. Config: `test_command`, `heal_steps` (default 3) under `[shell]`.
 
@@ -222,14 +222,14 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 ## Shell audit log (2026-11-15)
 
 - `src/audit.rs::log_shell` appends `{ts, tool, command, decision, result}` JSONL to `.lightrs/audit.log` — command redacted via `redact_secrets`, `result` is `result_head` (first nonblank line, 160 chars) not full output.
-- Decision labels derive in `execute_one_tool` from `needs_interactive_approval` + gate outcome: `auto` / `approved` / `approved_bypass` / `denied` / `denied_headless`.
+- Decision labels derive in `execute_one_tool_shared` from `needs_interactive_approval` + gate outcome: `auto` / `approved` / `approved_bypass` / `denied` / `denied_headless`.
 - Best-effort semantics: `create_dir_all`/`OpenOptions` errors swallowed — audit failure must never break a tool call.
 
 ## Prompt-injection scan (2026-11-15)
 
 - `tools/injection.rs::detect` — lowercase substring match against craftine's curated pattern list (low-FP by design; docs about injection will flag, that's fine — warning not block).
-- The flag goes **into** `api_history` (prepended `[warning: …]` prefix in `execute_one_tool`) so the model sees it inline, plus an ephemeral `[sys]` line. Scanning UI-only would leave the model blind.
-- Scan points: `execute_one_tool` api push (all tools) + `maybe_run_heal` `[heal]` output — any path where external text enters API history needs it.
+- The flag goes **into** `api_history` (prepended `[warning: …]` prefix in `execute_one_tool_shared`) so the model sees it inline, plus an ephemeral `[sys]` line. Scanning UI-only would leave the model blind.
+- Scan points: `execute_one_tool_shared` api push (all tools) + heal-loop `[heal]` output (`heal_record`) — any path where external text enters API history needs it.
 
 ## Token transparency (2026-11-15)
 
@@ -244,10 +244,16 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Rule**: never await UI-bound oneshots or run subprocesses while holding `tokio::Mutex<Agent>` — the TUI thread needs `blocking_lock` every frame. Regression test: `tests/approval_turn.rs` asserts `agent.try_lock().is_ok()` inside the approval responder (mock `TcpListener` serving SSE bodies).
 - `ui_history` now capped at `MAX_UI_MESSAGES = 500` (`helpers::trim_ui_history` at turn end + session restore) — was unbounded, persisted in session JSON and rebuilt per frame.
 
+## Single turn loop (2026-11-15)
+
+- After the deadlock fix there were two parallel loops (`run_user_turn_shared` Arc<Mutex> + `drive_turn_loop` `&mut self`) duplicating the whole gate→exec→record→heal orchestration — a drift hazard (the deadlock itself came from them diverging). Ponytail pass deleted the `&mut self` path entirely: `run_user_turn`, `run_user_turn_observed`, `drive_turn_loop`, `handle_model_message`, sync `execute_one_tool_shared` (~160 lines) are gone.
+- Single entry: `run_user_turn_shared(agent, text, on, cancel, ui_tx: Option<&Sender>)`; `run_user_turn_headless` wraps it for exec/ACP (no cancel, `ui_tx: None` → headless-denied approvals). ACP sessions store `Arc<Mutex<Agent>>` and clone the Arc under the sessions lock — the map lock is no longer held across the turn.
+- Bonus fix found while building: `acp/mod.rs` had a `#[cfg(not(acp-v2))]` arm matching `AcpProtocol::V2` — a variant that doesn't exist without the feature, so `--features acp` alone never compiled. Dead arm deleted.
+
 ## Approval batching (2026-11-15)
 
 - `resolve_shell_approvals` pre-scans a step's `tool_calls` **before** the exec loop: collects every `run_command` needing `needs_interactive_approval`, sends ONE `CommandApproval { commands: Vec<String>, reply }`. Verdict is all-or-nothing for the step — `Ok(None)` = nothing needed approval OR headless (denial wording picked by `ui_tx.is_none()` in the gate).
-- `resolve_shell_gate` is now **sync** — the only `.await` in the approval path is the batch oneshot in `handle_model_message`. Per-call gate just maps `verdict: Option<bool>` → Run/Denied; `Some(true)` + allowlist-blocked → `bypass_allowlist`.
+- `resolve_shell_gate` is **sync** — the only `.await` in the approval path is the batch oneshot in `run_user_turn_shared`. Per-call gate just maps `verdict: Option<bool>` → Run/Denied; `Some(true)` + allowlist-blocked → `bypass_allowlist`.
 - Audit decisions (`auto`/`approved`/`approved_bypass`/`denied`/`denied_headless`) unchanged — batch approval still reads as `approved*` per call.
 - Input-area banner: fixed 5-row block → cap display at 3 command lines + `… +n more`.
 

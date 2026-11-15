@@ -13,7 +13,7 @@ use crate::agent::Agent as LightAgent;
 use crate::config::AppConfig;
 
 struct Session {
-    agent: LightAgent,
+    agent: Arc<Mutex<LightAgent>>,
 }
 
 struct V2State {
@@ -37,7 +37,12 @@ impl V2State {
         let mut n = self.next_id.lock().await;
         *n += 1;
         let id = schema::SessionId::new(format!("lightrs-v2-{n}"));
-        self.sessions.lock().await.insert(id.clone(), Session { agent });
+        self.sessions.lock().await.insert(
+            id.clone(),
+            Session {
+                agent: Arc::new(Mutex::new(agent)),
+            },
+        );
         Ok(id)
     }
 }
@@ -134,17 +139,18 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                                 )),
                             );
 
-                            let reply = {
-                                let mut sessions = state.sessions.lock().await;
-                                let Some(session) = sessions.get_mut(&session_id) else {
-                                    return Ok(());
-                                };
-                                session
-                                    .agent
-                                    .run_user_turn(prompt)
-                                    .await
-                                    .unwrap_or_else(|e| format!("{e:#}"))
+                            let agent = {
+                                let sessions = state.sessions.lock().await;
+                                sessions
+                                    .get(&session_id)
+                                    .map(|s| Arc::clone(&s.agent))
                             };
+                            let Some(agent) = agent else {
+                                return Ok(());
+                            };
+                            let reply = LightAgent::run_user_turn_headless(agent, prompt, |_| {})
+                                .await
+                                .unwrap_or_else(|e| format!("{e:#}"));
 
                             let message_id = schema::MessageId::new("agent-1");
                             let _ = send_update(

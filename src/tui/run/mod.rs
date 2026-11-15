@@ -95,7 +95,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                     }
                 },
                 cancel_rx.clone(),
-                tx_bg.clone(),
+                Some(&tx_bg),
             )
             .await;
             match result {

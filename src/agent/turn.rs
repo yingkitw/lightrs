@@ -34,18 +34,15 @@ impl Agent {
         self.maybe_context_pressure_sys();
     }
 
-    pub async fn run_user_turn(&mut self, user_text: String) -> Result<String> {
-        self.run_user_turn_observed(user_text, |_| {}).await
-    }
-
-    pub async fn run_user_turn_observed(
-        &mut self,
+    /// Headless turn (exec/ACP): no cancel, no approval UI — shell commands
+    /// that would need a prompt are denied.
+    pub async fn run_user_turn_headless(
+        agent: Arc<tokio::sync::Mutex<Self>>,
         user_text: String,
-        mut on: impl FnMut(ObserveEvent<'_>) + Send,
+        on: impl FnMut(ObserveEvent<'_>) + Send,
     ) -> Result<String> {
-        self.begin_user_turn(user_text);
         let (_stop, cancel) = watch::channel(false);
-        self.drive_turn_loop(&mut on, cancel, None).await
+        Self::run_user_turn_shared(agent, user_text, on, cancel, None).await
     }
 
     pub async fn run_user_turn_shared(
@@ -53,7 +50,7 @@ impl Agent {
         user_text: String,
         mut on: impl FnMut(ObserveEvent<'_>) + Send,
         cancel: watch::Receiver<bool>,
-        ui_tx: mpsc::UnboundedSender<AgentEvent>,
+        ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
     ) -> Result<String> {
         {
             let mut g = agent.lock().await;
@@ -91,8 +88,7 @@ impl Agent {
             // `blocking_lock` to draw the banner and read the y/n reply.
             let calls = message.tool_calls.clone().unwrap_or_default();
             let shell_verdict =
-                super::approval::resolve_shell_approvals(&calls, &shell_policy, Some(&ui_tx))
-                    .await?;
+                super::approval::resolve_shell_approvals(&calls, &shell_policy, ui_tx).await?;
 
             if calls.is_empty() {
                 let mut g = agent.lock().await;
@@ -117,7 +113,7 @@ impl Agent {
                     &call.id,
                     shell_verdict,
                     &mut on,
-                    Some(&ui_tx),
+                    ui_tx,
                 )
                 .await?;
             }
@@ -131,45 +127,6 @@ impl Agent {
         Ok(msg)
     }
 
-    async fn drive_turn_loop(
-        &mut self,
-        on: &mut (impl FnMut(ObserveEvent<'_>) + Send),
-        cancel: watch::Receiver<bool>,
-        ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
-    ) -> Result<String> {
-        for _step in 0..MAX_TOOL_STEPS {
-            let client = self.client.clone();
-            let fallback = self.fallback_client.clone();
-            let request = self.build_chat_request();
-            let ui_history = self.ui_transcript();
-            let workdir = Arc::clone(&self.workdir);
-
-            let (message, finish_reason, usage) = Self::fetch_model_message(
-                &client,
-                fallback.as_ref(),
-                request,
-                &ui_history,
-                on,
-                cancel.clone(),
-            )
-            .await?;
-
-            self.after_model_response(usage.as_ref(), finish_reason.as_deref());
-            let calls = message.tool_calls.clone().unwrap_or_default();
-            let shell_verdict =
-                super::approval::resolve_shell_approvals(&calls, &self.shell_policy, ui_tx).await?;
-            if let Some(text) =
-                self.handle_model_message(message, &workdir, shell_verdict, on, ui_tx)?
-            {
-                return Ok(text);
-            }
-        }
-
-        let msg = format!("Stopped after {MAX_TOOL_STEPS} tool steps.");
-        self.push_error(msg.clone());
-        self.finish_user_turn_api();
-        Ok(msg)
-    }
 
     fn build_chat_request(&mut self) -> ChatRequest {
         self.auto_compact_context();
@@ -273,38 +230,6 @@ impl Agent {
         if matches!(finish_reason, Some("length" | "max_tokens")) {
             self.push_system("Model stopped: output length limit.");
         }
-    }
-
-    /// `Ok(Some(text))` when the turn completes with assistant text; `Ok(None)` to continue the tool loop.
-    /// `shell_verdict` is the step's batched approval result (`resolve_shell_approvals`).
-    fn handle_model_message(
-        &mut self,
-        message: ApiMessage,
-        workdir: &Path,
-        shell_verdict: Option<bool>,
-        on: &mut (impl FnMut(ObserveEvent<'_>) + Send),
-        ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
-    ) -> Result<Option<String>> {
-        if let Some(calls) = message.tool_calls.clone()
-            && !calls.is_empty() {
-                self.record_tool_call_step(message);
-                for call in &calls {
-                    execute_one_tool(
-                        self,
-                        workdir,
-                        &self.shell_policy.clone(),
-                        &call.function.name,
-                        &call.function.arguments,
-                        &call.id,
-                        shell_verdict,
-                        on,
-                        ui_tx,
-                    )?;
-                }
-                self.refresh_context_estimate();
-                return Ok(None);
-            }
-        Ok(Some(self.finish_text_turn(message)))
     }
 
     /// Record an assistant tool-call message into API history; UI trailing
@@ -417,55 +342,6 @@ fn audit_outcome(workdir: &Path, ctx: &Option<(String, bool)>, bypass: bool, bod
         };
         crate::audit::log_shell(workdir, cmd, decision, &crate::audit::result_head(body));
     }
-}
-
-/// `&mut Agent` path — headless/ACP turn loop where no TUI thread shares the mutex.
-#[allow(clippy::too_many_arguments)]
-fn execute_one_tool(
-    agent: &mut Agent,
-    workdir: &Path,
-    shell_policy: &ShellPolicy,
-    name: &str,
-    args: &str,
-    call_id: &str,
-    shell_verdict: Option<bool>,
-    on: &mut (impl FnMut(ObserveEvent<'_>) + Send),
-    ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
-) -> Result<()> {
-    on(ObserveEvent::ToolStart {
-        name,
-        arguments: args,
-    });
-    let ctx = shell_ctx(name, args, shell_policy);
-    let bypass =
-        match resolve_shell_gate(name, args, shell_policy, shell_verdict, ui_tx.is_none())? {
-            ShellGate::Denied(msg) => {
-                audit_denied(workdir, &ctx, ui_tx.is_none(), &msg);
-                on(ObserveEvent::ToolEnd { body: &msg });
-                agent.record_tool_denial(name, args, call_id, &msg);
-                return Ok(());
-            }
-            ShellGate::NotShell => false,
-            ShellGate::Run {
-                bypass_allowlist,
-            } => bypass_allowlist,
-        };
-    let outcome = execute_tool(workdir, name, args, shell_policy, bypass);
-    audit_outcome(workdir, &ctx, bypass, &outcome.body);
-    on(ObserveEvent::ToolEnd {
-        body: &outcome.body,
-    });
-    agent.record_tool_outcome(name, args, call_id, &outcome.body, outcome.file_diff);
-    if let Some(cmd) = agent.heal_plan(name, &outcome.body) {
-        on(ObserveEvent::ToolStart {
-            name: "heal",
-            arguments: &cmd,
-        });
-        let body = run_heal_command(workdir, &cmd, shell_policy);
-        on(ObserveEvent::ToolEnd { body: &body });
-        agent.heal_record(&cmd, &body);
-    }
-    Ok(())
 }
 
 /// Shared path — the agent lives behind `Arc<Mutex>` (TUI). The mutex is only

@@ -56,14 +56,13 @@ pub fn make_agent(cfg: &AppConfig, cwd: PathBuf) -> Result<Agent> {
 }
 
 pub async fn run_turn_v1(
-    agent: &mut Agent,
+    agent: Arc<tokio::sync::Mutex<Agent>>,
     user_text: String,
     connection: &ConnectionTo<Client>,
     session_id: &SessionId,
 ) -> Result<String> {
     let mut tool_index = 0u64;
-    let reply = agent
-        .run_user_turn_observed(user_text, |ev| {
+    let reply = Agent::run_user_turn_headless(agent, user_text, |ev| {
             if let Err(error) = (|| -> Result<()> {
                 match ev {
                     ObserveEvent::ModelWait => {}
