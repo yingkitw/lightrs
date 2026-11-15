@@ -33,24 +33,49 @@ pub fn render_mermaid(source: &str, width: usize) -> Vec<Line<'static>> {
     let note_style = theme::body_muted();
 
     let mut out = Vec::new();
-    out.push(Line::from(Span::styled(
-        format!("── mermaid ({}) ──", view.kind),
-        header_style,
-    )));
-
-    if view.body.is_empty() {
-        out.push(Line::from(Span::styled(
-            "(no diagram edges; see source below)",
-            note_style,
-        )));
-    } else if view.pre_wrapped {
-        // ASCII layout — whitespace is the drawing, do not word-wrap.
-        for row in &view.body {
-            out.push(Line::styled(row.clone(), edge_style));
+    if view.pre_wrapped {
+        // Solid panel: deepest bg for the layout area, deep-grey bg for node
+        // boxes (via `node_mask`), padded to a common block width so the whole
+        // diagram reads as one framed rectangle.
+        let p = theme::active();
+        let panel = Style::default().bg(p.code_bg);
+        let styles = [
+            edge_style.bg(p.code_bg),                        // edges, on panel
+            Style::default().fg(p.muted).bg(p.inline_code_bg), // box borders
+            Style::default().fg(p.text).bg(p.inline_code_bg),  // box labels
+        ];
+        let block_w = view
+            .body
+            .iter()
+            .map(|r| r.chars().count())
+            .max()
+            .unwrap_or(0);
+        let header = format!("── mermaid ({}) ", view.kind);
+        out.push(Line::from(vec![
+            Span::styled(header, header_style.bg(p.code_bg)),
+            Span::styled(
+                " ".repeat(block_w.saturating_sub(view.kind.len() + 13)),
+                panel,
+            ),
+        ]));
+        for (y, row) in view.body.iter().enumerate() {
+            let mask = view.node_mask.get(y).map_or(&[][..], Vec::as_slice);
+            out.push(Line::from(segment_row(row, block_w, mask, styles, panel)));
         }
     } else {
-        for row in &view.body {
-            out.extend(wrap_plain_lines(row, width, edge_style));
+        out.push(Line::from(Span::styled(
+            format!("── mermaid ({}) ──", view.kind),
+            header_style,
+        )));
+        if view.body.is_empty() {
+            out.push(Line::from(Span::styled(
+                "(no diagram edges; see source below)",
+                note_style,
+            )));
+        } else {
+            for row in &view.body {
+                out.extend(wrap_plain_lines(row, width, edge_style));
+            }
         }
     }
 
@@ -65,11 +90,45 @@ pub fn render_mermaid(source: &str, width: usize) -> Vec<Line<'static>> {
     out
 }
 
+/// Split a diagram row into styled runs by cell kind (0 = edge/space,
+/// 1 = box border, 2 = box label); the row is padded to `block_w` with
+/// `panel` so the block is a solid rectangle regardless of trailing space.
+fn segment_row(
+    row: &str,
+    block_w: usize,
+    mask: &[u8],
+    styles: [Style; 3],
+    panel: Style,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut run = String::new();
+    let mut kind = 0u8;
+    let mut x = 0usize;
+    for c in row.chars() {
+        let cell = mask.get(x).copied().unwrap_or(0);
+        if cell != kind && !run.is_empty() {
+            spans.push(Span::styled(std::mem::take(&mut run), styles[kind as usize]));
+        }
+        kind = cell;
+        run.push(c);
+        x += 1;
+    }
+    if !run.is_empty() {
+        spans.push(Span::styled(run, styles[kind as usize]));
+    }
+    if x < block_w {
+        spans.push(Span::styled(" ".repeat(block_w - x), panel));
+    }
+    spans
+}
+
 struct MermaidView {
     kind: &'static str,
     body: Vec<String>,
     /// Rows already fitted to `width` (ASCII diagram) — skip word-wrap.
     pre_wrapped: bool,
+    /// Per-row node-box cells for background segmentation (laid-out diagrams).
+    node_mask: Vec<Vec<u8>>,
 }
 
 fn interpret(source: &str, width: usize) -> MermaidView {
@@ -98,22 +157,23 @@ fn interpret(source: &str, width: usize) -> MermaidView {
         }
     }
 
-    let (body, pre_wrapped) = if kind == "sequence" && !seq.is_empty() {
-        (format_sequence(&seq, &labels), false)
+    let (body, pre_wrapped, node_mask) = if kind == "sequence" && !seq.is_empty() {
+        (format_sequence(&seq, &labels), false, Vec::new())
     } else if !edges.is_empty() {
         let dir = lines.first().and_then(|l| flowchart_direction(l));
         match layout_flowchart(&edges, &labels, dir, width) {
-            Some(rows) => (rows, true),
-            None => (flat_flowchart(&edges, &labels), false),
+            Some(d) => (d.rows, true, d.mask),
+            None => (flat_flowchart(&edges, &labels), false, Vec::new()),
         }
     } else {
-        (fallback_lines(&lines, kind), false)
+        (fallback_lines(&lines, kind), false, Vec::new())
     };
 
     MermaidView {
         kind,
         body,
         pre_wrapped,
+        node_mask,
     }
 }
 
@@ -369,14 +429,15 @@ const CONN_W: usize = 4; // LR: connector column width
 /// pass *behind* a box but never through its border or label.
 struct Canvas {
     cells: Vec<Vec<char>>,
-    blocked: Vec<Vec<bool>>,
+    /// Per-cell kind: 0 = layout area/edges, 1 = box border, 2 = box label.
+    kind: Vec<Vec<u8>>,
 }
 
 impl Canvas {
     fn new(w: usize, h: usize) -> Self {
         Self {
             cells: vec![vec![' '; w]; h],
-            blocked: vec![vec![false; w]; h],
+            kind: vec![vec![0; w]; h],
         }
     }
 
@@ -396,11 +457,12 @@ impl Canvas {
 
     fn put_line(&mut self, x: usize, y: usize, c: char) {
         if self
-            .blocked
+            .kind
             .get(y)
             .and_then(|r| r.get(x))
             .copied()
-            .unwrap_or(true)
+            .unwrap_or(1)
+            > 0
         {
             return;
         }
@@ -411,9 +473,9 @@ impl Canvas {
     }
 
     fn draw_box(&mut self, x: usize, y: usize, w: usize, text: &str) {
-        for row in self.blocked.iter_mut().skip(y).take(3) {
+        for row in self.kind.iter_mut().skip(y).take(3) {
             for cell in row.iter_mut().skip(x).take(w) {
-                *cell = true;
+                *cell = 1;
             }
         }
         self.put(x, y, '┌');
@@ -428,13 +490,14 @@ impl Canvas {
         self.put(x + w - 1, y + 1, '│');
         for (i, ch) in text.chars().enumerate().take(w.saturating_sub(3)) {
             self.put(x + 2 + i, y + 1, ch);
+            self.kind[y + 1][x + 2 + i] = 2;
         }
     }
 
     /// Merge a line cell into a junction glyph from the directions its
     /// neighbors occupy, so overlapping fan-out becomes `┬`/`├`/`┼`.
     fn junction(&mut self, x: usize, y: usize) {
-        if self.blocked[y][x] {
+        if self.kind[y][x] > 0 {
             return;
         }
         let cur = self.get(x, y);
@@ -479,11 +542,14 @@ impl Canvas {
         }
     }
 
-    fn into_rows(self) -> Vec<String> {
-        self.cells
+    /// Text rows + per-cell kind mask for background segmentation.
+    fn into_rows(self) -> (Vec<String>, Vec<Vec<u8>>) {
+        let rows = self
+            .cells
             .into_iter()
             .map(|r| r.into_iter().collect::<String>().trim_end().to_string())
-            .collect()
+            .collect();
+        (rows, self.kind)
     }
 }
 
@@ -510,7 +576,7 @@ fn layout_flowchart(
     labels: &HashMap<String, String>,
     dir: Option<Dir>,
     width: usize,
-) -> Option<Vec<String>> {
+) -> Option<Diagram> {
     let dir = dir?;
     let mut ids: Vec<&str> = Vec::new();
     let mut index: HashMap<&str, usize> = HashMap::new();
@@ -609,6 +675,16 @@ fn layout_flowchart(
             &layers, &rank, &index, &ids, edges, labels, &origin, &center, width,
         )
     }
+    .map(|(rows, mask)| Diagram {
+        rows,
+        mask,
+    })
+}
+
+/// Laid-out diagram: text rows plus, per row, which cells are node boxes.
+struct Diagram {
+    rows: Vec<String>,
+    mask: Vec<Vec<u8>>,
 }
 
 fn label_of<'a>(id: &'a str, labels: &'a HashMap<String, String>) -> &'a str {
@@ -627,7 +703,7 @@ fn draw_td(
     center: &[usize],
     slot: impl Fn(usize) -> usize,
     width: usize,
-) -> Option<Vec<String>> {
+) -> Option<(Vec<String>, Vec<Vec<u8>>)> {
     let layer_top = |l: usize| l * 5; // 3 box rows + 2 connector rows
     let total_w = layers
         .iter()
@@ -685,7 +761,7 @@ fn draw_lr(
     origin: &[usize],
     center: &[usize],
     width: usize,
-) -> Option<Vec<String>> {
+) -> Option<(Vec<String>, Vec<Vec<u8>>)> {
     // Columns = layers; each column is as wide as its widest box.
     let node_w = |v: usize| label_of(ids[v], labels).chars().count() + 4;
     let col_w: Vec<usize> = layers
@@ -823,6 +899,38 @@ mod tests {
     fn over_width_graph_falls_back() {
         let v = interpret("flowchart TD\n    A[Start] --> B[End]", 10);
         assert!(!v.pre_wrapped, "narrow terminal should get the flat list");
+    }
+
+    #[test]
+    fn panel_backgrounds_segment_nodes_from_edges() {
+        let lines = render_mermaid("flowchart TD\n    A[Start] --> B[End]", 80);
+        let p = theme::active();
+        let mut saw_node = false;
+        let mut saw_edge = false;
+        for line in &lines {
+            for span in &line.spans {
+                if span.style.bg.is_none() {
+                    continue; // the `source:` dump is unstyled
+                }
+                let text: &str = span.content.as_ref();
+                if text.contains("Start") || text.contains("End") {
+                    assert_eq!(
+                        span.style.bg,
+                        Some(p.inline_code_bg),
+                        "node box should use the deep-grey fill: {span:?}"
+                    );
+                    saw_node = true;
+                } else if text.contains('▼') {
+                    assert_eq!(
+                        span.style.bg,
+                        Some(p.code_bg),
+                        "edge cells should sit on the panel bg: {span:?}"
+                    );
+                    saw_edge = true;
+                }
+            }
+        }
+        assert!(saw_node && saw_edge);
     }
 
     #[test]

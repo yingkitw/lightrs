@@ -292,6 +292,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 - `tui/highlight/mermaid.rs` renders real diagrams: Kahn longest-path ranks → layers, barycenter ordering, `Canvas` char grid. Key invariant: `put_line` never writes into `blocked` (box) cells — edges pass *behind* boxes; `junction()` merges overlapping line cells into `┬`/`├`/`┼` from a neighbor bitmask.
 - **Gotcha**: `wrap_plain_lines` word-wraps via `split_whitespace` — it destroys ASCII-art indentation. `MermaidView.pre_wrapped` rows bypass it (emit `Line::styled` directly). Any preformatted block must not go through the word-wrap path.
+- Panel styling: `Canvas.kind` grid (0=edge, 1=box border, 2=box label) survives layout → `segment_row` splits each row into styled spans over the `code_bg`/`inline_code_bg`/`muted`/`text` ladder, padded to a solid rectangle. Reuses existing palette colors — no new theme fields.
 - Fallbacks → flat edge list: cycles (Kahn leaves nodes unprocessed), `BT`/`RL` directions, `width < 24` or canvas > width, >48 nodes. `flowchart`/`graph` default to TD when no direction keyword.
 
 ## Patterns to harvest next
