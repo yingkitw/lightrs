@@ -54,7 +54,7 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
         .border_style(if app.state == RunState::Busy {
             theme::border()
         } else {
-            Style::default().fg(palette::ACCENT)
+            Style::default().fg(palette::accent())
         });
     let inner = block.inner(area);
 

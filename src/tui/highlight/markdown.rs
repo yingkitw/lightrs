@@ -263,7 +263,7 @@ impl MdLines {
                 0,
                 Span::styled(
                     "▏ ",
-                    Style::default().fg(palette::BORDER),
+                    Style::default().fg(palette::border()),
                 ),
             );
         }
@@ -275,10 +275,10 @@ impl MdLines {
 
     fn push_heading(&mut self, text: &str, level: HeadingLevel) {
         let color = match level {
-            HeadingLevel::H1 => palette::HEADING_1,
-            HeadingLevel::H2 => palette::HEADING_2,
-            HeadingLevel::H3 => palette::HEADING_3,
-            _ => palette::HEADING_OTHER,
+            HeadingLevel::H1 => palette::heading_1(),
+            HeadingLevel::H2 => palette::heading_2(),
+            HeadingLevel::H3 => palette::heading_3(),
+            _ => palette::heading_other(),
         };
         let indent = match level {
             HeadingLevel::H1 => "",

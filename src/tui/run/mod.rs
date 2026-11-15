@@ -83,6 +83,8 @@ pub fn run(cfg: AppConfig) -> Result<()> {
         }
     });
 
+    crate::tui::theme::init();
+
     let mut stdout = std::io::stdout();
     enable_raw_mode()?;
     stdout.execute(EnterAlternateScreen)?;

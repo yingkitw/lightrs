@@ -61,6 +61,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Enter` — send message (supports multi-line input; **paste** multi-line with Cmd/Ctrl+V)
 - `Shift+Enter` or `Ctrl+J` — newline in the composer
 - `/copy` — copy the latest assistant reply to the clipboard (`/copy code` = last ``` fence only)
+- `/theme` — list or set color theme (`mocha`, `latte`, `nord`, `rosepine`, `hc`)
 - `Ctrl+P` / `Ctrl+N` — recall older / newer submitted prompts (Codex-style history)
 - `@path` — attach workdir files to the API message (`Tab` completes); `$skill-id` — attach a **skill** (`Tab` on `$` prefix); paths skip `.git` / `target` / `node_modules`
 - `Esc` — clear input; while busy, **interrupt** the current turn

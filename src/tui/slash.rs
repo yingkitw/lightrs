@@ -1,6 +1,7 @@
 use crate::agent::{Agent, context_usage_text};
 use crate::session;
 use crate::tui::clipboard::{copy_payload_from_markdown, set_text};
+use crate::tui::theme;
 use crate::tui::App;
 use crate::tui::info::{context_details, session_details};
 
@@ -17,6 +18,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("skills", "list discovered agent skills"),
     ("export", "write UI transcript to markdown in workdir"),
     ("copy", "copy last reply (or last ``` fence with /copy code) to clipboard"),
+    ("theme", "list or set TUI color theme (mocha, latte, nord, rosepine, hc)"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +165,18 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             }
             SlashAction::Handled
         }
+        "theme" => {
+            let args: Vec<&str> = line.split_whitespace().skip(1).collect();
+            if args.is_empty() {
+                agent.push_system(theme::theme_list_message());
+            } else {
+                match theme::set_theme(args[0]) {
+                    Ok(id) => agent.push_system(format!("theme set to `{id}` (saved to ~/.config/lightrs/tui.toml)")),
+                    Err(e) => agent.push_error(e),
+                }
+            }
+            SlashAction::Handled
+        }
         "copy" => {
             let code_only = line
                 .split_whitespace()
@@ -261,5 +275,10 @@ mod tests {
     #[test]
     fn quiet_listed_for_docs_sync() {
         assert!(COMMANDS.iter().any(|(n, _)| *n == "quiet"));
+    }
+
+    #[test]
+    fn theme_listed_for_docs_sync() {
+        assert!(COMMANDS.iter().any(|(n, _)| *n == "theme"));
     }
 }

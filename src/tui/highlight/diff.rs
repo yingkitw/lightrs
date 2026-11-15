@@ -32,11 +32,11 @@ fn diff_line_style(line: &str) -> Style {
     if line.starts_with("+++") || line.starts_with("---") {
         theme::fence_header()
     } else if line.starts_with("@@") {
-        Style::default().fg(palette::DIFF_HUNK)
+        Style::default().fg(palette::diff_hunk())
     } else if line.starts_with('+') {
-        Style::default().fg(palette::DIFF_ADD)
+        Style::default().fg(palette::diff_add())
     } else if line.starts_with('-') {
-        Style::default().fg(palette::DIFF_DEL)
+        Style::default().fg(palette::diff_del())
     } else {
         theme::body_muted()
     }

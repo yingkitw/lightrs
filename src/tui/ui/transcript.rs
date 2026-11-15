@@ -84,7 +84,7 @@ fn transcript_lines(
         if m.role == UiRole::Tool && m.content.starts_with("→") {
             lines.push(Line::from(Span::styled(
                 m.content.clone(),
-                Style::default().fg(palette::TOOL),
+                Style::default().fg(palette::tool()),
             )));
             lines.push(Line::from(""));
             continue;
@@ -146,12 +146,12 @@ fn render_tool_block(
                     "{} +{} −{}",
                     fd.path, fd.lines_added, fd.lines_removed
                 ),
-                Style::default().fg(palette::TOOL_ARGS),
+                Style::default().fg(palette::tool_args()),
             ));
         } else {
             header.push(Span::styled(
                 truncate_inline(&tc.arguments, 72),
-                Style::default().fg(palette::TOOL_ARGS),
+                Style::default().fg(palette::tool_args()),
             ));
         }
     }

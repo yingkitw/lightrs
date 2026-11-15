@@ -41,7 +41,7 @@
 - Header: version, provider, model, state, workdir, token/context estimate, API host
 - Multi-line composer (not single-line only); placeholder hints when empty
 - Status bar: slash hints, scroll/tool hints, or busy/error text
-- **Theme**: dark palette via `tui/theme.rs`
+- **Theme**: selectable palettes via `/theme` (`tui/theme/`; default `mocha`)
 
 ### Input
 
@@ -66,6 +66,7 @@
 | `/skills` | List discovered skills (`$id` to invoke on send) |
 | `/export` [path] | Write UI transcript to markdown under workdir (default `lightrs-transcript.md`; skips `[sys]`) |
 | `/copy` [`code`] | Copy latest assistant reply to the OS clipboard; `code` = last fenced ``` block only |
+| `/theme` [`id`] | List TUI palettes or set one (`mocha`, `latte`, `nord`, `rosepine`, `hc`); saved to `~/.config/lightrs/tui.toml` |
 | `/quit` | Exit (same as `q` when idle) |
 
 `Tab` completes unique slash prefix.

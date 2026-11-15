@@ -107,7 +107,7 @@ fn syntect_to_ratatui(st: syntect::highlighting::Style) -> Style {
 
     use crate::tui::theme::palette;
 
-    let mut style = Style::default().bg(palette::CODE_BG);
+    let mut style = Style::default().bg(palette::code_bg());
     let c = st.foreground;
     style = style.fg(Color::Rgb(c.r, c.g, c.b));
     if st.font_style.contains(FontStyle::BOLD) {

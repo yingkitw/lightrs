@@ -18,7 +18,7 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
     ("src/provider/stream.rs", "stream.rs"),
     ("src/tools/diff.rs", "diff"),
     ("src/tools/grep.rs", "grep"),
-    ("src/tui/theme.rs", "theme.rs"),
+    ("src/tui/theme/mod.rs", "theme"),
     ("src/tui/composer.rs", "composer.rs"),
     ("src/tui/mentions.rs", "mentions"),
     ("src/mentions.rs", "mentions"),
@@ -46,7 +46,7 @@ const TOOLS: &[&str] = &[
 
 const SLASH: &[&str] = &[
     "help", "clear", "cwd", "status", "context", "reload", "quiet", "skills", "export", "copy",
-    "quit",
+    "theme", "quit",
 ];
 
 #[test]

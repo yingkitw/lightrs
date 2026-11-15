@@ -133,7 +133,8 @@ mod tests {
         });
         let link = lines.iter().any(|l| {
             l.spans.iter().any(|s| {
-                s.content.contains("link") && s.style.fg == Some(crate::tui::theme::palette::LINK)
+                s.content.contains("link")
+                    && s.style.fg == Some(crate::tui::theme::palette::link())
             })
         });
         assert!(bold, "expected bold span");
