@@ -1,0 +1,81 @@
+digraph lightrs {
+    rankdir = TB;
+    bgcolor = "white";
+    fontname = "Helvetica";
+    node [fontname = "Helvetica", fontsize = 11, shape = box, style = "rounded,filled", color = "#334155", penwidth = 1.2];
+    edge [fontname = "Helvetica", fontsize = 9, color = "#64748b", penwidth = 1.1];
+
+    // ── Entry ─────────────────────────────────────────────
+    main [label = "main.rs\nCLI · bootstrap", fillcolor = "#e0f2fe"];
+    cli  [label = "cli.rs\nclap parser", fillcolor = "#f8fafc"];
+
+    main -> cli;
+
+    // ── Commands ──────────────────────────────────────────
+    subgraph cluster_cmds {
+        label = "subcommands";
+        fontsize = 10;
+        color = "#94a3b8";
+        style = dashed;
+
+        tui_cmd  [label = "tui (default)\nTUI::run", fillcolor = "#f0fdf4"];
+        acp_cmd  [label = "acp\nACP::serve (tokio rt)", fillcolor = "#f0fdf4"];
+        imp_cmd  [label = "import\nfrom opencode", fillcolor = "#f0fdf4"];
+        mig_cmd  [label = "migrate\nscan → profile → write", fillcolor = "#f0fdf4"];
+    }
+
+    cli -> tui_cmd;
+    cli -> acp_cmd;
+    cli -> imp_cmd;
+    cli -> mig_cmd;
+
+    // ── ACP branch ────────────────────────────────────────
+    acp [label = "acp/\nv1/v2 agent server + engine", fillcolor = "#fef9c3"];
+    acp_cmd -> acp;
+
+    // ── Import / migrate branch ───────────────────────────
+    opencode [label = "opencode/\nJSONC import (paths, profile, assets)", fillcolor = "#fef9c3"];
+    migrate  [label = "migrate/\nscan (detectors) → profile → write", fillcolor = "#fef9c3"];
+    imp_cmd -> opencode;
+    mig_cmd -> migrate;
+
+    // ── TUI branch ────────────────────────────────────────
+    tui_run [label = "tui/run\nrun loop", fillcolor = "#fef9c3"];
+    tui_app [label = "tui/app\napp state · slash · info", fillcolor = "#fef9c3"];
+    tui_cmd -> tui_run -> tui_app;
+
+    subgraph cluster_tui {
+        label = "rendering";
+        fontsize = 10;
+        color = "#94a3b8";
+        style = dashed;
+
+        highlight [label = "tui/highlight\nmarkdown · syntect · wrap", fillcolor = "#fef9c3"];
+        ui        [label = "tui/ui\nchrome (header/input/status)\ntranscript", fillcolor = "#fef9c3"];
+    }
+
+    tui_app -> highlight;
+    tui_app -> ui;
+
+    // ── Agent core ────────────────────────────────────────
+    agent [label = "agent.rs\ntool-call loop", fillcolor = "#fce7f3"];
+    tui_app -> agent [label = "tokio::spawn\n(one turn at a time)", style = dashed];
+    acp -> agent;
+
+    tools [label = "tools/\nschemas + fs/shell exec", fillcolor = "#fce7f3"];
+    agent -> tools;
+
+    chat [label = "chat.rs\nMessage / role types", fillcolor = "#fce7f3"];
+    agent -> chat [style = dotted, label = "uses"];
+
+    // ── Provider layer ────────────────────────────────────
+    provider [label = "provider.rs\nHTTP → /v1/chat/completions", fillcolor = "#e0e7ff"];
+    config   [label = "config/\nProvider enum · AppConfig::load\nfile + env keys", fillcolor = "#e0e7ff"];
+
+    agent -> provider [label = "ChatRequest"];
+    provider -> agent [label = "ChatResponse", style = dotted];
+    provider -> config;
+
+    // ── Concurrency: mpsc events ──────────────────────────
+    agent -> tui_app [label = "mpsc<AgentEvent>", color = "#dc2626", fontcolor = "#dc2626", constraint = false];
+}
