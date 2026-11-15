@@ -1,0 +1,177 @@
+//! Heuristic read-only shell classification for auto-approve under `require_approval`.
+
+use super::shell_deny;
+
+/// When `require_approval` is on, skip the TUI prompt for likely read-only commands.
+pub fn auto_approve_read_only(command: &str) -> bool {
+    if shell_deny::deny_reason(command).is_some() {
+        return false;
+    }
+    if has_shell_redirection(command) {
+        return false;
+    }
+    for segment in split_segments(command) {
+        if segment.is_empty() {
+            continue;
+        }
+        if !segment_is_read_only(&segment) {
+            return false;
+        }
+    }
+    true
+}
+
+fn has_shell_redirection(command: &str) -> bool {
+    let c = command;
+    c.contains('>') || c.contains("<<") || c.contains(">>")
+}
+
+fn split_segments(command: &str) -> Vec<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for ch in command.chars() {
+        if ch == '|' || ch == ';' {
+            parts.push(cur.trim().to_string());
+            cur.clear();
+        } else if ch == '&' {
+            let rest = cur.trim();
+            if rest.is_empty() {
+                parts.push(String::new());
+            } else {
+                parts.push(rest.to_string());
+            }
+            cur.clear();
+        } else {
+            cur.push(ch);
+        }
+    }
+    if !cur.trim().is_empty() {
+        parts.push(cur.trim().to_string());
+    }
+    parts
+}
+
+fn segment_is_read_only(segment: &str) -> bool {
+    let mut s = segment.trim();
+    while let Some((next, remainder)) = peel_env_assignment(s) {
+        if next.is_empty() && remainder.is_empty() {
+            return true;
+        }
+        s = remainder;
+    }
+    let Some(bin) = first_token(s) else {
+        return true;
+    };
+    let lower = bin.to_ascii_lowercase();
+    match lower.as_str() {
+        "ls" | "dir" | "cat" | "head" | "tail" | "less" | "more" | "wc" | "pwd" | "which"
+        | "whereis" | "whoami" | "id" | "echo" | "printf" | "true" | "false" | "env"
+        | "printenv" | "date" | "uname" | "hostname" | "uptime" | "ps" | "top" | "du" | "df"
+        | "file" | "stat" | "diff" | "rg" | "grep" | "ag" | "fd" => true,
+        "find" => !segment_contains_write_find(segment),
+        "git" => git_segment_read_only(segment),
+        "cargo" => cargo_segment_read_only(segment),
+        "npm" | "pnpm" | "yarn" | "bun" => false,
+        "rm" | "mv" | "cp" | "chmod" | "chown" | "touch" | "mkdir" | "rmdir" | "truncate"
+        | "tee" | "sed" | "vi" | "vim" | "nano" | "emacs" | "curl" | "wget" | "python"
+        | "python3" | "node" | "ruby" | "perl" | "sh" | "bash" | "zsh" | "fish" => false,
+        _ => false,
+    }
+}
+
+fn peel_env_assignment(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim_start();
+    let eq = s.find('=')?;
+    let key = &s[..eq];
+    if key.is_empty() || key.contains(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+        return None;
+    }
+    let after = s[eq + 1..].trim_start();
+    let value_end = after
+        .find(' ')
+        .unwrap_or(after.len());
+    let rest = after[value_end..].trim_start();
+    Some((&s[..eq + 1 + value_end], rest))
+}
+
+fn first_token(s: &str) -> Option<&str> {
+    s.split_whitespace().next()
+}
+
+fn segment_contains_write_find(segment: &str) -> bool {
+    let lower = segment.to_ascii_lowercase();
+    lower.contains("-delete") || lower.contains("-exec")
+}
+
+fn git_segment_read_only(segment: &str) -> bool {
+    let tokens: Vec<&str> = segment.split_whitespace().collect();
+    let Some(sub) = tokens.get(1) else {
+        return true;
+    };
+    let sub = sub.to_ascii_lowercase();
+    matches!(
+        sub.as_str(),
+        "status"
+            | "log"
+            | "diff"
+            | "show"
+            | "branch"
+            | "rev-parse"
+            | "describe"
+            | "tag"
+            | "remote"
+            | "fetch"
+            | "ls-files"
+            | "ls-tree"
+            | "blame"
+            | "shortlog"
+            | "whatchanged"
+    ) || (sub == "stash" && tokens.get(2).is_some_and(|t| *t == "list"))
+}
+
+fn cargo_segment_read_only(segment: &str) -> bool {
+    let tokens: Vec<&str> = segment.split_whitespace().collect();
+    let Some(sub) = tokens.get(1) else {
+        return true;
+    };
+    matches!(
+        *sub,
+        "check" | "build" | "test" | "clippy" | "fmt" | "metadata" | "tree" | "doc" | "--version"
+            | "-V"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approves_ls() {
+        assert!(auto_approve_read_only("ls -la"));
+    }
+
+    #[test]
+    fn rejects_rm() {
+        assert!(!auto_approve_read_only("rm foo.txt"));
+    }
+
+    #[test]
+    fn approves_git_status() {
+        assert!(auto_approve_read_only("git status"));
+    }
+
+    #[test]
+    fn rejects_git_push() {
+        assert!(!auto_approve_read_only("git push"));
+    }
+
+    #[test]
+    fn rejects_redirection() {
+        assert!(!auto_approve_read_only("echo hi > out.txt"));
+    }
+
+    #[test]
+    fn pipe_all_read_only() {
+        assert!(auto_approve_read_only("git status | head"));
+    }
+}

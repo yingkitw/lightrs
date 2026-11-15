@@ -22,12 +22,16 @@ digraph lightrs {
         acp_cmd  [label = "acp\nACP::serve (tokio rt)", fillcolor = "#f0fdf4"];
         imp_cmd  [label = "import\nfrom opencode", fillcolor = "#f0fdf4"];
         mig_cmd  [label = "migrate\nscan → profile → write", fillcolor = "#f0fdf4"];
+        exec_cmd [label = "exec -p\nheadless one-shot", fillcolor = "#f0fdf4"];
+        doc_cmd  [label = "doctor --check\nsetup health", fillcolor = "#f0fdf4"];
     }
 
     cli -> tui_cmd;
     cli -> acp_cmd;
     cli -> imp_cmd;
     cli -> mig_cmd;
+    cli -> exec_cmd;
+    cli -> doc_cmd;
 
     // ── ACP branch ────────────────────────────────────────
     acp [label = "acp/\nv1/v2 agent server + engine", fillcolor = "#fef9c3"];

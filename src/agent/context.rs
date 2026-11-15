@@ -3,6 +3,9 @@ use crate::chat::{ApiMessage, ApiRole};
 /// Max chars per tool result in API history (UI may show more).
 pub(crate) const TOOL_API_MAX: usize = 6_144;
 
+pub(crate) const COMPACTED_TOOL: &str = "[compacted tool result — use read_file if needed]";
+pub(crate) const COMPACT_KEEP_TOOLS: usize = 6;
+
 const LEGACY_OMIT: &str = "\n[attachments omitted from history]";
 
 /// Suffix appended to the active turn's composer (`\n\n[attached]…`, `\n\n[skills]…`).
@@ -84,6 +87,33 @@ pub(crate) fn strip_legacy_user_expansions(text: &str) -> String {
     trimmed
 }
 
+/// Replace older tool bodies with a short placeholder; keeps the last `keep_recent` tool messages intact.
+pub(crate) fn compact_tool_messages(history: &mut [ApiMessage], keep_recent: usize) -> usize {
+    let tool_idxs: Vec<usize> = history
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == ApiRole::Tool)
+        .map(|(i, _)| i)
+        .collect();
+    if tool_idxs.len() <= keep_recent {
+        return 0;
+    }
+    let n_compact = tool_idxs.len() - keep_recent;
+    for idx in tool_idxs.into_iter().take(n_compact) {
+        let msg = &history[idx];
+        let Some(body) = msg.text_content() else {
+            continue;
+        };
+        if body == COMPACTED_TOOL {
+            continue;
+        }
+        let id = msg.tool_call_id.clone().unwrap_or_default();
+        let name = msg.name.clone().unwrap_or_else(|| "tool".into());
+        history[idx] = ApiMessage::tool_result(id, name, COMPACTED_TOOL);
+    }
+    n_compact
+}
+
 pub(crate) fn truncate_tool_api(body: &str) -> String {
     let body = crate::tools::redact::scrub_tool_output(body);
     if body.len() <= TOOL_API_MAX {
@@ -143,5 +173,19 @@ mod tests {
         let t = truncate_tool_api(&big);
         assert!(t.len() < big.len());
         assert!(t.contains("truncated"));
+    }
+
+    #[test]
+    fn compact_drops_oldest_tools() {
+        let mut h = vec![
+            ApiMessage::system("s"),
+            ApiMessage::tool_result("a", "read_file", "one"),
+            ApiMessage::tool_result("b", "read_file", "two"),
+            ApiMessage::tool_result("c", "read_file", "three"),
+        ];
+        let n = compact_tool_messages(&mut h, 1);
+        assert_eq!(n, 2);
+        assert_eq!(h[1].text_content().unwrap(), COMPACTED_TOOL);
+        assert_eq!(h[3].text_content().unwrap(), "three");
     }
 }

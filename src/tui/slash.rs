@@ -19,6 +19,8 @@ const COMMANDS: &[(&str, &str)] = &[
     ("export", "write UI transcript to markdown in workdir"),
     ("copy", "copy last reply (or last ``` fence with /copy code) to clipboard"),
     ("theme", "list or set TUI color theme (mocha, latte, nord, rosepine, hc)"),
+    ("compact", "compact old tool results in API history (no model call)"),
+    ("undo", "restore files edited on the last turn from .lightrs/backups"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,6 +224,26 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                     ));
                 }
                 Err(e) => agent.push_error(format!("export failed: {e:#}")),
+            }
+            SlashAction::Handled
+        }
+        "compact" => {
+            let n = agent.compact_history();
+            if n == 0 {
+                agent.push_system("nothing to compact — tool history already short");
+            } else {
+                let est = agent.token_summary().estimate;
+                agent.push_system(format!(
+                    "compacted {n} older tool result(s); ~{est} tokens in context now"
+                ));
+            }
+            SlashAction::Handled
+        }
+        "undo" => {
+            let ui = agent.ui_messages();
+            match crate::session::undo_last_turn(app.workdir(), &ui) {
+                Ok(notes) => agent.push_system(notes.join("\n")),
+                Err(e) => agent.push_error(format!("undo failed: {e:#}")),
             }
             SlashAction::Handled
         }

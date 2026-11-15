@@ -1,6 +1,8 @@
 mod export;
+mod undo;
 
 pub use export::export_ui_markdown;
+pub use undo::{paths_from_last_turn, undo_last_turn};
 
 use std::collections::hash_map::DefaultHasher;
 use std::fs;

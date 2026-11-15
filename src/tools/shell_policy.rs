@@ -19,7 +19,7 @@ impl ShellPolicy {
     /// Prompt in TUI before `run_command` when true for every command, or when allowlist rejects.
     pub fn needs_interactive_approval(&self, command: &str) -> bool {
         if self.require_approval {
-            return true;
+            return !super::shell_readonly::auto_approve_read_only(command);
         }
         self.is_restrictive() && !self.is_allowed(command)
     }
@@ -59,9 +59,11 @@ mod tests {
     }
 
     #[test]
-    fn require_approval_all_commands() {
+    fn require_approval_skips_read_only() {
         let p = ShellPolicy::new(vec![], true);
-        assert!(p.needs_interactive_approval("ls"));
+        assert!(!p.needs_interactive_approval("ls"));
+        assert!(!p.needs_interactive_approval("git status"));
+        assert!(p.needs_interactive_approval("rm foo"));
     }
 
     #[test]

@@ -67,6 +67,8 @@
 | `/export` [path] | Write UI transcript to markdown under workdir (default `lightrs-transcript.md`; skips `[sys]`) |
 | `/copy` [`code`] | Copy latest assistant reply to the OS clipboard; `code` = last fenced ``` block only |
 | `/theme` [`id`] | List TUI palettes or set one (`mocha`, `latte`, `nord`, `rosepine`, `hc`); saved to `~/.config/lightrs/tui.toml` |
+| `/compact` | Replace older API tool bodies with a short placeholder (keeps last 6); no LLM call |
+| `/undo` | Restore files edited since your last message from `.lightrs/backups/` |
 | `/quit` | Exit (same as `q` when idle) |
 
 `Tab` completes unique slash prefix.
@@ -116,7 +118,7 @@ When non-empty, `run_command` only runs if the command string equals or starts w
 require_approval = true
 ```
 
-When `require_approval` is true, the TUI prompts **y/n** before every `run_command`. When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command string and other keys are ignored. **ACP / headless** runs without a TUI return an error to the model when approval would be required (fail closed).
+When `require_approval` is true, the TUI prompts **y/n** before `run_command`, except **likely read-only** commands (`ls`, `git status`, `cargo check`, …) auto-run (`tools/shell_readonly.rs`; deny list still wins). When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command string and other keys are ignored. **ACP / headless** auto-runs the same read-only set; other commands fail closed without a TUI.
 
 ### Skills
 

@@ -250,6 +250,14 @@ impl Agent {
         &self.skill_catalog
     }
 
+    pub fn compact_history(&mut self) -> usize {
+        let n = context::compact_tool_messages(&mut self.api_history, context::COMPACT_KEEP_TOOLS);
+        self.ensure_system_prompt();
+        self.context_warned_above = 0;
+        self.refresh_context_estimate();
+        n
+    }
+
     pub fn clear_conversation(&mut self) {
         self.active_user_expansion = None;
         self.api_history.clear();

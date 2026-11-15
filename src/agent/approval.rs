@@ -65,17 +65,27 @@ mod tests {
     use crate::tools::ShellPolicy;
 
     #[test]
-    fn headless_denies_when_approval_required() {
+    fn headless_read_only_skips_approval_when_required() {
         let policy = ShellPolicy::new(vec![], true);
         let args = r#"{"command":"ls"}"#;
-        assert!(policy.needs_interactive_approval("ls"));
+        assert!(!policy.needs_interactive_approval("ls"));
         assert!(!shell_allowlist_bypass("run_command", args, &policy));
     }
 
     #[tokio::test]
-    async fn headless_resolve_denies_require_approval() {
+    async fn headless_resolve_runs_read_only_under_require_approval() {
         let policy = ShellPolicy::new(vec![], true);
-        let args = r#"{"command":"ls"}"#;
+        let args = r#"{"command":"git status"}"#;
+        let gate = resolve_shell_gate("run_command", args, &policy, None)
+            .await
+            .unwrap();
+        assert!(matches!(gate, ShellGate::Run { .. }));
+    }
+
+    #[tokio::test]
+    async fn headless_resolve_denies_write_under_require_approval() {
+        let policy = ShellPolicy::new(vec![], true);
+        let args = r#"{"command":"rm foo"}"#;
         let gate = resolve_shell_gate("run_command", args, &policy, None)
             .await
             .unwrap();

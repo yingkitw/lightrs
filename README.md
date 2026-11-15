@@ -73,7 +73,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
-- `/help` — list commands (`/clear`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit`, …)
+- `/help` — list commands (`/clear`, `/compact`, `/undo`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit`, …)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
 - Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** ASCII, collapsible **tool** rows (mouse or `o`), unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
 - Scroll with **PgUp/PgDn** or arrow keys (mouse capture is off so you can **select/copy** transcript text)

@@ -2,18 +2,22 @@ mod backup;
 mod diff;
 mod edit_match;
 mod fs;
+mod gitignore;
 mod glob_pattern;
 mod glob_search;
 mod grep;
+mod json_repair;
 mod multi_edit;
 pub(crate) mod redact;
 mod shell;
 mod shell_deny;
 mod shell_policy;
+mod shell_readonly;
 mod walk;
 mod outcome;
 mod schemas;
 
+pub use backup::restore_from_backup;
 pub use shell::RunCommandArgs;
 pub use shell_policy::ShellPolicy;
 
@@ -103,11 +107,7 @@ fn execute_tool_raw(
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(arguments: &str) -> Result<T> {
-    let trimmed = arguments.trim();
-    if trimmed.is_empty() {
-        return serde_json::from_str("{}").context("parse empty tool arguments");
-    }
-    serde_json::from_str(trimmed).context("parse tool arguments JSON")
+    json_repair::parse_tool_json(arguments).context("parse tool arguments JSON")
 }
 
 #[cfg(test)]
@@ -172,6 +172,17 @@ mod tests {
         let args = r#"{"command":"rm -rf /"}"#;
         let out = execute_tool(&dir, "run_command", args, &ShellPolicy::default(), false);
         assert!(out.body.contains("denied"));
+    }
+
+    #[test]
+    fn parse_repairs_trailing_comma() {
+        let dir = std::env::temp_dir().join(format!("lightrs-json-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let args = r#"{"path":"x.txt","content":"hi",}"#;
+        let out = execute_tool(&dir, "write_file", args, &ShellPolicy::default(), false);
+        assert!(out.body.contains("wrote"), "{}", out.body);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

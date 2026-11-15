@@ -120,6 +120,14 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - System prompt: compact skill catalog + `rules/*.md` (skip `INDEX.md`). User invokes with `$skill-id`; API message gets `[skills]` blocks + existing `@` attachments (`skills::api_user_content` wraps `mentions::api_user_content`).
 - Rescan on send, `/reload`, `/skills` via `App::refresh_skill_catalog`.
 
+## Tier 4 UX / reliability (2026-11-15)
+
+- `/compact`: `agent::compact_history` → `context::compact_tool_messages` keeps last **6** tool API bodies; older → `[compacted tool result…]`.
+- `/undo`: `session/undo.rs` restores paths from last UI `file_diff` rows via `tools/backup::restore_from_backup` (`.lightrs/backups/*.bak`).
+- `require_approval`: `shell_readonly::auto_approve_read_only` skips TUI/headless gate for heuristic read-only pipelines; `shell_deny` still blocks first.
+- Tool args: `tools/json_repair.rs` — fences, brace slice, trailing commas before `parse` in `execute_tool`.
+- Walk: `tools/gitignore.rs` loaded once per `walk::collect_files` (grep/glob respect `.gitignore` patterns; minimal glob).
+
 ## API context trimming (2026-11-15)
 
 - `agent/context.rs` builds wire messages via `messages_for_request`: composer-only user rows in `api_history`; `@` / `$` expansions live in `active_user_expansion` for the **current turn only** (re-sent on each tool step until the assistant replies).
