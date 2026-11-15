@@ -288,6 +288,12 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - `config::model_context_window(model)` — static prefix table (longest match): glm-4.6/M2.1 → 204_800, kimi-k2-0905 → 262_144, glm-4.5/kimi-k2-0711 → 131_072, unknown → `None`. Fed to `context_usage_text` → `ctx est (N%)`; `None` omits the `%` rather than guessing.
 - Status line when `app.scroll > 0`: `↑N scrolled · End latest` — the affordance appears only when needed.
 
+## Mermaid ASCII layout (2026-11-15)
+
+- `tui/highlight/mermaid.rs` renders real diagrams: Kahn longest-path ranks → layers, barycenter ordering, `Canvas` char grid. Key invariant: `put_line` never writes into `blocked` (box) cells — edges pass *behind* boxes; `junction()` merges overlapping line cells into `┬`/`├`/`┼` from a neighbor bitmask.
+- **Gotcha**: `wrap_plain_lines` word-wraps via `split_whitespace` — it destroys ASCII-art indentation. `MermaidView.pre_wrapped` rows bypass it (emit `Line::styled` directly). Any preformatted block must not go through the word-wrap path.
+- Fallbacks → flat edge list: cycles (Kahn leaves nodes unprocessed), `BT`/`RL` directions, `width < 24` or canvas > width, >48 nodes. `flowchart`/`graph` default to TD when no direction keyword.
+
 ## Patterns to harvest next
 
 - Tool-call JSON differences between GLM / Kimi / MiniMax

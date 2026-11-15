@@ -80,7 +80,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `.claude/commands/*.md` — project slash commands (`/name` sends the file body to the model, args appended)
 - Session header shows **version, provider, model, path:git-branch, context size (+ % of the model's window), API host**; `/status` prints full details and `/context` shows where the tokens sit (per-role breakdown, heaviest messages, current-turn real usage). A `turn · N calls · X in + Y out · Ns` line closes each turn (`/quiet` silences routine token lines)
 - The model never gets the full history: requests are windowed to the **last 12 user turns** and **~48k est tokens** (stored history stays intact for `/rewind`; `/context` shows `wire: X of Y turns`)
-- Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** ASCII, collapsible **tool** rows (mouse or `o`) that appear live (`◌ … running`) and show elapsed time, unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
+- Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** (real ASCII layout: boxed nodes + `▼`/`►` connectors for `flowchart TD`/`LR`), collapsible **tool** rows (mouse or `o`) that appear live (`◌ … running`) and show elapsed time, unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
 - **Mouse wheel**, **↑/↓**, **PgUp/PgDn**, **Home/End** — scroll transcript (when the input line is empty)
 - **Drag-select + Cmd/Ctrl+C** — copy any transcript text (drags are left to the terminal, so selection always works)
 - **Click** a tool row or **`o`** — expand/collapse tool detail; **`/copy`** for clean clipboard text

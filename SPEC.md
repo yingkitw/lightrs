@@ -29,7 +29,7 @@
 - **`[sys]`**: ephemeral UI-only (`UiRole::System`); styled with `▏ sys` bars (`tui/highlight/sys.rs`); never sent to the API; **excluded** from `session.rs` save/restore
 - **Markdown**: full pulldown pass on message bodies — headings, lists, **bold** / *italic* / ~~strike~~, links (styled), blockquotes (`▏`), pipe tables (`│`), rules; strikethrough/task lists enabled
 - **Fenced code**: syntect highlight + wrap
-- **Mermaid** (`mermaid` / `mmd`): ASCII flow/sequence preview + source
+- **Mermaid** (`mermaid` / `mmd`): laid-out ASCII diagram + source — `flowchart TD`/`graph` renders boxed nodes in topological layers with `▼`/`─`/`┬` connectors (labels on wide spans); `flowchart LR` renders column-major with `├─►`; `sequenceDiagram` renders per-message rows. Cycles, `BT`/`RL`, over-width or >48-node graphs fall back to a flat edge list
 - **Tool blocks**: `◌ name args … running` while the call executes, replaced in place by the result with an elapsed suffix (`· 1.2s`); header row keeps a one-line call summary (args or file +/−) in both states; collapsed shows truncated result, expanded shows full args/result — tool bodies render **preformatted** (literal lines, no markdown), and ANSI escape sequences are stripped at capture and render. Results beginning `error:` render in the error color; other results use the normal body color
 - **Tokens**: muted `[sys]` lines per turn — `send · ~N ctx` after your message (estimate), `model · N in + M out` after each API step when the provider reports usage, and a `turn · N calls · X in + Y out · Ns` close line (real usage + wall-clock)
 - **`write_file`** / **`patch_file`**: colorized unified diff (`+`/`-`/`@@`); `+N −M` in collapsed header; full diff when expanded; API tool body remains a one-line summary

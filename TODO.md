@@ -2,6 +2,8 @@
 
 ## Done
 
+- [x] Mermaid renderer: layered box layout for `flowchart TD`/`LR` (Kahn ranks, barycenter ordering, `Canvas` junction merging, edge labels on wide spans); flat edge list for cycles / `BT`/`RL` / over-width; sequence rows unchanged
+
 - [x] OpenCode-style UX signals: `path:branch` in header (`.git/HEAD`, worktree-safe, refreshed on `/cd`), context `%` of model window (`model_context_window` table; glm-4.6/M2.1 204.8k, kimi-k2 256k), `↑N scrolled · End latest` hint
 
 - [x] Scaffold Rust TUI agent with GLM / Kimi / MiniMax

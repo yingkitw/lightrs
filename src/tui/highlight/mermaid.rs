@@ -25,7 +25,7 @@ struct SeqMsg {
 
 /// Turn common Mermaid sources into TUI-friendly ASCII (flowchart / sequence).
 pub fn render_mermaid(source: &str, width: usize) -> Vec<Line<'static>> {
-    let view = interpret(source);
+    let view = interpret(source, width);
     let header_style = Style::default()
         .fg(crate::tui::theme::active().mermaid_accent)
         .add_modifier(Modifier::BOLD);
@@ -43,6 +43,11 @@ pub fn render_mermaid(source: &str, width: usize) -> Vec<Line<'static>> {
             "(no diagram edges; see source below)",
             note_style,
         )));
+    } else if view.pre_wrapped {
+        // ASCII layout — whitespace is the drawing, do not word-wrap.
+        for row in &view.body {
+            out.push(Line::styled(row.clone(), edge_style));
+        }
     } else {
         for row in &view.body {
             out.extend(wrap_plain_lines(row, width, edge_style));
@@ -63,9 +68,11 @@ pub fn render_mermaid(source: &str, width: usize) -> Vec<Line<'static>> {
 struct MermaidView {
     kind: &'static str,
     body: Vec<String>,
+    /// Rows already fitted to `width` (ASCII diagram) — skip word-wrap.
+    pre_wrapped: bool,
 }
 
-fn interpret(source: &str) -> MermaidView {
+fn interpret(source: &str, width: usize) -> MermaidView {
     let lines: Vec<&str> = source
         .lines()
         .map(str::trim)
@@ -91,15 +98,23 @@ fn interpret(source: &str) -> MermaidView {
         }
     }
 
-    let body = if kind == "sequence" && !seq.is_empty() {
-        format_sequence(&seq, &labels)
+    let (body, pre_wrapped) = if kind == "sequence" && !seq.is_empty() {
+        (format_sequence(&seq, &labels), false)
     } else if !edges.is_empty() {
-        format_flowchart(&edges, &labels)
+        let dir = lines.first().and_then(|l| flowchart_direction(l));
+        match layout_flowchart(&edges, &labels, dir, width) {
+            Some(rows) => (rows, true),
+            None => (flat_flowchart(&edges, &labels), false),
+        }
     } else {
-        fallback_lines(&lines, kind)
+        (fallback_lines(&lines, kind), false)
     };
 
-    MermaidView { kind, body }
+    MermaidView {
+        kind,
+        body,
+        pre_wrapped,
+    }
 }
 
 fn diagram_kind(header: &str) -> &'static str {
@@ -284,7 +299,9 @@ fn display_node(id: &str, labels: &HashMap<String, String>) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
-fn format_flowchart(edges: &[Edge], labels: &HashMap<String, String>) -> Vec<String> {
+/// Per-edge fallback when a real layout isn't possible (cycles, BT/RL,
+/// over-wide graphs, sequence-only syntax).
+fn flat_flowchart(edges: &[Edge], labels: &HashMap<String, String>) -> Vec<String> {
     edges
         .iter()
         .map(|e| {
@@ -318,6 +335,426 @@ fn format_sequence(msgs: &[SeqMsg], labels: &HashMap<String, String>) -> Vec<Str
         .collect()
 }
 
+// ── Box layout ────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+enum Dir {
+    Td,
+    Lr,
+}
+
+/// `flowchart TD` / `graph LR` direction. `None` → flat list (BT/RL and
+/// diagram kinds we don't lay out).
+fn flowchart_direction(header: &str) -> Option<Dir> {
+    let mut parts = header.split_whitespace();
+    let kw = parts.next()?;
+    if !(kw.eq_ignore_ascii_case("flowchart") || kw.eq_ignore_ascii_case("graph")) {
+        return None;
+    }
+    match parts.next().map(|s| s.to_ascii_uppercase()).as_deref() {
+        None | Some("TD") | Some("TB") => Some(Dir::Td),
+        Some("LR") => Some(Dir::Lr),
+        _ => None,
+    }
+}
+
+const MAX_NODES: usize = 48;
+const MAX_ROWS: usize = 120;
+const GAP: usize = 3; // TD: horizontal gap between sibling boxes
+const VGAP: usize = 1; // LR: vertical gap between sibling boxes
+const CONN_W: usize = 4; // LR: connector column width
+
+/// Char grid + a `blocked` mask for box cells. Line glyphs write only into
+/// unblocked cells holding a blank or another line glyph — a routed edge may
+/// pass *behind* a box but never through its border or label.
+struct Canvas {
+    cells: Vec<Vec<char>>,
+    blocked: Vec<Vec<bool>>,
+}
+
+impl Canvas {
+    fn new(w: usize, h: usize) -> Self {
+        Self {
+            cells: vec![vec![' '; w]; h],
+            blocked: vec![vec![false; w]; h],
+        }
+    }
+
+    fn get(&self, x: usize, y: usize) -> char {
+        self.cells
+            .get(y)
+            .and_then(|r| r.get(x))
+            .copied()
+            .unwrap_or(' ')
+    }
+
+    fn put(&mut self, x: usize, y: usize, c: char) {
+        if let Some(cell) = self.cells.get_mut(y).and_then(|r| r.get_mut(x)) {
+            *cell = c;
+        }
+    }
+
+    fn put_line(&mut self, x: usize, y: usize, c: char) {
+        if self
+            .blocked
+            .get(y)
+            .and_then(|r| r.get(x))
+            .copied()
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let cur = self.get(x, y);
+        if cur == ' ' || LINE_GLYPHS.contains(cur) {
+            self.put(x, y, c);
+        }
+    }
+
+    fn draw_box(&mut self, x: usize, y: usize, w: usize, text: &str) {
+        for row in self.blocked.iter_mut().skip(y).take(3) {
+            for cell in row.iter_mut().skip(x).take(w) {
+                *cell = true;
+            }
+        }
+        self.put(x, y, '┌');
+        self.put(x + w - 1, y, '┐');
+        self.put(x, y + 2, '└');
+        self.put(x + w - 1, y + 2, '┘');
+        for i in 1..w - 1 {
+            self.put(x + i, y, '─');
+            self.put(x + i, y + 2, '─');
+        }
+        self.put(x, y + 1, '│');
+        self.put(x + w - 1, y + 1, '│');
+        for (i, ch) in text.chars().enumerate().take(w.saturating_sub(3)) {
+            self.put(x + 2 + i, y + 1, ch);
+        }
+    }
+
+    /// Merge a line cell into a junction glyph from the directions its
+    /// neighbors occupy, so overlapping fan-out becomes `┬`/`├`/`┼`.
+    fn junction(&mut self, x: usize, y: usize) {
+        if self.blocked[y][x] {
+            return;
+        }
+        let cur = self.get(x, y);
+        if cur != ' ' && cur != '─' && cur != '│' {
+            return;
+        }
+        let bits = u8::from(is_vertish(self.get(x, y.wrapping_sub(1))))
+            | u8::from(is_horizish(self.get(x + 1, y))) << 1
+            | u8::from(is_vertish(self.get(x, y + 1))) << 2
+            | u8::from(is_horizish(self.get(x.wrapping_sub(1), y))) << 3;
+        if cur == ' ' && bits.count_ones() < 2 {
+            return; // a lone neighbor must not spawn a dangling stub
+        }
+        let glyph = JUNCTIONS[bits as usize];
+        if glyph != ' ' {
+            self.put(x, y, glyph);
+        }
+    }
+
+    /// Write `text` over the longest `─` run inside `[lo, hi]` on row `y`,
+    /// keeping one dash of margin on each side.
+    fn edge_label(&mut self, y: usize, lo: usize, hi: usize, text: &str) {
+        let need = text.chars().count() + 2;
+        let mut run_start = 0usize;
+        let mut run_len = 0usize;
+        for x in lo..=hi {
+            if self.get(x, y) == '─' {
+                if run_len == 0 {
+                    run_start = x;
+                }
+                run_len += 1;
+                if run_len >= need {
+                    let start = run_start + (run_len - text.chars().count()) / 2;
+                    for (i, ch) in text.chars().enumerate() {
+                        self.put(start + i, y, ch);
+                    }
+                    return;
+                }
+            } else {
+                run_len = 0;
+            }
+        }
+    }
+
+    fn into_rows(self) -> Vec<String> {
+        self.cells
+            .into_iter()
+            .map(|r| r.into_iter().collect::<String>().trim_end().to_string())
+            .collect()
+    }
+}
+
+const LINE_GLYPHS: &str = "│─▼▲►◄┬┴├┤┼";
+const VERTISH: &str = "│├┤┬┴┼▼▲";
+const HORIZISH: &str = "─┌┐└┘├┤┬┴┼►◄";
+
+fn is_vertish(c: char) -> bool {
+    VERTISH.contains(c)
+}
+
+fn is_horizish(c: char) -> bool {
+    HORIZISH.contains(c)
+}
+
+// bits: U=1 R=2 D=4 L=8
+const JUNCTIONS: [char; 16] = [
+    ' ', '│', '─', '└', '│', '│', '┌', '├', '─', '┘', '─', '┴', '┐', '┤', '┬', '┼',
+];
+
+/// Layered box layout for `flowchart TD`/`LR`; `None` → flat edge list.
+fn layout_flowchart(
+    edges: &[Edge],
+    labels: &HashMap<String, String>,
+    dir: Option<Dir>,
+    width: usize,
+) -> Option<Vec<String>> {
+    let dir = dir?;
+    let mut ids: Vec<&str> = Vec::new();
+    let mut index: HashMap<&str, usize> = HashMap::new();
+    for e in edges {
+        for id in [&e.from, &e.to] {
+            if let std::collections::hash_map::Entry::Vacant(en) = index.entry(id.as_str()) {
+                en.insert(ids.len());
+                ids.push(id.as_str());
+            }
+        }
+    }
+    let n = ids.len();
+    if n == 0 || n > MAX_NODES || width < 24 {
+        return None;
+    }
+    let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for e in edges {
+        children[index[e.from.as_str()]].push(index[e.to.as_str()]);
+        parents[index[e.to.as_str()]].push(index[e.from.as_str()]);
+    }
+
+    // Longest-path ranks (Kahn). A cycle leaves nodes unprocessed → flat list.
+    let mut rank = vec![0usize; n];
+    let mut indeg: Vec<usize> = parents.iter().map(Vec::len).collect();
+    let mut queue: Vec<usize> = (0..n).filter(|&v| indeg[v] == 0).collect();
+    let mut head = 0;
+    while head < queue.len() {
+        let u = queue[head];
+        head += 1;
+        for &v in &children[u] {
+            rank[v] = rank[v].max(rank[u] + 1);
+            indeg[v] -= 1;
+            if indeg[v] == 0 {
+                queue.push(v);
+            }
+        }
+    }
+    if queue.len() != n {
+        return None;
+    }
+
+    let n_layers = rank.iter().max()? + 1;
+    let mut layers: Vec<Vec<usize>> = vec![Vec::new(); n_layers];
+    for (v, &r) in rank.iter().enumerate() {
+        layers[r].push(v);
+    }
+
+    let text_of = |v: usize| -> &str { labels.get(ids[v]).map_or(ids[v], String::as_str) };
+    // TD packs boxes side-by-side (slot = box width); LR stacks them
+    // vertically (slot = box height).
+    let slot = |v: usize| -> usize {
+        if dir == Dir::Td {
+            text_of(v).chars().count() + 4
+        } else {
+            3
+        }
+    };
+
+    // Stack-axis position (TD: x, LR: y); within a layer, nodes are ordered
+    // by parent barycenter to reduce edge crossings.
+    let mut origin = vec![0usize; n];
+    let mut center = vec![0usize; n];
+    let gap = if dir == Dir::Td { GAP } else { VGAP };
+    for (l, layer) in layers.iter_mut().enumerate() {
+        if l > 0 {
+            layer.sort_by_key(|&v| {
+                if parents[v].is_empty() {
+                    usize::MAX
+                } else {
+                    parents[v].iter().map(|&p| center[p]).sum::<usize>() / parents[v].len()
+                }
+            });
+        }
+        let mut cursor = 0usize;
+        for &v in layer.iter() {
+            let w = slot(v);
+            let desired = if parents[v].is_empty() {
+                cursor + w / 2
+            } else {
+                parents[v].iter().map(|&p| center[p]).sum::<usize>() / parents[v].len()
+            };
+            let o = desired.saturating_sub(w / 2).max(cursor);
+            origin[v] = o;
+            center[v] = o + w / 2;
+            cursor = o + w + gap;
+        }
+    }
+
+    if dir == Dir::Td {
+        draw_td(
+            &layers, &rank, &index, &ids, edges, labels, &origin, &center, slot, width,
+        )
+    } else {
+        draw_lr(
+            &layers, &rank, &index, &ids, edges, labels, &origin, &center, width,
+        )
+    }
+}
+
+fn label_of<'a>(id: &'a str, labels: &'a HashMap<String, String>) -> &'a str {
+    labels.get(id).map_or(id, String::as_str)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_td(
+    layers: &[Vec<usize>],
+    rank: &[usize],
+    index: &HashMap<&str, usize>,
+    ids: &[&str],
+    edges: &[Edge],
+    labels: &HashMap<String, String>,
+    origin: &[usize],
+    center: &[usize],
+    slot: impl Fn(usize) -> usize,
+    width: usize,
+) -> Option<Vec<String>> {
+    let layer_top = |l: usize| l * 5; // 3 box rows + 2 connector rows
+    let total_w = layers
+        .iter()
+        .flatten()
+        .map(|&v| origin[v] + slot(v))
+        .max()?;
+    if total_w > width {
+        return None;
+    }
+    let mut c = Canvas::new(total_w, layer_top(layers.len() - 1) + 3);
+    for (l, layer) in layers.iter().enumerate() {
+        for &v in layer {
+            c.draw_box(origin[v], layer_top(l), slot(v), label_of(ids[v], labels));
+        }
+    }
+    // Drop `│` under each parent, run `─` on the row above each child, `▼`
+    // into the child's top border. The junction pass merges overlapping runs.
+    let mut arrowheads = Vec::new();
+    let mut edge_labels = Vec::new();
+    for e in edges {
+        let (u, v) = (index[e.from.as_str()], index[e.to.as_str()]);
+        let (cx_u, cx_v) = (center[u], center[v]);
+        let r_arr = layer_top(rank[v]) - 1;
+        c.put(cx_u, layer_top(rank[u]) + 2, '┴');
+        for y in layer_top(rank[u]) + 3..r_arr {
+            c.put_line(cx_u, y, '│');
+        }
+        let (lo, hi) = (cx_u.min(cx_v), cx_u.max(cx_v));
+        for x in lo..=hi {
+            c.put_line(x, r_arr, '─');
+        }
+        arrowheads.push((cx_v, r_arr));
+        if let Some(lbl) = e.label.as_deref().filter(|l| !l.is_empty()) {
+            edge_labels.push((r_arr, lo, hi, lbl));
+        }
+    }
+    resolve_junctions(&mut c);
+    for (y, lo, hi, lbl) in edge_labels {
+        c.edge_label(y, lo, hi, lbl);
+    }
+    for (x, y) in arrowheads {
+        c.put(x, y, '▼');
+    }
+    Some(c.into_rows())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_lr(
+    layers: &[Vec<usize>],
+    rank: &[usize],
+    index: &HashMap<&str, usize>,
+    ids: &[&str],
+    edges: &[Edge],
+    labels: &HashMap<String, String>,
+    origin: &[usize],
+    center: &[usize],
+    width: usize,
+) -> Option<Vec<String>> {
+    // Columns = layers; each column is as wide as its widest box.
+    let node_w = |v: usize| label_of(ids[v], labels).chars().count() + 4;
+    let col_w: Vec<usize> = layers
+        .iter()
+        .map(|l| l.iter().map(|&v| node_w(v)).max().unwrap_or(4))
+        .collect();
+    let mut col_x = Vec::with_capacity(layers.len());
+    let mut x = 0usize;
+    for (l, w) in col_w.iter().enumerate() {
+        col_x.push(x);
+        x += w + if l + 1 == layers.len() { 0 } else { CONN_W };
+    }
+    let total_w = *col_x.last()? + col_w.last()?;
+    let total_h = layers
+        .iter()
+        .filter_map(|l| l.last().map(|&v| origin[v] + 3))
+        .max()?;
+    if total_w > width || total_h > MAX_ROWS {
+        return None;
+    }
+    let node_x = |v: usize| col_x[rank[v]] + (col_w[rank[v]] - node_w(v)) / 2;
+
+    let mut c = Canvas::new(total_w, total_h);
+    for layer in layers {
+        for &v in layer {
+            c.draw_box(node_x(v), origin[v], node_w(v), label_of(ids[v], labels));
+        }
+    }
+    let mut arrowheads = Vec::new();
+    let mut edge_labels = Vec::new();
+    for e in edges {
+        let (u, v) = (index[e.from.as_str()], index[e.to.as_str()]);
+        let (cy_u, cy_v) = (center[u], center[v]);
+        let right_u = node_x(u) + node_w(u);
+        let left_v = node_x(v);
+        let x_ch = left_v.saturating_sub(2); // channel two cells left of child
+        c.put(right_u - 1, cy_u, '├');
+        for x in right_u..=x_ch {
+            c.put_line(x, cy_u, '─');
+        }
+        for y in cy_u.min(cy_v)..=cy_u.max(cy_v) {
+            c.put_line(x_ch, y, '│');
+        }
+        for x in x_ch + 1..left_v.saturating_sub(1) {
+            c.put_line(x, cy_v, '─');
+        }
+        arrowheads.push((left_v - 1, cy_v));
+        if let Some(lbl) = e.label.as_deref().filter(|l| !l.is_empty()) {
+            edge_labels.push((cy_u, right_u, x_ch, lbl));
+        }
+    }
+    resolve_junctions(&mut c);
+    for (y, lo, hi, lbl) in edge_labels {
+        c.edge_label(y, lo, hi, lbl);
+    }
+    for (x, y) in arrowheads {
+        c.put(x, y, '►');
+    }
+    Some(c.into_rows())
+}
+
+fn resolve_junctions(c: &mut Canvas) {
+    for y in 0..c.cells.len() {
+        for x in 0..c.cells[y].len() {
+            c.junction(x, y);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,20 +762,78 @@ mod tests {
     #[test]
     fn flowchart_edges() {
         let src = "flowchart TD\n    A[Start] --> B[End]";
-        let v = interpret(src);
+        let v = interpret(src, 80);
         assert_eq!(v.kind, "flowchart");
-        assert_eq!(v.body.len(), 1);
-        assert!(v.body[0].contains("Start"));
-        assert!(v.body[0].contains("End"));
+        assert!(!v.body.is_empty());
+        let text = v.body.join("\n");
+        assert!(text.contains("Start"));
+        assert!(text.contains("End"));
     }
 
     #[test]
     fn sequence_message() {
         let src = "sequenceDiagram\n    Alice->>Bob: hi";
-        let v = interpret(src);
+        let v = interpret(src, 80);
         assert_eq!(v.kind, "sequence");
         assert_eq!(v.body.len(), 1);
         assert!(v.body[0].contains("Alice"));
         assert!(v.body[0].contains("hi"));
+    }
+
+    fn flat_text(view: &MermaidView) -> String {
+        view.body.join("\n")
+    }
+
+    #[test]
+    fn td_chain_renders_boxes_and_arrow() {
+        let v = interpret("flowchart TD\n    A[Start] --> B[End]", 80);
+        let text = flat_text(&v);
+        assert!(v.pre_wrapped, "layout should own the body");
+        assert!(text.contains("┌───────┐"), "{text}");
+        assert!(text.contains("│ Start │"), "{text}");
+        assert!(text.contains("▼"), "{text}");
+        assert!(text.contains("│ End │"), "{text}");
+    }
+
+    #[test]
+    fn td_fanout_merges_junction() {
+        let src = "flowchart TD\n    A[Root] --> B[Left]\n    A --> C[Right]";
+        let text = flat_text(&interpret(src, 80));
+        assert!(text.contains("▼"), "{text}");
+        assert!(text.contains("│ Left │") && text.contains("│ Right │"), "{text}");
+    }
+
+    #[test]
+    fn lr_chain_renders_side_by_side() {
+        let text = flat_text(&interpret("flowchart LR\n    A[In] --> B[Out]", 80));
+        assert!(text.contains("├") && text.contains("►"), "{text}");
+        // Both boxes on the same three rows.
+        assert!(text.contains("│ In ├") && text.contains("│ Out │"), "{text}");
+        assert!(!text.contains("▼"), "LR should not draw vertical arrows: {text}");
+    }
+
+    #[test]
+    fn cycle_falls_back_to_flat_list() {
+        let v = interpret("flowchart TD\n    A --> B\n    B --> A", 80);
+        assert!(!v.pre_wrapped, "cycle must not lay out boxes");
+        assert!(flat_text(&v).contains("A ──► B"));
+    }
+
+    #[test]
+    fn over_width_graph_falls_back() {
+        let v = interpret("flowchart TD\n    A[Start] --> B[End]", 10);
+        assert!(!v.pre_wrapped, "narrow terminal should get the flat list");
+    }
+
+    #[test]
+    fn edge_label_drawn_on_span() {
+        // A long node name pushes the child right, giving the edge span room.
+        let v = interpret(
+            "flowchart TD\n    A[S] -->|ok| B[ThisIsAReallyLongLabelForB]",
+            80,
+        );
+        assert!(v.pre_wrapped);
+        let text = flat_text(&v);
+        assert!(text.contains("ok"), "{text}");
     }
 }
