@@ -60,8 +60,22 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                 agent_bg.clone(),
                 text,
                 |ev| {
-                    if matches!(ev, ObserveEvent::AssistantDelta { .. }) {
-                        let _ = tx_bg.send(AgentEvent::Refresh);
+                    use ObserveEvent::{AssistantDelta, ModelWait, ToolEnd, ToolStart};
+                    match ev {
+                        ModelWait => {
+                            let _ = tx_bg.send(AgentEvent::Progress("calling model…".into()));
+                        }
+                        AssistantDelta { .. } => {
+                            let _ = tx_bg.send(AgentEvent::Refresh);
+                        }
+                        ToolStart { name, .. } => {
+                            let _ = tx_bg.send(AgentEvent::Progress(format!("tool: {name}…")));
+                            let _ = tx_bg.send(AgentEvent::Refresh);
+                        }
+                        ToolEnd { .. } => {
+                            let _ = tx_bg.send(AgentEvent::Progress("thinking…".into()));
+                            let _ = tx_bg.send(AgentEvent::Refresh);
+                        }
                     }
                 },
                 cancel_rx.clone(),

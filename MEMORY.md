@@ -61,6 +61,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - `StreamAccumulator` merges by `tool_calls[].index`; always run `into_assistant_message()` after full SSE replay.
 
 - LLM turns use OpenAI-style SSE (`stream: true` on `/chat/completions`); deltas append to the last assistant `UiMessage` and emit `ObserveEvent::AssistantDelta`.
+- TUI liveness: `ObserveEvent::ModelWait` fires before each HTTP stream; `ToolStart`/`ToolEnd` map to `AgentEvent::Progress` + `Refresh`. Busy UI shows phase status, elapsed seconds (≥1s), and streamed char count; 16ms poll keeps spinner moving even with no events.
 - If the stream request fails (provider without SSE), the agent falls back to a non-streaming `chat()` call.
 - Tool calls are reassembled from streamed `delta.tool_calls` chunks before the tool loop runs.
 

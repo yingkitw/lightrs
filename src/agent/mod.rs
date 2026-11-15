@@ -24,6 +24,8 @@ use tokens::{
 use helpers::remove_trailing_empty_assistant;
 
 pub enum ObserveEvent<'a> {
+    /// HTTP/stream not yet delivering tokens (user-visible wait).
+    ModelWait,
     AssistantDelta {
         text: &'a str,
     },
@@ -199,6 +201,18 @@ impl Agent {
 
     pub fn ui_messages(&self) -> Vec<UiMessage> {
         self.ui_history.lock().unwrap().clone()
+    }
+
+    pub fn streaming_assistant_chars(&self) -> usize {
+        use crate::chat::UiRole;
+        self.ui_history
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|m| m.role == UiRole::Assistant)
+            .map(|m| m.content.chars().count())
+            .unwrap_or(0)
     }
 
     pub fn last_assistant_text(&self) -> Option<String> {

@@ -38,7 +38,22 @@ pub(crate) fn handle_agent_event(
             false
         }
         AgentEvent::Refresh => {
-            app.status = "streaming…".into();
+            {
+                let guard = agent.blocking_lock();
+                app.stream_chars = guard.streaming_assistant_chars();
+            }
+            if app.stream_chars > 0 {
+                app.status = "streaming".into();
+            } else if app.status.is_empty() || app.status == "starting…" {
+                app.status = "waiting for tokens…".into();
+            }
+            if app.pin_bottom {
+                app.scroll_to_bottom();
+            }
+            true
+        }
+        AgentEvent::Progress(status) => {
+            app.status = status;
             if app.pin_bottom {
                 app.scroll_to_bottom();
             }

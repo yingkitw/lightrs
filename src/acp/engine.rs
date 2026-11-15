@@ -58,6 +58,7 @@ pub async fn run_turn_v1(
         .run_user_turn_observed(user_text, |ev| {
             if let Err(error) = (|| -> Result<()> {
                 match ev {
+                    ObserveEvent::ModelWait => {}
                     ObserveEvent::AssistantDelta { text } => {
                         send_assistant_chunk(connection, session_id, text)?;
                     }

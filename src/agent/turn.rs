@@ -153,6 +153,7 @@ impl Agent {
         on: &mut impl FnMut(ObserveEvent<'_>),
         cancel: watch::Receiver<bool>,
     ) -> Result<(ApiMessage, Option<String>, Option<TokenUsage>)> {
+        on(ObserveEvent::ModelWait);
         let messages = request.messages.clone();
         let model = request.model.clone();
         match client

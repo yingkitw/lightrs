@@ -29,6 +29,8 @@ pub enum AgentEvent {
     Interrupted,
     /// Transcript changed while a turn is in progress (streaming).
     Refresh,
+    /// Phase label for status bar (model wait, tool name, …).
+    Progress(String),
     /// TUI must approve/deny before the agent continues this shell command.
     CommandApproval(CommandApproval),
 }
@@ -61,6 +63,8 @@ pub struct App {
     config_mtime: Option<SystemTime>,
     pub skill_catalog: SkillCatalog,
     pub theme: String,
+    /// Live streamed assistant chars this turn (from UI transcript).
+    pub stream_chars: usize,
 }
 
 impl App {
@@ -84,6 +88,7 @@ impl App {
             config_mtime: None,
             skill_catalog: SkillCatalog::default(),
             theme: theme::normalize_theme_id(config::load_tui_theme()),
+            stream_chars: 0,
         }
     }
 
@@ -179,14 +184,26 @@ impl App {
         }
     }
 
+    pub fn busy_elapsed(&self) -> Option<u64> {
+        let s = self.busy_since?.elapsed().as_secs();
+        if s >= 1 { Some(s) } else { None }
+    }
+
     /// Status bar / header label while `Busy`.
     pub fn busy_label(&self) -> String {
-        format!(
+        let mut label = format!(
             "{} {}{}",
             self.busy_spinner(),
             self.busy_phase(),
             self.busy_dots()
-        )
+        );
+        if let Some(s) = self.busy_elapsed() {
+            label.push_str(&format!(" · {s}s"));
+        }
+        if self.stream_chars > 0 {
+            label.push_str(&format!(" · {} chars", self.stream_chars));
+        }
+        label
     }
 
     pub fn push_char(&mut self, c: char) {
@@ -251,7 +268,8 @@ impl App {
 
     pub fn set_busy(&mut self) {
         self.state = RunState::Busy;
-        self.status.clear();
+        self.status = "starting…".into();
+        self.stream_chars = 0;
         self.busy_since = Some(Instant::now());
         self.pin_bottom = true;
         self.scroll_to_bottom();
@@ -261,6 +279,7 @@ impl App {
         self.state = RunState::Ready;
         self.status.clear();
         self.busy_since = None;
+        self.stream_chars = 0;
     }
 
     pub fn set_error_status(&mut self, msg: String) {

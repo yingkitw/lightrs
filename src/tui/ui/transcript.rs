@@ -31,18 +31,27 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
         let streaming = messages
             .last()
             .is_some_and(|m| m.role == UiRole::Assistant && !m.content.is_empty());
+        let extra = match (app.busy_elapsed(), app.stream_chars) {
+            (Some(s), c) if c > 0 => format!(" · {s}s · {c} chars"),
+            (Some(s), _) => format!(" · {s}s"),
+            (_, c) if c > 0 => format!(" · {c} chars"),
+            _ => String::new(),
+        };
         let progress = if streaming {
             format!(
-                "▏ {} {}{}",
+                "▏ {} {}{}{}",
                 app.busy_spinner(),
                 app.busy_phase(),
-                app.busy_dots()
+                app.busy_dots(),
+                extra
             )
         } else {
             format!(
-                "▏ {} waiting for model{}",
+                "▏ {} {}{}{}",
                 app.busy_spinner(),
-                app.busy_dots()
+                app.busy_phase(),
+                app.busy_dots(),
+                extra
             )
         };
         lines.push(Line::from(Span::styled(
