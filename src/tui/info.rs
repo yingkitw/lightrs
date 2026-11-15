@@ -1,5 +1,5 @@
 use crate::config::{AppConfig, Provider, config_path};
-use crate::tui::app::RunState;
+use crate::tui::app::{App, RunState};
 
 pub fn provider_name(p: Provider) -> &'static str {
     match p {
@@ -67,16 +67,11 @@ pub fn session_details(cfg: &AppConfig, api_messages: usize, state: &str) -> Str
 }
 
 /// Two-line header: identity + path/context (truncated to `width` chars per line).
-pub fn header_lines(
-    cfg: &AppConfig,
-    context_usage: &str,
-    state: RunState,
-    width: u16,
-) -> [String; 2] {
+pub fn header_lines(cfg: &AppConfig, context_usage: &str, app: &App, width: u16) -> [String; 2] {
     let w = usize::from(width.max(1));
-    let state_label = match state {
-        RunState::Ready => "ready",
-        RunState::Busy => "busy",
+    let state_label = match app.state {
+        RunState::Ready => "ready".into(),
+        RunState::Busy => app.busy_label(),
     };
     let line1 = truncate_end(
         &format!(
@@ -98,16 +93,11 @@ pub fn header_lines(
     [line1, line2]
 }
 
-pub fn header_compact(
-    cfg: &AppConfig,
-    context_usage: &str,
-    state: RunState,
-    width: u16,
-) -> String {
+pub fn header_compact(cfg: &AppConfig, context_usage: &str, app: &App, width: u16) -> String {
     let w = usize::from(width.max(1));
-    let state_label = match state {
-        RunState::Ready => "ready",
-        RunState::Busy => "busy",
+    let state_label = match app.state {
+        RunState::Ready => "ready".into(),
+        RunState::Busy => app.busy_label(),
     };
     truncate_end(
         &format!(

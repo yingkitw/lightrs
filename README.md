@@ -66,6 +66,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `@path` — attach workdir files to the API message (`Tab` completes); `$skill-id` — attach a **skill** (`Tab` on `$` prefix); paths skip `.git` / `target` / `node_modules`
 - `Esc` — clear input; while busy, **interrupt** the current turn
 - `Esc` / `Ctrl+C` / `Ctrl+Q` while busy — stop streaming (does not quit)
+- While a turn runs: spinner in header, chat title, status bar, and a progress row at the transcript bottom (`thinking` / `streaming…`)
 - `↑` / `↓` — scroll transcript when input is empty
 - `o` or **click** a tool block — expand/collapse tool call detail (name + short args when collapsed; full args/result when expanded)
 - `Ctrl+U` — clear input line
@@ -76,8 +77,8 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `/help` — list commands (`/clear`, `/compact`, `/undo`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit`, …)
 - Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
 - Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** ASCII, collapsible **tool** rows (mouse or `o`), unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
-- Scroll with **PgUp/PgDn** or arrow keys (mouse capture is off so you can **select/copy** transcript text)
-- `o` expands the focused tool block (previously: click)
+- **Mouse wheel**, **↑/↓**, **PgUp/PgDn**, **Home/End** — scroll transcript (when the input line is empty)
+- **Click** a tool row or **`o`** — expand/collapse tool detail; **`/copy`** for clean clipboard text
 
 The agent can **read/write/patch files** (patch tolerates minor whitespace drift), **`grep`** (literal search in tree), **list directories**, and **run shell commands** (64 KiB output cap per stream) under the configured working directory (same privilege as your user).
 

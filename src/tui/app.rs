@@ -161,6 +161,34 @@ impl App {
         FRAMES[tick % FRAMES.len()]
     }
 
+    /// Animated ellipsis for status / transcript progress rows.
+    pub fn busy_dots(&self) -> &'static str {
+        const DOTS: &[&str] = &["", ".", "..", "..."];
+        let tick = self
+            .busy_since
+            .map(|t| t.elapsed().as_millis() / 350)
+            .unwrap_or(0) as usize;
+        DOTS[tick % DOTS.len()]
+    }
+
+    pub fn busy_phase(&self) -> &str {
+        if self.status.is_empty() {
+            "thinking"
+        } else {
+            self.status.as_str()
+        }
+    }
+
+    /// Status bar / header label while `Busy`.
+    pub fn busy_label(&self) -> String {
+        format!(
+            "{} {}{}",
+            self.busy_spinner(),
+            self.busy_phase(),
+            self.busy_dots()
+        )
+    }
+
     pub fn push_char(&mut self, c: char) {
         self.input.push(c);
     }
@@ -253,4 +281,26 @@ pub fn tool_msg_index_at_line(
         .iter()
         .find(|(start, end, _)| abs_line >= *start && abs_line < *end)
         .map(|(_, _, idx)| *idx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn busy_label_includes_spinner_and_phase() {
+        let mut app = App::new(AppConfig {
+            provider: crate::config::Provider::Kimi,
+            model: "test".into(),
+            base_url: "http://localhost".into(),
+            api_key: String::new(),
+            workdir: PathBuf::from("."),
+            shell_policy: crate::tools::ShellPolicy::default(),
+        });
+        app.set_busy();
+        app.status = "streaming…".into();
+        let label = app.busy_label();
+        assert!(label.contains('⠋') || label.contains('⠙'));
+        assert!(label.contains("streaming"));
+    }
 }

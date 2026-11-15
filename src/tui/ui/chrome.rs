@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
@@ -21,11 +23,11 @@ pub fn draw_header(frame: &mut Frame, area: Rect, app: &App, agent: &Agent, rows
     let ctx = context_usage_text(agent.token_summary(), agent.api_context_len());
     let text = if rows == 1 {
         Text::from(Line::styled(
-            header_compact(&app.config, &ctx, app.state, area.width),
+            header_compact(&app.config, &ctx, app, area.width),
             state_style,
         ))
     } else {
-        let lines = header_lines(&app.config, &ctx, app.state, area.width);
+        let lines = header_lines(&app.config, &ctx, app, area.width);
         Text::from(vec![
             Line::styled(lines[0].clone(), state_style),
             Line::styled(lines[1].clone(), theme::body_muted()),
@@ -39,14 +41,19 @@ pub fn draw_header(frame: &mut Frame, area: Rect, app: &App, agent: &Agent, rows
 
 /// Returns the inner rect of the input block for cursor placement.
 pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
-    let title = if app.pending_approval.is_some() {
-        " approve shell — y/n "
-    } else if app.state == RunState::Busy {
-        " input (busy — read-only) "
-    } else if is_slash_input(&app.input) {
-        " command "
+    let busy_input_title = if app.state == RunState::Busy {
+        format!(" {} input (read-only) ", app.busy_spinner())
     } else {
-        " input "
+        String::new()
+    };
+    let title: Cow<'_, str> = if app.pending_approval.is_some() {
+        Cow::Borrowed(" approve shell — y/n ")
+    } else if app.state == RunState::Busy {
+        Cow::Owned(busy_input_title)
+    } else if is_slash_input(&app.input) {
+        Cow::Borrowed(" command ")
+    } else {
+        Cow::Borrowed(" input ")
     };
     let block = Block::default()
         .title(title)
@@ -137,12 +144,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
             "↑↓ scroll · click/o tool detail · /help · q quit".into()
         }
     } else {
-        let phase = if app.status.is_empty() {
-            "thinking"
-        } else {
-            app.status.as_str()
-        };
-        format!("{} {phase} · Esc or Ctrl+C stop", app.busy_spinner())
+        format!("{} · Esc or Ctrl+C stop", app.busy_label())
     };
     frame.render_widget(Paragraph::new(hint).style(style), area);
 }

@@ -28,15 +28,27 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
         usize::from(app.scroll),
     );
     if app.state == RunState::Busy {
-        let tail = messages
+        let streaming = messages
             .last()
-            .filter(|m| m.role == UiRole::Assistant && !m.content.is_empty());
-        if tail.is_none() {
-            lines.push(Line::from(Span::styled(
-                "● waiting for model…",
-                theme::busy().add_modifier(Modifier::ITALIC),
-            )));
-        }
+            .is_some_and(|m| m.role == UiRole::Assistant && !m.content.is_empty());
+        let progress = if streaming {
+            format!(
+                "▏ {} {}{}",
+                app.busy_spinner(),
+                app.busy_phase(),
+                app.busy_dots()
+            )
+        } else {
+            format!(
+                "▏ {} waiting for model{}",
+                app.busy_spinner(),
+                app.busy_dots()
+            )
+        };
+        lines.push(Line::from(Span::styled(
+            progress,
+            theme::busy().add_modifier(Modifier::ITALIC),
+        )));
     }
 
     let total = lines.len();
@@ -52,9 +64,13 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
     app.transcript_visible_start = start;
     app.tool_hit_spans = tool_spans;
 
-    let mut title = " chat ".to_string();
+    let mut title = if app.state == RunState::Busy {
+        format!(" {} chat ", app.busy_spinner())
+    } else {
+        " chat ".to_string()
+    };
     if app.scroll > 0 {
-        title.push_str(&format!(" ↑{} ", app.scroll));
+        title.push_str(&format!("↑{} ", app.scroll));
     }
 
     let block = Block::default()
