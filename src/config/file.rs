@@ -14,6 +14,8 @@ pub(crate) struct FileConfig {
     pub base_url: Option<String>,
     pub workdir: Option<PathBuf>,
     pub keys: Option<FileKeys>,
+    /// Secondary model retried once when the primary errors mid-turn.
+    pub fallback_model: Option<String>,
     pub shell: Option<FileShell>,
     pub skills: Option<FileSkills>,
     pub tui: Option<FileTui>,
@@ -44,6 +46,10 @@ pub(crate) struct FileShell {
     /// When true, TUI prompts before every `run_command` (y/n).
     #[serde(default)]
     pub require_approval: bool,
+    /// Post-edit check run after write/edit tools; failures go back to the model.
+    pub test_command: Option<String>,
+    /// Max heal runs per user turn (default 3).
+    pub heal_steps: Option<u32>,
 }
 
 #[derive(Debug, Default, Deserialize)]

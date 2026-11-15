@@ -2,6 +2,7 @@
 
 provider = "kimi"           # glm | kimi | minimax
 model = ""                  # empty = provider default
+# fallback_model = ""       # retried once when the primary model errors
 base_url = ""               # empty = built-in default
 workdir = "."               # agent file/shell scope
 
@@ -18,6 +19,8 @@ workdir = "."               # agent file/shell scope
 # [shell]
 # allowlist = ["cargo ", "git ", "rustc ", "ls", "pwd"]  # empty = allow all prefixes
 # require_approval = true   # prompt y/n for every run_command (in addition to allowlist blocks)
+# test_command = "cargo test"  # run after write/edit tools; failures go back to the model
+# heal_steps = 3               # max test_command runs per user turn
 
 # Optional: agent skills (SKILL.md trees from OpenCode/Cursor/Claude/pi/Codex)
 # [skills]

@@ -11,12 +11,14 @@ provider.rs             HTTP client
 provider/stream.rs      SSE reassembly for streaming + tool_calls
 agent/                  mod, turn, context, approval, prompt, helpers, tokens — tool loop (max 16)
 skills/                 SKILL.md discovery + rules; `$id` attach + system catalog
+commands.rs             `.claude/commands/*.md` → `/name` project slash commands
 mentions.rs             @file attach for API user messages (workdir-scoped)
-tools/                  schemas, fs/shell/grep, diff (similar), ToolOutcome
+tools/                  schemas, fs/shell/grep, diff (similar), ToolOutcome, todo.rs (task list)
 opencode/, migrate/    Import + auto-migrate scanners
 acp/                    Optional ACP v1/v2 server (feature `acp`)
 tui/
   run/ (mod, events, input), app.rs, composer.rs, mentions.rs, slash.rs, info.rs, theme.rs
+  editor.rs             `/editor` — suspend TUI, compose prompt in `$EDITOR`
   highlight/            markdown, syntect, mermaid, `highlight/diff`, `sys.rs`, wrap
   ui/                   chrome (header/input/status), transcript (tools + diff + markdown)
 ```
@@ -36,8 +38,11 @@ URLs omit trailing slashes; paths are joined as `{base}/chat/completions`. Strea
 ## Concurrency
 
 - UI thread: `crossterm::event::read` + `ratatui::draw` (+ mouse scroll / tool click)
-- `mpsc` carries `AgentEvent` (`Done`, `Failed`, `Interrupted`, `Refresh`, `CommandApproval`) from `tokio::spawn` agent runs
-- One in-flight agent turn (`Busy`); interrupt via `watch` cancel during SSE
+- `mpsc` carries `AgentEvent` (`Done`, `Failed`, `Interrupted`, `Refresh`, `Progress`, `CommandApproval`) from `tokio::spawn` agent runs
+- Observe callbacks map through `tui/run/observe.rs`; busy status updates use reducers in `tui/run/events.rs` (`apply_stream_refresh`, `apply_stream_progress`)
+- One in-flight agent turn (`Busy`); interrupt via `watch` cancel during SSE; user lines typed while busy queue in `App.queued` and dispatch via `tui/run::pump_queued` when the turn ends
+- Optional `fallback_client` on `Agent` retries a failed model fetch once (`--fallback-model` / `fallback_model`)
+- `[shell].test_command` heal check runs after successful write/edit tools (`agent/turn.rs::maybe_run_heal`, capped by `heal_steps`)
 - Agent `tokio::Mutex` is **not** held across SSE reads; UI transcript is `Arc<Mutex<Vec<UiMessage>>>` for live streaming redraws
 
 ## TUI (Codex-aligned patterns)
@@ -51,7 +56,7 @@ Reference: [Codex `codex-rs/tui`](https://github.com/openai/codex/tree/main/code
 | Theme | Shared palette `tui/theme.rs` (roles, diff +/-, code blocks) |
 | Composer | Multi-line input, **Ctrl+P/N** history (`tui/composer.rs`) |
 | Lifecycle | Busy spinner; **Esc / Ctrl+C** interrupt |
-| Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/cwd`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit` |
+| Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/cwd`, `/cd`, `/todo`, `/editor`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/quit` |
 
 Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses input-pane **y/n** approval when configured (`[shell].require_approval` or allowlist block).
 

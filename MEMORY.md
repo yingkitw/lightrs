@@ -62,6 +62,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 - LLM turns use OpenAI-style SSE (`stream: true` on `/chat/completions`); deltas append to the last assistant `UiMessage` and emit `ObserveEvent::AssistantDelta`.
 - TUI liveness: `ObserveEvent::ModelWait` fires before each HTTP stream; `ToolStart`/`ToolEnd` map to `AgentEvent::Progress` + `Refresh`. Busy UI shows phase status, elapsed seconds (≥1s), and streamed char count; 16ms poll keeps spinner moving even with no events.
+- **Busy UX testing (formal-ish)**: `tui/run/observe.rs::agent_events_from_observe` is the observe→channel spec; `tui/run/events.rs::apply_stream_refresh` is the table-driven status reducer (preserves `calling model…` / tool labels until tokens arrive). Simulated turn trace test chains both. `tests/tui_busy_spec.rs` pins public `streaming_assistant_chars()` invariants.
 - If the stream request fails (provider without SSE), the agent falls back to a non-streaming `chat()` call.
 - Tool calls are reassembled from streamed `delta.tool_calls` chunks before the tool loop runs.
 
@@ -167,6 +168,48 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 - `tests/docs_sync.rs` checks tool names in `schemas.rs` + SPEC/README, slash commands in `slash.rs` + SPEC, key module paths in ARCHITECTURE, AGENTS doc set.
 - Extend `ARCHITECTURE_PATHS` when adding major modules; keeps the loop’s “docs are code” rule testable.
+
+## Competitive intel (2026-11-15)
+
+- Sibling repo `../craftine` (Rust TUI agent, ~39k lines) + its `minicode/` vendored reference surveyed; curated picks live in `TODO.md` "Competitive intel" section.
+- Tier A shipped 2026-11-15 (queued input, interrupt keywords, `/cd`, fallback, `todo_write`, heal, `/editor`, skill `trigger`); remaining items in TODO.
+- Reusable patterns: `Arc<dyn ModelClient>`/`ToolExecutor` mock injection for tool-loop tests without HTTP; drain-ready-events-then-paint-once event loop.
+
+## Busy input queue (2026-11-15)
+
+- `App.queued: VecDeque<String>` holds lines submitted while `RunState::Busy`; `tui/run/mod.rs::pump_queued` pops one per turn end (Done/Failed/Interrupted) and re-enters `submit_line` so slash commands still work on queued lines.
+- Interrupt keywords (`stop`/`wait`/`halt`, `is_interrupt_keyword`) are intercepted in `handle_key` *before* queueing — they set `cancel_tx` like Esc.
+- Gotcha: special `KeyCode::Char` arms (e.g. `'o'` tool-toggle) must sit *before* the generic `Char(c)` editing arm or they're unreachable.
+
+## Heal loop (2026-11-15)
+
+- `agent::turn::maybe_run_heal` runs `[shell].test_command` via `sh -c` after successful write/edit tool results only (`HEAL_TOOLS`; skips `error:` bodies and the `heal_steps` cap).
+- Failures are pushed to `api_history` as a synthetic `[heal]` user message (truncated via `context::truncate_tool_api`) so the model fixes them next step — success only adds an ephemeral `[sys]` line.
+- `Agent.heal_ran` counts per-turn runs; reset in `run_user_turn*` entry. Config: `test_command`, `heal_steps` (default 3) under `[shell]`.
+
+## Fallback model (2026-11-15)
+
+- `Agent.fallback_client` (same `LlmClient`, different model) built from `--fallback-model` / `fallback_model` config; `fetch_model_message` retries the whole step once on `Err`, swapping `request.model`.
+- Retry is per-step, not per-token — a mid-stream failure replays the step's request.
+
+## `/cd` workdir switch (2026-11-15)
+
+- `/cd` arm in `run_slash` (`resolve_cd_target` handles `~`, `~/x`, absolute, relative): saves the session under the *old* workdir hash first, then re-anchors `app.config.workdir` + `Agent::set_workdir` (rebuilds system prompt). Session file follows the new workdir on next save.
+
+## Project slash commands (2026-11-15)
+
+- `src/commands.rs` loads `.claude/commands/*.md` (Claude Code layout): filename stem = `/name`, `description:` frontmatter for hints, body → model prompt (`commands::expand` appends args).
+- Dispatch lives in `slash.rs` `other` arm → `SlashAction::Prompt`; `input.rs::kick_turn` is the shared send tail (reload/refresh/hint/busy/kick). Composer history stores the typed `/name args`, not the expanded body.
+- Built-ins win collisions — `COMMANDS` match runs first; dedup filter in `tab_complete`/`slash_command_hint` keeps colliding names out.
+- Rescan points: `App::refresh_skill_catalog` (each send, `/cd`, `/reload`) + `other` arm itself (so a file added mid-session works immediately).
+
+## Context budget (2026-11-15)
+
+- Latency leak found: `api_history` had no cap — resent every request ×16 steps/turn. Biggest offender was assistant `tool_calls[].function.arguments` (full `write_file`/`multi_edit` bodies), never truncated — tool *result* capping alone doesn't bound the wire.
+- `context::compact_tool_call_args` stubs args >512 chars to `"{}"` (stays valid JSON) outside the same `keep_recent=6` tool window as `compact_tool_messages`. `/compact` runs both.
+- `Agent::auto_compact_context` runs inside `build_chat_request` (per step): ≥32k est → stub tool bodies+args; ≥64k est → `drop_oldest_turn` prunes whole user turns at `User` boundaries (never splits tool_call/tool pairs, refuses to eat the in-flight turn).
+- `build_chat_request` is `&mut self` for this — `run_user_turn_shared` locks the mutex for request build anyway.
+- Thresholds are `chars/4` estimate, not real tokenizers — cheap and close enough.
 
 ## Patterns to harvest next
 

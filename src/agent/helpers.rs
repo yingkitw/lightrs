@@ -55,3 +55,43 @@ fn truncate(s: &str, max: usize) -> String {
     let end: String = s.chars().take(max).collect();
     format!("{end}…")
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::chat::UiRole;
+
+    use super::{append_assistant_delta, ObserveEvent};
+
+    #[test]
+    fn append_assistant_delta_emits_observe_and_merges_rows() {
+        let ui = Arc::new(Mutex::new(Vec::new()));
+        let mut delta_texts = Vec::new();
+        append_assistant_delta(&ui, "ab", &mut |ev| {
+            if let ObserveEvent::AssistantDelta { text } = ev {
+                delta_texts.push(text.to_string());
+            }
+        });
+        append_assistant_delta(&ui, "c", &mut |ev| {
+            if let ObserveEvent::AssistantDelta { text } = ev {
+                delta_texts.push(text.to_string());
+            }
+        });
+
+        let lock = ui.lock().unwrap();
+        assert_eq!(lock.len(), 1);
+        assert_eq!(lock[0].role, UiRole::Assistant);
+        assert_eq!(lock[0].content, "abc");
+        assert_eq!(delta_texts, ["ab", "c"]);
+    }
+
+    #[test]
+    fn append_assistant_delta_skips_empty_chunks() {
+        let ui = Arc::new(Mutex::new(Vec::new()));
+        let mut n = 0;
+        append_assistant_delta(&ui, "", &mut |_| n += 1);
+        assert_eq!(n, 0);
+        assert!(ui.lock().unwrap().is_empty());
+    }
+}

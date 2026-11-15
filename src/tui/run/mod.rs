@@ -1,5 +1,6 @@
 mod events;
 mod input;
+mod observe;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use ratatui::Terminal;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, watch};
 
-use crate::agent::{Agent, ObserveEvent};
+use crate::agent::Agent;
 use crate::config::AppConfig;
 use crate::provider::LlmClient;
 use crate::session;
@@ -26,7 +27,23 @@ use crate::tui::info::{session_resume_message, session_start_message};
 use crate::tui::{AgentEvent, App, RunState, draw};
 
 use events::{handle_agent_event, is_interrupted};
-use input::{InputAction, handle_crossterm_event};
+use input::{InputAction, handle_crossterm_event, submit_line};
+use observe::agent_events_from_observe;
+
+/// Pop the next line queued while `Busy` and dispatch it when the turn is over.
+fn pump_queued(
+    agent: &Arc<tokio::sync::Mutex<Agent>>,
+    app: &mut App,
+    kick_tx: &mpsc::UnboundedSender<String>,
+) -> Result<InputAction> {
+    if app.state != RunState::Ready || app.pending_approval.is_some() {
+        return Ok(InputAction::Continue);
+    }
+    match app.queued.pop_front() {
+        Some(line) => submit_line(line, agent, app, kick_tx),
+        None => Ok(InputAction::Continue),
+    }
+}
 
 /// Sync TUI loop on the main thread; Tokio is only used on a background runtime for LLM calls.
 pub fn run(cfg: AppConfig) -> Result<()> {
@@ -35,6 +52,19 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
     let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
     let mut agent_inner = Agent::new(client, Arc::clone(&workdir), cfg.shell_policy.clone());
+    if let Some(fm) = &cfg.fallback_model {
+        agent_inner.set_fallback_client(Some(LlmClient::new(
+            cfg.base_url.clone(),
+            cfg.api_key.clone(),
+            fm.clone(),
+        )));
+    }
+    if let Some(cmd) = &cfg.test_command {
+        agent_inner.set_heal(Some(crate::agent::HealSetting {
+            command: cmd.clone(),
+            max_steps: cfg.heal_steps,
+        }));
+    }
     let resumed = if let Ok(Some(saved)) = session::load(&cfg.workdir) {
         agent_inner.restore_session(saved);
         true
@@ -60,22 +90,8 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                 agent_bg.clone(),
                 text,
                 |ev| {
-                    use ObserveEvent::{AssistantDelta, ModelWait, ToolEnd, ToolStart};
-                    match ev {
-                        ModelWait => {
-                            let _ = tx_bg.send(AgentEvent::Progress("calling model…".into()));
-                        }
-                        AssistantDelta { .. } => {
-                            let _ = tx_bg.send(AgentEvent::Refresh);
-                        }
-                        ToolStart { name, .. } => {
-                            let _ = tx_bg.send(AgentEvent::Progress(format!("tool: {name}…")));
-                            let _ = tx_bg.send(AgentEvent::Refresh);
-                        }
-                        ToolEnd { .. } => {
-                            let _ = tx_bg.send(AgentEvent::Progress("thinking…".into()));
-                            let _ = tx_bg.send(AgentEvent::Refresh);
-                        }
+                    for agent_ev in agent_events_from_observe(ev) {
+                        let _ = tx_bg.send(agent_ev);
                     }
                 },
                 cancel_rx.clone(),
@@ -111,6 +127,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     let mut app = App::new(cfg.clone());
     crate::tui::theme::sync(&app.theme);
     app.skill_catalog = catalog;
+    app.commands = crate::commands::load(&cfg.workdir);
     app.refresh_config_mtime();
     {
         let mut guard = agent.blocking_lock();
@@ -135,6 +152,13 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                 redraw_immediately = true;
             }
         }
+        match pump_queued(&agent, &mut app, &kick_tx)? {
+            InputAction::Quit => break,
+            InputAction::Editor => {
+                crate::tui::editor::compose_into_input(&mut terminal, &agent, &mut app)?
+            }
+            InputAction::Continue => {}
+        }
         if redraw_immediately {
             continue;
         }
@@ -148,13 +172,24 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                 cancel_tx.as_ref(),
                 &kick_tx,
             )?;
-            if action == InputAction::Quit {
-                break;
+            match action {
+                InputAction::Quit => break,
+                InputAction::Editor => {
+                    crate::tui::editor::compose_into_input(&mut terminal, &agent, &mut app)?
+                }
+                InputAction::Continue => {}
             }
         }
 
         while let Ok(ev) = rx.try_recv() {
             let _ = handle_agent_event(&agent, &mut app, ev);
+        }
+        match pump_queued(&agent, &mut app, &kick_tx)? {
+            InputAction::Quit => break,
+            InputAction::Editor => {
+                crate::tui::editor::compose_into_input(&mut terminal, &agent, &mut app)?
+            }
+            InputAction::Continue => {}
         }
     }
 
@@ -169,4 +204,66 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    use crate::config::Provider;
+    use crate::tools::ShellPolicy;
+
+    fn test_agent() -> Arc<tokio::sync::Mutex<Agent>> {
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        Arc::new(tokio::sync::Mutex::new(Agent::new(
+            client,
+            Arc::from(std::path::Path::new(".")),
+            ShellPolicy::default(),
+        )))
+    }
+
+    fn test_app() -> App {
+        App::new(AppConfig {
+            provider: Provider::Kimi,
+            model: "test".into(),
+            fallback_model: None,
+            base_url: "http://localhost".into(),
+            api_key: String::new(),
+            workdir: PathBuf::from("."),
+            shell_policy: ShellPolicy::default(),
+            test_command: None,
+            heal_steps: 3,
+        })
+    }
+
+    #[test]
+    fn pump_queued_sends_when_ready() {
+        let agent = test_agent();
+        let mut app = test_app();
+        app.queued.push_back("hello".into());
+        let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
+
+        let action = pump_queued(&agent, &mut app, &kick_tx).unwrap();
+
+        assert_eq!(action, InputAction::Continue);
+        assert_eq!(kick_rx.try_recv().unwrap(), "hello");
+        assert!(app.queued.is_empty());
+        assert_eq!(app.state, RunState::Busy);
+    }
+
+    #[test]
+    fn pump_queued_holds_when_busy() {
+        let agent = test_agent();
+        let mut app = test_app();
+        app.set_busy();
+        app.queued.push_back("x".into());
+        let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
+
+        let action = pump_queued(&agent, &mut app, &kick_tx).unwrap();
+
+        assert_eq!(action, InputAction::Continue);
+        assert_eq!(app.queued.len(), 1);
+        assert!(kick_rx.try_recv().is_err());
+    }
 }

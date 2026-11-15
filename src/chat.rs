@@ -142,7 +142,7 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ApiMessage>,

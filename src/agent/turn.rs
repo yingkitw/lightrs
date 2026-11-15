@@ -18,6 +18,7 @@ use super::{Agent, ObserveEvent};
 
 impl Agent {
     fn begin_user_turn(&mut self, user_text: String) {
+        self.heal_ran = 0;
         self.ui_history
             .lock()
             .unwrap()
@@ -63,10 +64,11 @@ impl Agent {
                 anyhow::bail!("turn interrupted");
             }
 
-            let (client, request, ui_history, workdir) = {
-                let g = agent.lock().await;
+            let (client, fallback, request, ui_history, workdir) = {
+                let mut g = agent.lock().await;
                 (
                     g.client.clone(),
+                    g.fallback_client.clone(),
                     g.build_chat_request(),
                     g.ui_transcript(),
                     Arc::clone(&g.workdir),
@@ -75,6 +77,7 @@ impl Agent {
 
             let (message, finish_reason, usage) = Self::fetch_model_message(
                 &client,
+                fallback.as_ref(),
                 request,
                 &ui_history,
                 &mut on,
@@ -114,12 +117,20 @@ impl Agent {
     ) -> Result<String> {
         for _step in 0..MAX_TOOL_STEPS {
             let client = self.client.clone();
+            let fallback = self.fallback_client.clone();
             let request = self.build_chat_request();
             let ui_history = self.ui_transcript();
             let workdir = Arc::clone(&self.workdir);
 
-            let (message, finish_reason, usage) =
-                Self::fetch_model_message(&client, request, &ui_history, on, cancel.clone()).await?;
+            let (message, finish_reason, usage) = Self::fetch_model_message(
+                &client,
+                fallback.as_ref(),
+                request,
+                &ui_history,
+                on,
+                cancel.clone(),
+            )
+            .await?;
 
             self.after_model_response(usage.as_ref(), finish_reason.as_deref());
             if let Some(text) = self
@@ -136,7 +147,8 @@ impl Agent {
         Ok(msg)
     }
 
-    fn build_chat_request(&self) -> ChatRequest {
+    fn build_chat_request(&mut self) -> ChatRequest {
+        self.auto_compact_context();
         ChatRequest {
             model: self.client.model().to_string(),
             messages: self.messages_for_request(),
@@ -146,7 +158,32 @@ impl Agent {
         }
     }
 
+    /// One model fetch; on a non-interrupt error, retry once on the fallback client.
     async fn fetch_model_message(
+        client: &LlmClient,
+        fallback: Option<&LlmClient>,
+        request: ChatRequest,
+        ui_history: &Arc<Mutex<Vec<UiMessage>>>,
+        on: &mut impl FnMut(ObserveEvent<'_>),
+        cancel: watch::Receiver<bool>,
+    ) -> Result<(ApiMessage, Option<String>, Option<TokenUsage>)> {
+        match Self::fetch_once(client, request.clone(), ui_history, on, cancel.clone()).await {
+            Err(e) if is_interrupted(&e) => Err(e),
+            Err(e) => {
+                let Some(fb) = fallback else { return Err(e) };
+                ui_history.lock().unwrap().push(UiMessage::with_role(
+                    UiRole::System,
+                    format!("model error — retrying with fallback `{}`", fb.model()),
+                ));
+                let mut retry = request;
+                retry.model = fb.model().to_string();
+                Self::fetch_once(fb, retry, ui_history, on, cancel).await
+            }
+            ok => ok,
+        }
+    }
+
+    async fn fetch_once(
         client: &LlmClient,
         request: ChatRequest,
         ui_history: &Arc<Mutex<Vec<UiMessage>>>,
@@ -315,5 +352,137 @@ async fn execute_one_tool(
         name,
         super::context::truncate_tool_api(&outcome.body),
     ));
+    maybe_run_heal(agent, workdir, name, &outcome.body, on);
     Ok(())
+}
+
+/// Write/edit tools whose success triggers the configured post-edit check.
+const HEAL_TOOLS: &[&str] = &["write_file", "patch_file", "multi_edit"];
+
+/// Run `[shell].test_command` after a successful edit, capped per turn; failures go back to the model.
+fn maybe_run_heal(
+    agent: &mut Agent,
+    workdir: &Path,
+    tool_name: &str,
+    tool_body: &str,
+    on: &mut impl FnMut(ObserveEvent<'_>),
+) {
+    if !HEAL_TOOLS.contains(&tool_name) || tool_body.starts_with("error:") {
+        return;
+    }
+    let Some(heal) = agent.heal.clone() else {
+        return;
+    };
+    if agent.heal_ran >= heal.max_steps {
+        return;
+    }
+    agent.heal_ran += 1;
+    on(ObserveEvent::ToolStart {
+        name: "heal",
+        arguments: &heal.command,
+    });
+    let body = crate::tools::shell::run_command(
+        workdir,
+        crate::tools::RunCommandArgs {
+            command: heal.command.clone(),
+            timeout_secs: Some(120),
+        },
+        &agent.shell_policy,
+        true,
+    )
+    .unwrap_or_else(|e| format!("error: {e:#}"));
+    let passed = body.starts_with("exit=0");
+    on(ObserveEvent::ToolEnd { body: &body });
+    agent
+        .ui_history
+        .lock()
+        .unwrap()
+        .push(UiMessage::tool_result(
+            "heal",
+            heal.command.clone(),
+            truncate_tool_ui(&body),
+            None,
+        ));
+    if passed {
+        agent.push_system(format!("heal ok: `{}`", heal.command));
+    } else {
+        agent.api_history.push(ApiMessage::user(format!(
+            "[heal] `{}` failed after your edit — fix the errors before continuing.\n{}",
+            heal.command,
+            super::context::truncate_tool_api(&body)
+        )));
+    }
+}
+
+#[cfg(test)]
+mod heal_tests {
+    use super::*;
+    use crate::agent::HealSetting;
+    use crate::provider::LlmClient;
+    use std::sync::Arc;
+
+    fn make_agent(command: Option<&str>, max_steps: u32) -> Agent {
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let mut agent = Agent::new(
+            client,
+            Arc::from(std::path::Path::new(".")),
+            ShellPolicy::default(),
+        );
+        if let Some(cmd) = command {
+            agent.set_heal(Some(HealSetting {
+                command: cmd.into(),
+                max_steps,
+            }));
+        }
+        agent
+    }
+
+    #[test]
+    fn heal_failure_appends_user_message() {
+        let dir = std::env::temp_dir();
+        let mut agent = make_agent(Some("exit 7"), 3);
+        let before = agent.api_history.len();
+        maybe_run_heal(&mut agent, &dir, "write_file", "wrote", &mut |_| {});
+        assert_eq!(agent.api_history.len(), before + 1);
+        let last = agent.api_history.last().unwrap();
+        assert!(matches!(last.role, crate::chat::ApiRole::User));
+        assert!(last.text_content().unwrap().contains("[heal]"));
+        assert_eq!(agent.heal_ran, 1);
+    }
+
+    #[test]
+    fn heal_success_stays_out_of_api_history() {
+        let dir = std::env::temp_dir();
+        let mut agent = make_agent(Some("true"), 3);
+        let before = agent.api_history.len();
+        maybe_run_heal(&mut agent, &dir, "patch_file", "patched", &mut |_| {});
+        assert_eq!(agent.api_history.len(), before);
+        assert_eq!(agent.heal_ran, 1);
+    }
+
+    #[test]
+    fn heal_skips_read_tools_and_failed_edits() {
+        let dir = std::env::temp_dir();
+        let mut agent = make_agent(Some("true"), 3);
+        maybe_run_heal(&mut agent, &dir, "read_file", "x", &mut |_| {});
+        maybe_run_heal(&mut agent, &dir, "write_file", "error: nope", &mut |_| {});
+        assert_eq!(agent.heal_ran, 0);
+    }
+
+    #[test]
+    fn heal_respects_step_cap() {
+        let dir = std::env::temp_dir();
+        let mut agent = make_agent(Some("true"), 1);
+        maybe_run_heal(&mut agent, &dir, "write_file", "wrote", &mut |_| {});
+        maybe_run_heal(&mut agent, &dir, "write_file", "wrote", &mut |_| {});
+        assert_eq!(agent.heal_ran, 1);
+    }
+
+    #[test]
+    fn heal_disabled_without_command() {
+        let dir = std::env::temp_dir();
+        let mut agent = make_agent(None, 3);
+        maybe_run_heal(&mut agent, &dir, "write_file", "wrote", &mut |_| {});
+        assert_eq!(agent.heal_ran, 0);
+    }
 }

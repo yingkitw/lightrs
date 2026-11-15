@@ -40,11 +40,19 @@ pub fn make_agent(cfg: &AppConfig, cwd: PathBuf) -> Result<Agent> {
         .or_else(|_| cwd.canonicalize())
         .unwrap_or(cwd);
     let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
-    Ok(Agent::new(
+    let mut agent = Agent::new(
         client,
         Arc::from(workdir.as_path()),
         cfg.shell_policy.clone(),
-    ))
+    );
+    if let Some(fm) = &cfg.fallback_model {
+        agent.set_fallback_client(Some(LlmClient::new(
+            cfg.base_url.clone(),
+            cfg.api_key.clone(),
+            fm.clone(),
+        )));
+    }
+    Ok(agent)
 }
 
 pub async fn run_turn_v1(

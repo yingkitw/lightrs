@@ -9,10 +9,11 @@ mod grep;
 mod json_repair;
 mod multi_edit;
 pub(crate) mod redact;
-mod shell;
+pub(crate) mod shell;
 mod shell_deny;
 mod shell_policy;
 mod shell_readonly;
+pub(crate) mod todo;
 mod walk;
 mod outcome;
 mod schemas;
@@ -102,6 +103,10 @@ fn execute_tool_raw(
                 Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
             }
         }
+        "todo_write" => match parse::<todo::TodoArgs>(arguments).and_then(|a| todo::todo_write(workdir, a)) {
+            Ok(s) => ToolOutcome::ok(s),
+            Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
+        },
         other => ToolOutcome::ok(format!("error: unknown tool {other}")),
     }
 }

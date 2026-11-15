@@ -123,6 +123,30 @@ pub fn tool_schemas() -> Vec<serde_json::Value> {
         json!({
             "type": "function",
             "function": {
+                "name": "todo_write",
+                "description": "Replace the session task list (persisted to .lightrs/todos.json). Use it to plan and track multi-step work.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "content": { "type": "string" },
+                                    "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] }
+                                },
+                                "required": ["content", "status"]
+                            }
+                        }
+                    },
+                    "required": ["items"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
                 "name": "run_command",
                 "description": "Run a shell command in the workdir (sh -c). Use for builds, git, etc.",
                 "parameters": {

@@ -20,6 +20,19 @@ pub async fn run_prompt(cfg: AppConfig, prompt: String, json: bool, approve_shel
     let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
     let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
     let mut agent = Agent::new(client, Arc::clone(&workdir), shell_policy);
+    if let Some(fm) = &cfg.fallback_model {
+        agent.set_fallback_client(Some(LlmClient::new(
+            cfg.base_url.clone(),
+            cfg.api_key.clone(),
+            fm.clone(),
+        )));
+    }
+    if let Some(cmd) = &cfg.test_command {
+        agent.set_heal(Some(crate::agent::HealSetting {
+            command: cmd.clone(),
+            max_steps: cfg.heal_steps,
+        }));
+    }
     let catalog = crate::skills::load(&crate::skills::load_settings());
     agent.set_skill_catalog(catalog);
     let text = agent.run_user_turn(prompt).await?;

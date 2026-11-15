@@ -1,4 +1,9 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+
 use crate::agent::{Agent, context_usage_text};
+use crate::commands::SlashDef;
 use crate::session;
 use crate::tui::clipboard::{copy_payload_from_markdown, set_text};
 use crate::tui::theme;
@@ -10,6 +15,9 @@ const COMMANDS: &[(&str, &str)] = &[
     ("help", "list slash commands"),
     ("clear", "reset conversation"),
     ("cwd", "show working directory in transcript"),
+    ("cd", "change working directory (/cd <path>)"),
+    ("todo", "show the task list (.lightrs/todos.json)"),
+    ("editor", "compose the prompt in $EDITOR"),
     ("quit", "exit (same as q)"),
     ("status", "show model, path, and context"),
     ("context", "message count and token usage"),
@@ -23,9 +31,13 @@ const COMMANDS: &[(&str, &str)] = &[
     ("undo", "restore files edited on the last turn from .lightrs/backups"),
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashAction {
     Handled,
+    /// `/editor` — suspend the TUI and open `$EDITOR`.
+    Editor,
+    /// A `.claude/commands/*.md` command expanded to a model prompt.
+    Prompt(String),
     Quit,
 }
 
@@ -34,7 +46,7 @@ pub fn is_slash_input(input: &str) -> bool {
 }
 
 /// Comma-separated hint for the status bar while typing a slash command.
-pub fn slash_command_hint(input: &str) -> Option<String> {
+pub fn slash_command_hint(input: &str, commands: &[SlashDef]) -> Option<String> {
     if !is_slash_input(input) {
         return None;
     }
@@ -44,6 +56,15 @@ pub fn slash_command_hint(input: &str) -> Option<String> {
         .filter(|(name, _)| name.starts_with(prefix))
         .map(|(name, desc)| format!("/{name} — {desc}"))
         .collect();
+    // Project commands can't shadow built-ins — skip colliding names.
+    parts.extend(
+        commands
+            .iter()
+            .filter(|c| {
+                c.name.starts_with(prefix) && !COMMANDS.iter().any(|(n, _)| *n == c.name)
+            })
+            .map(|c| format!("/{} — {}", c.name, c.description)),
+    );
     if parts.is_empty() {
         Some("unknown slash command — try /help".into())
     } else if parts.len() <= 3 {
@@ -55,21 +76,30 @@ pub fn slash_command_hint(input: &str) -> Option<String> {
 }
 
 /// Tab completes when there is a unique matching command name.
-pub fn tab_complete(input: &str) -> Option<String> {
+pub fn tab_complete(input: &str, commands: &[SlashDef]) -> Option<String> {
     if !input.starts_with('/') {
         return None;
     }
     let rest = input.get(1..).unwrap_or("");
     let prefix = rest.split_whitespace().next().unwrap_or(rest);
-    let matches: Vec<_> = COMMANDS
+    let mut names: Vec<&str> = COMMANDS
         .iter()
         .filter(|(name, _)| name.starts_with(prefix))
+        .map(|(name, _)| *name)
         .collect();
-    if matches.len() == 1 {
-        Some(format!("/{}", matches[0].0))
-    } else if matches.len() > 1 && !prefix.is_empty() {
-        let mut common = matches[0].0.to_string();
-        for (name, _) in matches.iter().skip(1) {
+    names.extend(
+        commands
+            .iter()
+            .filter(|c| {
+                c.name.starts_with(prefix) && !COMMANDS.iter().any(|(n, _)| *n == c.name)
+            })
+            .map(|c| c.name.as_str()),
+    );
+    if names.len() == 1 {
+        Some(format!("/{}", names[0]))
+    } else if names.len() > 1 && !prefix.is_empty() {
+        let mut common = names[0].to_string();
+        for name in names.iter().skip(1) {
             common = common_prefix(&common, name);
         }
         if common.len() > prefix.len() {
@@ -120,6 +150,34 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             agent.push_system(format!("cwd: {wd}"));
             SlashAction::Handled
         }
+        "cd" => {
+            let arg = line.split_whitespace().nth(1).unwrap_or("");
+            if arg.is_empty() {
+                let wd = app.workdir().display().to_string();
+                agent.push_system(format!("cwd: {wd}"));
+                return SlashAction::Handled;
+            }
+            match resolve_cd_target(app.workdir(), arg) {
+                Ok(dir) => {
+                    let _ = session::save(agent, app.workdir());
+                    app.config.workdir = dir.clone();
+                    agent.set_workdir(std::sync::Arc::from(dir.as_path()));
+                    agent.push_system(format!("cwd → {}", dir.display()));
+                }
+                Err(e) => agent.push_error(format!("{e:#}")),
+            }
+            SlashAction::Handled
+        }
+        "todo" => {
+            let items = crate::tools::todo::load(app.workdir());
+            if items.is_empty() {
+                agent.push_system("no todos — the model can set them with todo_write");
+            } else {
+                agent.push_system(crate::tools::todo::render(&items));
+            }
+            SlashAction::Handled
+        }
+        "editor" => SlashAction::Editor,
         "status" => {
             let n = agent.api_context_len();
             agent.push_system(session_details(&app.config, n, "status"));
@@ -265,12 +323,47 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
         },
         "quit" | "exit" => SlashAction::Quit,
         other => {
+            // Project commands from `.claude/commands/*.md` — rescan so a
+            // file added this session works without /reload.
+            app.commands = crate::commands::load(app.workdir());
+            if let Some(def) = app.commands.iter().find(|c| c.name == other) {
+                let args = line.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                return SlashAction::Prompt(crate::commands::expand(def, &args));
+            }
             agent.push_system(format!(
                 "unknown slash command `/{other}`. Type /help for built-ins."
             ));
             SlashAction::Handled
         }
     }
+}
+
+/// `/cd` target: `~`, `~/x`, absolute, or relative to the current workdir. Must be a directory.
+fn resolve_cd_target(cwd: &Path, arg: &str) -> Result<PathBuf> {
+    let home = || {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| cwd.to_path_buf())
+    };
+    let expanded = if arg == "~" {
+        home()
+    } else if let Some(rest) = arg.strip_prefix("~/") {
+        home().join(rest)
+    } else {
+        PathBuf::from(arg)
+    };
+    let joined = if expanded.is_absolute() {
+        expanded
+    } else {
+        cwd.join(expanded)
+    };
+    let canon = joined
+        .canonicalize()
+        .with_context(|| format!("cd: cannot resolve {arg}"))?;
+    if !canon.is_dir() {
+        bail!("cd: not a directory: {arg}");
+    }
+    Ok(canon)
 }
 
 fn slash_help_text() -> String {
@@ -293,7 +386,17 @@ mod tests {
 
     #[test]
     fn tab_unique_complete() {
-        assert_eq!(tab_complete("/cl").as_deref(), Some("/clear"));
+        assert_eq!(tab_complete("/cl", &[]).as_deref(), Some("/clear"));
+    }
+
+    #[test]
+    fn tab_complete_project_command() {
+        let cmds = vec![crate::commands::SlashDef {
+            name: "review".into(),
+            description: String::new(),
+            body: "body".into(),
+        }];
+        assert_eq!(tab_complete("/rev", &cmds).as_deref(), Some("/review"));
     }
 
     #[test]
@@ -304,5 +407,44 @@ mod tests {
     #[test]
     fn theme_listed_for_docs_sync() {
         assert!(COMMANDS.iter().any(|(n, _)| *n == "theme"));
+    }
+
+    #[test]
+    fn project_command_expands_to_prompt() {
+        use std::sync::Arc;
+
+        use crate::config::{AppConfig, Provider};
+        use crate::provider::LlmClient;
+        use crate::tools::ShellPolicy;
+
+        let dir = std::env::temp_dir().join(format!("lightrs-slash-{}", std::process::id()));
+        let cmd_dir = dir.join(".claude/commands");
+        std::fs::create_dir_all(&cmd_dir).unwrap();
+        std::fs::write(cmd_dir.join("review.md"), "Review the diff.").unwrap();
+
+        let mut app = App::new(AppConfig {
+            provider: Provider::Kimi,
+            model: "m".into(),
+            fallback_model: None,
+            base_url: "http://localhost".into(),
+            api_key: String::new(),
+            workdir: dir.clone(),
+            shell_policy: ShellPolicy::default(),
+            test_command: None,
+            heal_steps: 3,
+        });
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let mut agent = Agent::new(
+            client,
+            Arc::from(dir.as_path()),
+            ShellPolicy::default(),
+        );
+
+        let action = run_slash("/review src/lib.rs", &mut agent, &mut app);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            action,
+            SlashAction::Prompt("Review the diff.\n\nsrc/lib.rs".into())
+        );
     }
 }

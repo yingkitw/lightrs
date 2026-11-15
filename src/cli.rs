@@ -92,6 +92,10 @@ pub struct ModelFlags {
     #[arg(long)]
     pub model: Option<String>,
 
+    /// Secondary model retried once when the primary errors mid-turn
+    #[arg(long)]
+    pub fallback_model: Option<String>,
+
     #[arg(long)]
     pub base_url: Option<String>,
 

@@ -132,7 +132,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
         theme::hint()
     };
     let hint = if app.state == RunState::Ready {
-        if let Some(slash) = slash_command_hint(&app.input) {
+        if let Some(slash) = slash_command_hint(&app.input, &app.commands) {
             slash
         } else if let Some(mention) = mention_hint(&app.input, app.workdir()) {
             mention

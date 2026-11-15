@@ -1,5 +1,6 @@
 mod app;
 mod clipboard;
+mod editor;
 mod theme;
 mod highlight;
 mod info;

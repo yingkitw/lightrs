@@ -38,8 +38,17 @@ pub enum ObserveEvent<'a> {
     },
 }
 
+/// Post-edit verification: run `command` after write/edit tools; failures go back to the model.
+#[derive(Clone, Debug)]
+pub struct HealSetting {
+    pub command: String,
+    pub max_steps: u32,
+}
+
 pub struct Agent {
     pub(crate) client: LlmClient,
+    /// Optional secondary model client retried once when the primary errors mid-turn.
+    pub(crate) fallback_client: Option<LlmClient>,
     pub(crate) workdir: Arc<Path>,
     pub(crate) shell_policy: ShellPolicy,
     pub(crate) api_history: Vec<ApiMessage>,
@@ -54,6 +63,9 @@ pub struct Agent {
     pub(crate) context_warned_above: u32,
     /// `@` / `$` expansion for the in-flight user turn only (not persisted in `api_history`).
     pub(crate) active_user_expansion: Option<String>,
+    pub(crate) heal: Option<HealSetting>,
+    /// Heal runs so far this user turn (reset in `begin_user_turn`).
+    pub(crate) heal_ran: u32,
 }
 
 impl Agent {
@@ -67,6 +79,7 @@ impl Agent {
         )));
         let mut agent = Self {
             client,
+            fallback_client: None,
             workdir,
             shell_policy,
             api_history,
@@ -77,6 +90,8 @@ impl Agent {
             skill_catalog,
             context_warned_above: 0,
             active_user_expansion: None,
+            heal: None,
+            heal_ran: 0,
         };
         agent.refresh_context_estimate();
         agent
@@ -148,6 +163,38 @@ impl Agent {
     pub(crate) fn refresh_context_estimate(&mut self) {
         self.estimated_context_tokens =
             estimate_context_tokens(&self.messages_for_request());
+    }
+
+    /// Compact stale context before a request is built (auto `/compact`):
+    /// above `AUTO_COMPACT_TOKENS` stub old tool bodies + tool_call args;
+    /// above `HISTORY_HARD_CAP_TOKENS` drop whole oldest user turns.
+    pub(crate) fn auto_compact_context(&mut self) {
+        const AUTO_COMPACT_TOKENS: u32 = 32_000;
+        const HISTORY_HARD_CAP_TOKENS: u32 = 64_000;
+
+        self.refresh_context_estimate();
+        let est = self.estimated_context_tokens;
+        if est < AUTO_COMPACT_TOKENS {
+            return;
+        }
+        let n_tools =
+            context::compact_tool_messages(&mut self.api_history, context::COMPACT_KEEP_TOOLS);
+        let n_args =
+            context::compact_tool_call_args(&mut self.api_history, context::COMPACT_KEEP_TOOLS);
+        let mut dropped = 0usize;
+        while estimate_context_tokens(&self.api_history) > HISTORY_HARD_CAP_TOKENS
+            && context::drop_oldest_turn(&mut self.api_history)
+        {
+            dropped += 1;
+        }
+        if n_tools + n_args + dropped > 0 {
+            self.refresh_context_estimate();
+            self.push_system(format!(
+                "context auto-compact: {n_tools} tool result(s), {n_args} call arg(s), {dropped} old turn(s) dropped (~{est} → ~{} est)",
+                self.estimated_context_tokens
+            ));
+        }
+        self.context_warned_above = self.context_warned_above.max(self.estimated_context_tokens);
     }
 
     /// Show a `[sys]` hint when API history is large (`/quiet` suppresses).
@@ -250,6 +297,20 @@ impl Agent {
         self.push_system("Turn interrupted.");
     }
 
+    /// `/cd` — switch workdir mid-session; rebuilds the system prompt for the new root.
+    pub fn set_workdir(&mut self, workdir: Arc<Path>) {
+        self.workdir = workdir;
+        self.ensure_system_prompt();
+    }
+
+    pub fn set_fallback_client(&mut self, client: Option<LlmClient>) {
+        self.fallback_client = client;
+    }
+
+    pub fn set_heal(&mut self, heal: Option<HealSetting>) {
+        self.heal = heal;
+    }
+
     pub fn set_shell_policy(&mut self, policy: ShellPolicy) {
         self.shell_policy = policy;
         self.ensure_system_prompt();
@@ -265,7 +326,11 @@ impl Agent {
     }
 
     pub fn compact_history(&mut self) -> usize {
-        let n = context::compact_tool_messages(&mut self.api_history, context::COMPACT_KEEP_TOOLS);
+        let n = context::compact_tool_messages(&mut self.api_history, context::COMPACT_KEEP_TOOLS)
+            + context::compact_tool_call_args(
+                &mut self.api_history,
+                context::COMPACT_KEEP_TOOLS,
+            );
         self.ensure_system_prompt();
         self.context_warned_above = 0;
         self.refresh_context_estimate();
@@ -290,5 +355,100 @@ impl Agent {
         self.token_stats = TokenStats::default();
         self.context_warned_above = 0;
         self.refresh_context_estimate();
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use crate::chat::{ApiMessage, ApiRole, FunctionCall, ToolCall, UiMessage, UiRole};
+    use crate::provider::LlmClient;
+    use crate::tools::ShellPolicy;
+
+    use super::Agent;
+
+    #[test]
+    fn streaming_assistant_chars_counts_unicode_scalars() {
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let agent = Agent::new(client, Arc::from(Path::new(".")), ShellPolicy::default());
+        assert_eq!(agent.streaming_assistant_chars(), 0);
+
+        agent
+            .ui_history
+            .lock()
+            .unwrap()
+            .push(UiMessage::with_role(UiRole::User, "hi"));
+        assert_eq!(agent.streaming_assistant_chars(), 0);
+
+        agent
+            .ui_history
+            .lock()
+            .unwrap()
+            .push(UiMessage::with_role(UiRole::Assistant, "αβ"));
+        assert_eq!(agent.streaming_assistant_chars(), 2);
+    }
+
+    #[test]
+    fn streaming_assistant_chars_uses_last_assistant_only() {
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let agent = Agent::new(client, Arc::from(Path::new(".")), ShellPolicy::default());
+        let ui = agent.ui_history.lock().unwrap();
+        drop(ui);
+        {
+            let mut ui = agent.ui_history.lock().unwrap();
+            ui.push(UiMessage::with_role(UiRole::Assistant, "old"));
+            ui.push(UiMessage::with_role(UiRole::Assistant, "new"));
+        }
+        assert_eq!(agent.streaming_assistant_chars(), 3);
+    }
+
+    #[test]
+    fn auto_compact_prunes_oversized_history() {
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let mut agent = Agent::new(client, Arc::from(Path::new(".")), ShellPolicy::default());
+
+        let big_call = || ApiMessage {
+            role: ApiRole::Assistant,
+            content: None,
+            tool_calls: Some(vec![ToolCall {
+                id: "c".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "write_file".into(),
+                    arguments: "x".repeat(60_000),
+                },
+            }]),
+            tool_call_id: None,
+            name: None,
+        };
+        for i in 0..8 {
+            agent.api_history.push(ApiMessage::user(format!("u{i}")));
+            agent.api_history.push(big_call());
+            agent.api_history.push(ApiMessage::tool_result(
+                format!("t{i}"),
+                "write_file",
+                "b".repeat(6_000),
+            ));
+        }
+        agent.refresh_context_estimate();
+        let before = agent.token_summary().estimate;
+        assert!(before > 64_000, "fixture should exceed the hard cap");
+        let len_before = agent.api_history.len();
+
+        agent.auto_compact_context();
+
+        assert!(agent.token_summary().estimate < before);
+        assert!(agent.api_history.len() < len_before);
+        // The in-flight (most recent) user turn is never dropped.
+        let last_user = agent
+            .api_history
+            .iter()
+            .rposition(|m| m.role == ApiRole::User)
+            .unwrap();
+        assert_eq!(agent.api_history[last_user].text_content().unwrap(), "u7");
+        // And the history fits under the hard cap.
+        assert!(agent.token_summary().estimate <= 64_000);
     }
 }

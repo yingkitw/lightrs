@@ -164,21 +164,20 @@ fn render_tool_block(
         format!("{marker} {} ", tc.name),
         theme::tool_header(expanded),
     )];
-    if !expanded {
-        if let Some(fd) = &m.file_diff {
-            header.push(Span::styled(
-                format!(
-                    "{} +{} −{}",
-                    fd.path, fd.lines_added, fd.lines_removed
-                ),
-                Style::default().fg(theme::active().tool_args),
-            ));
-        } else {
-            header.push(Span::styled(
-                truncate_inline(&tc.arguments, 72),
-                Style::default().fg(theme::active().tool_args),
-            ));
-        }
+    // One-line call summary stays in the header expanded or collapsed.
+    if let Some(fd) = &m.file_diff {
+        header.push(Span::styled(
+            format!(
+                "{} +{} −{}",
+                fd.path, fd.lines_added, fd.lines_removed
+            ),
+            Style::default().fg(theme::active().tool_args),
+        ));
+    } else {
+        header.push(Span::styled(
+            truncate_inline(&tc.arguments, 72),
+            Style::default().fg(theme::active().tool_args),
+        ));
     }
     header.push(Span::styled(
         if expanded {
@@ -224,7 +223,7 @@ fn render_tool_block(
                 "summary:",
                 theme::body_muted().add_modifier(Modifier::ITALIC),
             )));
-            lines.extend(render_message_body(&m.content, width, theme::body_muted()));
+            lines.extend(render_message_body(&m.content, width, result_style(&m.content)));
         }
     } else {
         let body = if expanded {
@@ -234,11 +233,21 @@ fn render_tool_block(
         };
         lines.push(Line::from(Span::styled(
             "result:",
-            theme::body_muted().add_modifier(Modifier::ITALIC),
+            result_style(&body).add_modifier(Modifier::ITALIC),
         )));
-        lines.extend(render_message_body(&body, width, theme::body_muted()));
+        lines.extend(render_message_body(&body, width, result_style(&body)));
     }
     lines.push(Line::from(""));
+}
+
+/// Tool bodies that begin `error:` render in the error color; successes in
+/// normal body color (more legible than muting everything).
+fn result_style(body: &str) -> Style {
+    if body.trim_start().starts_with("error") {
+        theme::error()
+    } else {
+        theme::body()
+    }
 }
 
 fn collapse_result(text: &str) -> String {
@@ -291,6 +300,13 @@ mod tests {
     fn tool_block_detection() {
         let m = UiMessage::tool_result("read_file", "{}", "ok", None);
         assert!(m.is_tool_block());
+    }
+
+    #[test]
+    fn result_style_colors_errors() {
+        assert_eq!(result_style("error: denied").fg, Some(theme::active().error));
+        assert_eq!(result_style("  error: x").fg, Some(theme::active().error));
+        assert_eq!(result_style("wrote 3 files").fg, Some(theme::active().text));
     }
 
     #[test]

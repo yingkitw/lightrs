@@ -22,6 +22,8 @@ pub struct SkillEntry {
     pub description: String,
     pub path: PathBuf,
     pub body: String,
+    /// Optional frontmatter keyword (lowercased); matched against user input for a hint.
+    pub trigger: Option<String>,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -211,7 +213,7 @@ fn try_insert_skill(dir: &Path, skill_md: &Path, out: &mut HashMap<String, Skill
     let Ok(text) = fs::read_to_string(skill_md) else {
         return;
     };
-    let (name, description, body) = parse_skill_md(&text);
+    let (name, description, trigger, body) = parse_skill_md(&text);
     let fallback = dir
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -232,35 +234,44 @@ fn try_insert_skill(dir: &Path, skill_md: &Path, out: &mut HashMap<String, Skill
         description,
         path: dir.to_path_buf(),
         body,
+        trigger,
     });
 }
 
-pub fn parse_skill_md(text: &str) -> (String, String, String) {
+/// `(name, description, trigger, body)` parsed from SKILL.md frontmatter.
+pub fn parse_skill_md(text: &str) -> (String, String, Option<String>, String) {
     let trimmed = text.trim_start();
     if !trimmed.starts_with("---") {
         return (
             String::new(),
             String::new(),
+            None,
             text.trim().to_string(),
         );
     }
     let rest = trimmed.trim_start_matches("---").trim_start();
     let Some(end) = rest.find("\n---") else {
-        return (String::new(), String::new(), text.trim().to_string());
+        return (String::new(), String::new(), None, text.trim().to_string());
     };
     let front = &rest[..end];
     let body = rest[end + 4..].trim_start_matches('-').trim_start();
     let mut name = String::new();
     let mut description = String::new();
+    let mut trigger = None;
     for line in front.lines() {
         let line = line.trim();
         if let Some(v) = line.strip_prefix("name:") {
             name = v.trim().trim_matches('"').to_string();
         } else if let Some(v) = line.strip_prefix("description:") {
             description = v.trim().trim_matches('"').to_string();
+        } else if let Some(v) = line.strip_prefix("trigger:") {
+            let t = v.trim().trim_matches('"').to_ascii_lowercase();
+            if !t.is_empty() {
+                trigger = Some(t);
+            }
         }
     }
-    (name, description, body.to_string())
+    (name, description, trigger, body.to_string())
 }
 
 fn load_rules(rules_dir: &Path) -> String {
@@ -390,6 +401,24 @@ pub fn skill_hint(input: &str, catalog: &SkillCatalog) -> Option<String> {
     }
 }
 
+/// Non-blocking hint when the user's input matches a skill's `trigger:` keyword
+/// (and the skill wasn't already invoked via `$id`).
+pub fn trigger_hint(input: &str, catalog: &SkillCatalog) -> Option<String> {
+    let lower = input.to_lowercase();
+    let invoked = collect_skill_invocations(input);
+    catalog
+        .skills
+        .iter()
+        .filter(|s| {
+            s.trigger
+                .as_deref()
+                .is_some_and(|t| lower.contains(t))
+                && !invoked.iter().any(|i| i == &s.id)
+        })
+        .map(|s| format!("skill `${}` may apply — resend with `${}` to attach it", s.id, s.id))
+        .next()
+}
+
 pub fn tab_complete_skill(input: &str, catalog: &SkillCatalog) -> Option<String> {
     let (prefix, at) = active_skill_token(input)?;
     let mut matches: Vec<&str> = catalog
@@ -434,11 +463,30 @@ mod tests {
 
     #[test]
     fn parses_skill_frontmatter() {
-        let md = "---\nname: lean-implementation\ndescription: stay small\n---\n\n# Body\n";
-        let (name, desc, body) = parse_skill_md(md);
+        let md = "---\nname: lean-implementation\ndescription: stay small\ntrigger: simplify\n---\n\n# Body\n";
+        let (name, desc, trigger, body) = parse_skill_md(md);
         assert_eq!(name, "lean-implementation");
         assert_eq!(desc, "stay small");
+        assert_eq!(trigger.as_deref(), Some("simplify"));
         assert!(body.contains("# Body"));
+    }
+
+    #[test]
+    fn trigger_hint_matches_keyword_not_invoked() {
+        let catalog = SkillCatalog {
+            skills: vec![SkillEntry {
+                id: "lean".into(),
+                name: "Lean".into(),
+                description: String::new(),
+                path: PathBuf::from("."),
+                body: String::new(),
+                trigger: Some("simplify".into()),
+            }],
+            rules: String::new(),
+        };
+        assert!(trigger_hint("please simplify this", &catalog).is_some());
+        assert!(trigger_hint("use $lean please", &catalog).is_none());
+        assert!(trigger_hint("unrelated input", &catalog).is_none());
     }
 
     #[test]
@@ -468,6 +516,7 @@ mod tests {
                 description: String::new(),
                 path: PathBuf::from("."),
                 body: "skill body".into(),
+                trigger: None,
             }],
             rules: String::new(),
         };

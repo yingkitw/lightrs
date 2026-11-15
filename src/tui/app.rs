@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
@@ -62,9 +62,13 @@ pub struct App {
     /// Detect `config.toml` changes for auto `[shell]` reload before each send.
     config_mtime: Option<SystemTime>,
     pub skill_catalog: SkillCatalog,
+    /// `.claude/commands/*.md` project slash commands (rescanned on sends).
+    pub commands: Vec<crate::commands::SlashDef>,
     pub theme: String,
     /// Live streamed assistant chars this turn (from UI transcript).
     pub stream_chars: usize,
+    /// User lines submitted while `Busy`; drained when the turn ends.
+    pub queued: VecDeque<String>,
 }
 
 impl App {
@@ -87,8 +91,10 @@ impl App {
             pending_approval: None,
             config_mtime: None,
             skill_catalog: SkillCatalog::default(),
+            commands: Vec::new(),
             theme: theme::normalize_theme_id(config::load_tui_theme()),
             stream_chars: 0,
+            queued: VecDeque::new(),
         }
     }
 
@@ -97,6 +103,7 @@ impl App {
         let catalog = load(&settings);
         self.skill_catalog = catalog.clone();
         agent.set_skill_catalog(catalog);
+        self.commands = crate::commands::load(self.workdir());
     }
 
     pub fn refresh_config_mtime(&mut self) {
@@ -203,6 +210,9 @@ impl App {
         if self.stream_chars > 0 {
             label.push_str(&format!(" · {} chars", self.stream_chars));
         }
+        if !self.queued.is_empty() {
+            label.push_str(&format!(" · queued {}", self.queued.len()));
+        }
         label
     }
 
@@ -306,20 +316,54 @@ pub fn tool_msg_index_at_line(
 mod tests {
     use super::*;
 
-    #[test]
-    fn busy_label_includes_spinner_and_phase() {
-        let mut app = App::new(AppConfig {
+    fn minimal_app() -> App {
+        App::new(AppConfig {
             provider: crate::config::Provider::Kimi,
             model: "test".into(),
+            fallback_model: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: PathBuf::from("."),
             shell_policy: crate::tools::ShellPolicy::default(),
-        });
+            test_command: None,
+            heal_steps: 3,
+        })
+    }
+
+    #[test]
+    fn busy_label_includes_spinner_and_phase() {
+        let mut app = minimal_app();
         app.set_busy();
-        app.status = "streaming…".into();
+        app.status = "streaming".into();
         let label = app.busy_label();
         assert!(label.contains('⠋') || label.contains('⠙'));
         assert!(label.contains("streaming"));
+    }
+
+    #[test]
+    fn busy_label_shows_stream_char_count() {
+        let mut app = minimal_app();
+        app.set_busy();
+        app.status = "streaming".into();
+        app.stream_chars = 42;
+        let label = app.busy_label();
+        assert!(label.contains("42 chars"));
+    }
+
+    #[test]
+    fn busy_elapsed_none_during_first_second() {
+        let mut app = minimal_app();
+        app.set_busy();
+        assert_eq!(app.busy_elapsed(), None);
+    }
+
+    #[test]
+    fn set_ready_clears_stream_chars() {
+        let mut app = minimal_app();
+        app.set_busy();
+        app.stream_chars = 9;
+        app.set_ready(&app.config.clone());
+        assert_eq!(app.stream_chars, 0);
+        assert_eq!(app.state, RunState::Ready);
     }
 }

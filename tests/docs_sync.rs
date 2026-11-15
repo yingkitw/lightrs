@@ -23,10 +23,14 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
     ("src/tui/mentions.rs", "mentions"),
     ("src/mentions.rs", "mentions"),
     ("src/skills/mod.rs", "skills"),
+    ("src/commands.rs", "commands.rs"),
     ("src/agent/mod.rs", "agent/"),
     ("src/agent/context.rs", "context"),
     ("src/agent/turn.rs", "turn"),
     ("src/tui/run/events.rs", "run/"),
+    ("src/tui/run/observe.rs", "observe"),
+    ("src/tui/editor.rs", "editor.rs"),
+    ("src/tools/todo.rs", "todo"),
     ("src/tui/highlight/markdown.rs", "markdown"),
     ("src/tui/highlight/syntect.rs", "syntect"),
     ("src/tui/highlight/diff.rs", "highlight/diff"),
@@ -42,11 +46,12 @@ const TOOLS: &[&str] = &[
     "glob_file_search",
     "multi_edit",
     "run_command",
+    "todo_write",
 ];
 
 const SLASH: &[&str] = &[
-    "help", "clear", "cwd", "status", "context", "reload", "quiet", "skills", "export", "copy",
-    "theme", "compact", "undo", "quit",
+    "help", "clear", "cwd", "cd", "todo", "editor", "status", "context", "reload", "quiet",
+    "skills", "export", "copy", "theme", "compact", "undo", "quit",
 ];
 
 #[test]

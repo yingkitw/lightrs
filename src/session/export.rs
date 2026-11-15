@@ -128,7 +128,7 @@ mod tests {
             "test".into(),
             "fixture".into(),
         );
-        let mut agent = Agent::new(client, Arc::from(dir.as_path()), ShellPolicy::default());
+        let agent = Agent::new(client, Arc::from(dir.as_path()), ShellPolicy::default());
         agent
             .ui_history
             .lock()

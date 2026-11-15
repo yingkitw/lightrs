@@ -35,18 +35,27 @@
 - [x] Lean API context — composer-only history, one-turn `@`/`$` attach, tool API cap, slimmer skills/rules system block
 - [x] Tier 3 (minicode): shell deny, secret redaction, workdir `AGENTS.md`, `multi_edit`
 - [x] Tier 4: `/undo` from backups, `/compact`, read-only shell auto-approve, tool JSON repair, `.gitignore` walk
+- [x] Tier A craftine batch 1: queued input while `Busy` + interrupt keywords (`stop`/`wait`/`halt`)
+- [x] `/cd <path>` — mid-session workdir switch (session saved under old dir, skills/AGENTS.md rescanned)
+- [x] Fallback model — `--fallback-model` / `fallback_model` retries once on provider error
+- [x] `todo_write` tool + `/todo` — `.lightrs/todo.md` round-trip, `[todo n/done]` status chip
+- [x] Heal loop — `[shell].test_command` runs after write/patch/multi_edit; failures fed back to model, `heal_steps` cap (default 3)
+- [x] `/editor` — compose prompt in `$EDITOR`, loads into composer on save
+- [x] Skill `trigger` hint — frontmatter keyword prints a non-blocking `tip:` line when input matches (no auto-attach)
+- [x] `.claude/commands/*.md` → `/name` project slash commands (`src/commands.rs`; body sent to model, args appended)
+- [x] Context auto-compact — `tool_calls` arg stubbing + oldest-turn drop (32k/64k est thresholds); `/compact` now stubs args too
 
 ## Backlog
 
 - [x] MCP import documented (stored `mcp.json`; no in-process server in v0.1)
 
-## Scorecard (2026-11-14)
+## Scorecard (2026-11-15)
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 71 tests; CI + export path fix + SSE fixture playbook |
-| Agent reliability | 4 | Step cap, interrupt, headless shell policy |
-| UX (TUI) | 5 | Tools, diff, markdown, skills, approvals, sys layout |
+| Correctness & coverage | 5 | 152 tests; queue/interrupt/heal unit coverage + SSE fixtures |
+| Agent reliability | 5 | Step cap, interrupt, heal loop, fallback model retry |
+| UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, trigger hints |
 | Maintainability | 5 | `agent/`, `tui/run/`, `skills/`, shared tool path |
 | Docs alignment | 5 | `docs_sync` + root MDs audited to code |
 | Footprint | 4 | `--no-default-features` drops ACP + syntect; syntax highlighting optional |
@@ -57,3 +66,26 @@
 
 - Clippy cleanup batch (27 lib warnings; not CI-blocking yet)
 - Release binary size badge in CI (`--no-default-features` vs default)
+
+## Competitive intel — craftine + vendored minicode (2026-11-15)
+
+Sourced from `../craftine` (sibling Rust TUI agent, ~39k lines) and its `craftine/minicode/` vendored reference. Filtered for the lightweight charter — MCP, tree-sitter, vim mode, semantic index, sub-agents, worktrees, pricing tables, browser tools, modes, SDD, hooks system, OS sandbox, keyring deliberately skipped.
+
+### Tier A — cheap, high value
+
+Shipped 2026-11-15 (see Done): queued input while `Busy`, interrupt keywords, `/cd`, fallback model, `todo_write` + `/todo`, heal loop (`[shell].test_command` — config only, no auto-detect), `/editor`, skill `trigger` hints, `.claude/commands/*.md` project slash commands. **Tier A complete.**
+
+### Tier B — moderate weight
+
+- **Session `/rewind [n]`** — drop last n turns from API+UI history and resave (cheap fork; craftine's full checkpoint/replay is heavier).
+- **Approval batching** — single banner listing all pending calls in a multi-tool step instead of serial y/n.
+- **Audit log** — `.lightrs/audit.log` append of tool approvals/denials + `run_command` invocations (minicode `safety/`).
+- **Weak model routing** — read-only tools served by a cheaper `[provider].weak_model` until first write/exec; token-frugal (craftine `--weak-model`).
+- **Per-project config overlay** — `.lightrs/config.toml` overrides global config (craftine `.craftine/config.json`).
+- **Prompt-injection warning** — scan tool output for instruction-override patterns before sending to model; transcript warning (minicode `security.rs`).
+- **Atomic session save** — write temp file + rename; crash-safe (craftine JSONL is heavier; atomic rename gets most of it).
+
+### Patterns worth borrowing (not features)
+
+- **Trait seam for tests** — craftine/minicode inject `Arc<dyn ModelClient>` + `Arc<dyn ToolExecutor>` mocks → tool-loop unit tests with no HTTP. lightrs uses SSE fixtures today; a `LlmClient` trait would enable in-memory turn tests.
+- **Event loop batching** — craftine drains all ready events, paints once per wakeup; batches streamed `TextDelta`s. Verify lightrs does the same in `tui/run`.

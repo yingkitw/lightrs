@@ -62,10 +62,16 @@ impl Provider {
 pub struct AppConfig {
     pub provider: Provider,
     pub model: String,
+    /// Secondary model retried once on provider errors (`--fallback-model` / `fallback_model`).
+    pub fallback_model: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub workdir: PathBuf,
     pub shell_policy: ShellPolicy,
+    /// Post-edit check command from `[shell].test_command` (heal loop).
+    pub test_command: Option<String>,
+    /// Max heal runs per user turn (`[shell].heal_steps`, default 3).
+    pub heal_steps: u32,
 }
 
 impl AppConfig {
@@ -109,19 +115,32 @@ impl AppConfig {
 
         let api_key = file::resolve_api_key(flags, file.as_ref(), provider)?;
 
-        let (allowlist, require_approval) = file
+        let (allowlist, require_approval, test_command, heal_steps) = file
             .as_ref()
             .and_then(|f| f.shell.as_ref())
-            .map(|s| (s.allowlist.clone(), s.require_approval))
-            .unwrap_or((Vec::new(), false));
+            .map(|s| {
+                (
+                    s.allowlist.clone(),
+                    s.require_approval,
+                    s.test_command.clone(),
+                    s.heal_steps.unwrap_or(3),
+                )
+            })
+            .unwrap_or((Vec::new(), false, None, 3));
 
         Ok(Self {
             provider,
             model,
+            fallback_model: flags
+                .fallback_model
+                .clone()
+                .or_else(|| file.as_ref().and_then(|f| f.fallback_model.clone())),
             base_url,
             api_key,
             workdir,
             shell_policy: shell_policy_from_parts(allowlist, require_approval),
+            test_command,
+            heal_steps,
         })
     }
 
@@ -129,12 +148,21 @@ impl AppConfig {
     pub fn reload_shell_from_file(&mut self) -> Result<String> {
         let path = config_path();
         let file = file::load_config_file()?;
-        let (allowlist, require_approval) = file
+        let (allowlist, require_approval, test_command, heal_steps) = file
             .as_ref()
             .and_then(|f| f.shell.as_ref())
-            .map(|s| (s.allowlist.clone(), s.require_approval))
-            .unwrap_or((Vec::new(), false));
+            .map(|s| {
+                (
+                    s.allowlist.clone(),
+                    s.require_approval,
+                    s.test_command.clone(),
+                    s.heal_steps.unwrap_or(3),
+                )
+            })
+            .unwrap_or((Vec::new(), false, None, 3));
         self.shell_policy = shell_policy_from_parts(allowlist, require_approval);
+        self.test_command = test_command;
+        self.heal_steps = heal_steps;
         Ok(format!(
             "Reloaded [shell] from {} — allowlist {} · require_approval={}",
             path.display(),

@@ -81,10 +81,13 @@ mod tests {
         let cfg = AppConfig {
             provider: config::Provider::Kimi,
             model: "test".into(),
+            fallback_model: None,
             base_url: "https://example.invalid".into(),
             api_key: String::new(),
             workdir: dir.clone(),
             shell_policy: crate::tools::ShellPolicy::default(),
+            test_command: None,
+            heal_steps: 3,
         };
         run_check(&cfg).unwrap();
         let _ = std::fs::remove_dir_all(&dir);

@@ -3,6 +3,7 @@ pub mod acp;
 pub mod agent;
 pub mod chat;
 pub mod cli;
+pub mod commands;
 pub mod config;
 pub mod doctor;
 pub mod exec;
