@@ -229,6 +229,13 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - The flag goes **into** `api_history` (prepended `[warning: …]` prefix in `execute_one_tool`) so the model sees it inline, plus an ephemeral `[sys]` line. Scanning UI-only would leave the model blind.
 - Scan points: `execute_one_tool` api push (all tools) + `maybe_run_heal` `[heal]` output — any path where external text enters API history needs it.
 
+## Agent-mutex discipline / approval deadlock fix (2026-11-15)
+
+- **Audit found**: `run_user_turn_shared` held the `tokio::Mutex<Agent>` guard across `handle_model_message().await`, which contained (a) the approval oneshot wait → **deterministic TUI deadlock** (draw needs `blocking_lock`, which blocks until the mutex frees — the prompt could never render, approval was never functional in the TUI), and (b) synchronous subprocess exec (`run_command`, heal's 120s `run_command`) → full UI freeze per command.
+- **Fix**: split `handle_model_message` into sync record helpers (`record_tool_call_step`, `finish_text_turn`, `record_tool_denial`, `record_tool_outcome`, `heal_plan`/`heal_record`). `run_user_turn_shared` now: resolves `resolve_shell_approvals` **before** locking, then `execute_one_tool_shared` locks only for record sections and runs `execute_tool`/heal via `tokio::task::spawn_blocking` with the mutex free.
+- **Rule**: never await UI-bound oneshots or run subprocesses while holding `tokio::Mutex<Agent>` — the TUI thread needs `blocking_lock` every frame. Regression test: `tests/approval_turn.rs` asserts `agent.try_lock().is_ok()` inside the approval responder (mock `TcpListener` serving SSE bodies).
+- `ui_history` now capped at `MAX_UI_MESSAGES = 500` (`helpers::trim_ui_history` at turn end + session restore) — was unbounded, persisted in session JSON and rebuilt per frame.
+
 ## Approval batching (2026-11-15)
 
 - `resolve_shell_approvals` pre-scans a step's `tool_calls` **before** the exec loop: collects every `run_command` needing `needs_interactive_approval`, sends ONE `CommandApproval { commands: Vec<String>, reply }`. Verdict is all-or-nothing for the step — `Ok(None)` = nothing needed approval OR headless (denial wording picked by `ui_tx.is_none()` in the gate).

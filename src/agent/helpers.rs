@@ -6,6 +6,19 @@ use super::ObserveEvent;
 
 pub(crate) const MAX_TOOL_STEPS: usize = 16;
 const TOOL_UI_TRUNCATE: usize = 8_000;
+/// Transcript messages kept in memory (and persisted): oldest drop first.
+/// Tool blocks are self-contained `UiMessage`s, so front-dropping can't split
+/// a call/result pair. Bounds session JSON size and per-frame render cost.
+pub(crate) const MAX_UI_MESSAGES: usize = 500;
+
+/// Keep `ui_history` at most `MAX_UI_MESSAGES` long by dropping the oldest.
+pub(crate) fn trim_ui_history(ui_history: &Arc<Mutex<Vec<UiMessage>>>) {
+    let mut ui = ui_history.lock().unwrap();
+    let excess = ui.len().saturating_sub(MAX_UI_MESSAGES);
+    if excess > 0 {
+        ui.drain(..excess);
+    }
+}
 
 /// Drop trailing whitespace/newlines from model text (avoids extra blank lines in the TUI).
 pub(crate) fn normalize_assistant_text(s: &str) -> String {
@@ -93,5 +106,21 @@ mod tests {
         append_assistant_delta(&ui, "", &mut |_| n += 1);
         assert_eq!(n, 0);
         assert!(ui.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn trim_ui_history_drops_oldest_beyond_cap() {
+        use crate::chat::UiMessage;
+        use super::{MAX_UI_MESSAGES, trim_ui_history};
+        let ui = Arc::new(Mutex::new(
+            (0..MAX_UI_MESSAGES + 7)
+                .map(|i| UiMessage::with_role(UiRole::User, format!("m{i}")))
+                .collect::<Vec<_>>(),
+        ));
+        trim_ui_history(&ui);
+        let g = ui.lock().unwrap();
+        assert_eq!(g.len(), MAX_UI_MESSAGES);
+        assert_eq!(g.first().unwrap().content, "m7"); // oldest dropped
+        assert_eq!(g.last().unwrap().content, format!("m{}", MAX_UI_MESSAGES + 6));
     }
 }

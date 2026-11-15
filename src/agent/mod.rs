@@ -103,6 +103,7 @@ impl Agent {
 
     pub(crate) fn finish_user_turn_api(&mut self) {
         self.active_user_expansion = None;
+        helpers::trim_ui_history(&self.ui_history);
     }
 
     pub fn restore_session(&mut self, saved: SessionFile) {
@@ -113,6 +114,7 @@ impl Agent {
         self.ensure_system_prompt();
         *self.ui_history.lock().unwrap() =
             crate::session::conversation_ui_history(saved.ui_history);
+        helpers::trim_ui_history(&self.ui_history);
         self.token_stats = saved.token_stats;
         self.refresh_context_estimate();
     }

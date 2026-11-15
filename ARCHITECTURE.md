@@ -44,8 +44,10 @@ URLs omit trailing slashes; paths are joined as `{base}/chat/completions`. Strea
 - Observe callbacks map through `tui/run/observe.rs`; busy status updates use reducers in `tui/run/events.rs` (`apply_stream_refresh`, `apply_stream_progress`)
 - One in-flight agent turn (`Busy`); interrupt via `watch` cancel during SSE; user lines typed while busy queue in `App.queued` and dispatch via `tui/run::pump_queued` when the turn ends
 - Optional `fallback_client` on `Agent` retries a failed model fetch once (`--fallback-model` / `fallback_model`)
-- `[shell].test_command` heal check runs after successful write/edit tools (`agent/turn.rs::maybe_run_heal`, capped by `heal_steps`)
+- `[shell].test_command` heal check runs after successful write/edit tools (`agent/turn.rs::heal_plan`/`heal_record`, capped by `heal_steps`)
 - Agent `tokio::Mutex` is **not** held across SSE reads; UI transcript is `Arc<Mutex<Vec<UiMessage>>>` for live streaming redraws
+- **Lock discipline** (`run_user_turn_shared`): the agent mutex is only held for short record/mutate sections. The model fetch, the batched approval oneshot, tool execution, and heal subprocesses all run with the mutex free — `execute_one_tool_shared` uses `spawn_blocking` for sync tool work and re-locks per call. Holding it across the approval wait deadlocks the TUI (it needs `blocking_lock` to draw the prompt); `tests/approval_turn.rs` guards this.
+- `ui_history` is capped at 500 messages (`helpers::trim_ui_history`, applied at turn end and session restore) — bounds session JSON and per-frame render cost
 
 ## TUI (Codex-aligned patterns)
 

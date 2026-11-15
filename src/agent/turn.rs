@@ -64,7 +64,7 @@ impl Agent {
                 anyhow::bail!("turn interrupted");
             }
 
-            let (client, fallback, request, ui_history, workdir) = {
+            let (client, fallback, request, ui_history, workdir, shell_policy) = {
                 let mut g = agent.lock().await;
                 (
                     g.client.clone(),
@@ -72,6 +72,7 @@ impl Agent {
                     g.build_chat_request(),
                     g.ui_transcript(),
                     Arc::clone(&g.workdir),
+                    g.shell_policy.clone(),
                 )
             };
 
@@ -85,21 +86,41 @@ impl Agent {
             )
             .await?;
 
-            let mut g = agent.lock().await;
-            g.after_model_response(usage.as_ref(), finish_reason.as_deref());
+            // Approval prompt must run with the mutex FREE: the TUI needs
+            // `blocking_lock` to draw the banner and read the y/n reply.
+            let calls = message.tool_calls.clone().unwrap_or_default();
+            let shell_verdict =
+                super::approval::resolve_shell_approvals(&calls, &shell_policy, Some(&ui_tx))
+                    .await?;
 
-            if let Some(text) = g
-                .handle_model_message(
-                    message,
+            if calls.is_empty() {
+                let mut g = agent.lock().await;
+                g.after_model_response(usage.as_ref(), finish_reason.as_deref());
+                return Ok(g.finish_text_turn(message));
+            }
+
+            {
+                let mut g = agent.lock().await;
+                g.after_model_response(usage.as_ref(), finish_reason.as_deref());
+                g.record_tool_call_step(message);
+            }
+            // Tools run without the agent mutex held: slow subprocess calls and
+            // heal commands must not freeze the UI.
+            for call in &calls {
+                execute_one_tool_shared(
+                    &agent,
                     &workdir,
+                    &shell_policy,
+                    &call.function.name,
+                    &call.function.arguments,
+                    &call.id,
+                    shell_verdict,
                     &mut on,
                     Some(&ui_tx),
                 )
-                .await?
-            {
-                return Ok(text);
+                .await?;
             }
-            drop(g);
+            agent.lock().await.refresh_context_estimate();
         }
 
         let msg = format!("Stopped after {MAX_TOOL_STEPS} tool steps.");
@@ -133,9 +154,11 @@ impl Agent {
             .await?;
 
             self.after_model_response(usage.as_ref(), finish_reason.as_deref());
-            if let Some(text) = self
-                .handle_model_message(message, &workdir, on, ui_tx)
-                .await?
+            let calls = message.tool_calls.clone().unwrap_or_default();
+            let shell_verdict =
+                super::approval::resolve_shell_approvals(&calls, &self.shell_policy, ui_tx).await?;
+            if let Some(text) =
+                self.handle_model_message(message, &workdir, shell_verdict, on, ui_tx)?
             {
                 return Ok(text);
             }
@@ -242,23 +265,18 @@ impl Agent {
     }
 
     /// `Ok(Some(text))` when the turn completes with assistant text; `Ok(None)` to continue the tool loop.
-    async fn handle_model_message(
+    /// `shell_verdict` is the step's batched approval result (`resolve_shell_approvals`).
+    fn handle_model_message(
         &mut self,
         message: ApiMessage,
         workdir: &Path,
+        shell_verdict: Option<bool>,
         on: &mut (impl FnMut(ObserveEvent<'_>) + Send),
         ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
     ) -> Result<Option<String>> {
         if let Some(calls) = message.tool_calls.clone()
             && !calls.is_empty() {
-                remove_trailing_empty_assistant(&self.ui_history);
-                self.api_history.push(message);
-                let shell_verdict = super::approval::resolve_shell_approvals(
-                    &calls,
-                    &self.shell_policy.clone(),
-                    ui_tx,
-                )
-                .await?;
+                self.record_tool_call_step(message);
                 for call in &calls {
                     execute_one_tool(
                         self,
@@ -270,13 +288,23 @@ impl Agent {
                         shell_verdict,
                         on,
                         ui_tx,
-                    )
-                    .await?;
+                    )?;
                 }
                 self.refresh_context_estimate();
                 return Ok(None);
             }
+        Ok(Some(self.finish_text_turn(message)))
+    }
 
+    /// Record an assistant tool-call message into API history; UI trailing
+    /// empty streaming bubble is removed first.
+    fn record_tool_call_step(&mut self, message: ApiMessage) {
+        remove_trailing_empty_assistant(&self.ui_history);
+        self.api_history.push(message);
+    }
+
+    /// Normal (non-tool) assistant text: store in both histories, end the API turn.
+    fn finish_text_turn(&mut self, message: ApiMessage) -> String {
         let text = normalize_assistant_text(
             message
                 .text_content()
@@ -306,12 +334,83 @@ impl Agent {
             ));
         }
         self.finish_user_turn_api();
-        Ok(Some(text))
+        text
+    }
+
+    /// Push a denied-tool result into both histories.
+    fn record_tool_denial(&mut self, name: &str, args: &str, call_id: &str, msg: &str) {
+        self.ui_history.lock().unwrap().push(UiMessage::tool_result(
+            name,
+            args,
+            truncate_tool_ui(msg),
+            None,
+        ));
+        self.api_history.push(ApiMessage::tool_result(
+            call_id,
+            name,
+            super::context::truncate_tool_api(msg),
+        ));
+    }
+
+    /// Push a tool result into both histories; flags prompt-injection patterns
+    /// in the API copy and notifies the transcript.
+    fn record_tool_outcome(
+        &mut self,
+        name: &str,
+        args: &str,
+        call_id: &str,
+        body: &str,
+        file_diff: Option<crate::chat::FileDiffUi>,
+    ) {
+        self.ui_history.lock().unwrap().push(UiMessage::tool_result(
+            name,
+            args,
+            truncate_tool_ui(body),
+            file_diff,
+        ));
+        let mut api_body = super::context::truncate_tool_api(body);
+        if let Some(pat) = crate::tools::injection::detect(body) {
+            self.push_system(format!(
+                "tool `{name}` output matched injection pattern {pat:?} — flagged for the model"
+            ));
+            api_body = format!("{}{api_body}", crate::tools::injection::flag_prefix(pat));
+        }
+        self.api_history.push(ApiMessage::tool_result(call_id, name, api_body));
     }
 }
 
+/// `(command, needed_interactive_approval)` for `run_command` calls — audit context.
+fn shell_ctx(name: &str, args: &str, policy: &ShellPolicy) -> Option<(String, bool)> {
+    if name != "run_command" {
+        return None;
+    }
+    let cmd = serde_json::from_str::<crate::tools::RunCommandArgs>(args)
+        .map(|a| a.command)
+        .unwrap_or_default();
+    Some((cmd.clone(), policy.needs_interactive_approval(&cmd)))
+}
+
+fn audit_denied(workdir: &Path, ctx: &Option<(String, bool)>, headless: bool, msg: &str) {
+    if let Some((cmd, _)) = ctx {
+        let decision = if headless { "denied_headless" } else { "denied" };
+        crate::audit::log_shell(workdir, cmd, decision, &crate::audit::result_head(msg));
+    }
+}
+
+fn audit_outcome(workdir: &Path, ctx: &Option<(String, bool)>, bypass: bool, body: &str) {
+    if let Some((cmd, needs)) = ctx {
+        let decision = match (*needs, bypass) {
+            (true, true) => "approved_bypass",
+            (true, false) => "approved",
+            _ => "auto",
+        };
+        crate::audit::log_shell(workdir, cmd, decision, &crate::audit::result_head(body));
+    }
+}
+
+/// `&mut Agent` path — headless/ACP turn loop where no TUI thread shares the mutex.
 #[allow(clippy::too_many_arguments)]
-async fn execute_one_tool(
+fn execute_one_tool(
     agent: &mut Agent,
     workdir: &Path,
     shell_policy: &ShellPolicy,
@@ -326,133 +425,164 @@ async fn execute_one_tool(
         name,
         arguments: args,
     });
-    // For audit: command string + whether the policy would have asked.
-    let shell_ctx = (name == "run_command").then(|| {
-        let cmd = serde_json::from_str::<crate::tools::RunCommandArgs>(args)
-            .map(|a| a.command)
-            .unwrap_or_default();
-        let needs_approval = shell_policy.needs_interactive_approval(&cmd);
-        (cmd, needs_approval)
-    });
-    let bypass = match resolve_shell_gate(name, args, shell_policy, shell_verdict, ui_tx.is_none())? {
-        ShellGate::Denied(msg) => {
-            if let Some((cmd, _)) = &shell_ctx {
-                let decision = if ui_tx.is_none() {
-                    "denied_headless"
-                } else {
-                    "denied"
-                };
-                crate::audit::log_shell(workdir, cmd, decision, &crate::audit::result_head(&msg));
+    let ctx = shell_ctx(name, args, shell_policy);
+    let bypass =
+        match resolve_shell_gate(name, args, shell_policy, shell_verdict, ui_tx.is_none())? {
+            ShellGate::Denied(msg) => {
+                audit_denied(workdir, &ctx, ui_tx.is_none(), &msg);
+                on(ObserveEvent::ToolEnd { body: &msg });
+                agent.record_tool_denial(name, args, call_id, &msg);
+                return Ok(());
             }
-            on(ObserveEvent::ToolEnd { body: &msg });
-            agent.ui_history.lock().unwrap().push(UiMessage::tool_result(
-                name,
-                args,
-                truncate_tool_ui(&msg),
-                None,
-            ));
-            agent.api_history.push(ApiMessage::tool_result(
-                call_id,
-                name,
-                super::context::truncate_tool_api(&msg),
-            ));
-            return Ok(());
-        }
-        ShellGate::NotShell => false,
-        ShellGate::Run {
-            bypass_allowlist,
-        } => bypass_allowlist,
-    };
-    let outcome = execute_tool(workdir, name, args, shell_policy, bypass);
-    if let Some((cmd, needs)) = &shell_ctx {
-        let decision = match (*needs, bypass) {
-            (true, true) => "approved_bypass",
-            (true, false) => "approved",
-            _ => "auto",
+            ShellGate::NotShell => false,
+            ShellGate::Run {
+                bypass_allowlist,
+            } => bypass_allowlist,
         };
-        crate::audit::log_shell(workdir, cmd, decision, &crate::audit::result_head(&outcome.body));
+    let outcome = execute_tool(workdir, name, args, shell_policy, bypass);
+    audit_outcome(workdir, &ctx, bypass, &outcome.body);
+    on(ObserveEvent::ToolEnd {
+        body: &outcome.body,
+    });
+    agent.record_tool_outcome(name, args, call_id, &outcome.body, outcome.file_diff);
+    if let Some(cmd) = agent.heal_plan(name, &outcome.body) {
+        on(ObserveEvent::ToolStart {
+            name: "heal",
+            arguments: &cmd,
+        });
+        let body = run_heal_command(workdir, &cmd, shell_policy);
+        on(ObserveEvent::ToolEnd { body: &body });
+        agent.heal_record(&cmd, &body);
     }
-    on(ObserveEvent::ToolEnd { body: &outcome.body });
-    agent.ui_history.lock().unwrap().push(UiMessage::tool_result(
+    Ok(())
+}
+
+/// Shared path — the agent lives behind `Arc<Mutex>` (TUI). The mutex is only
+/// held for short record/mutate sections; tool execution and heal subprocesses
+/// run on `spawn_blocking` so neither the UI nor the tokio worker stalls.
+#[allow(clippy::too_many_arguments)]
+async fn execute_one_tool_shared(
+    agent: &Arc<tokio::sync::Mutex<Agent>>,
+    workdir: &Path,
+    shell_policy: &ShellPolicy,
+    name: &str,
+    args: &str,
+    call_id: &str,
+    shell_verdict: Option<bool>,
+    on: &mut (impl FnMut(ObserveEvent<'_>) + Send),
+    ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
+) -> Result<()> {
+    on(ObserveEvent::ToolStart {
         name,
-        args,
-        truncate_tool_ui(&outcome.body),
-        outcome.file_diff.clone(),
-    ));
-    let mut api_body = super::context::truncate_tool_api(&outcome.body);
-    if let Some(pat) = crate::tools::injection::detect(&outcome.body) {
-        agent.push_system(format!(
-            "tool `{name}` output matched injection pattern {pat:?} — flagged for the model"
-        ));
-        api_body = format!("{}{api_body}", crate::tools::injection::flag_prefix(pat));
+        arguments: args,
+    });
+    let ctx = shell_ctx(name, args, shell_policy);
+    let bypass =
+        match resolve_shell_gate(name, args, shell_policy, shell_verdict, ui_tx.is_none())? {
+            ShellGate::Denied(msg) => {
+                audit_denied(workdir, &ctx, ui_tx.is_none(), &msg);
+                on(ObserveEvent::ToolEnd { body: &msg });
+                agent
+                    .lock()
+                    .await
+                    .record_tool_denial(name, args, call_id, &msg);
+                return Ok(());
+            }
+            ShellGate::NotShell => false,
+            ShellGate::Run {
+                bypass_allowlist,
+            } => bypass_allowlist,
+        };
+    let (wd, n, a, p) = (
+        workdir.to_path_buf(),
+        name.to_string(),
+        args.to_string(),
+        shell_policy.clone(),
+    );
+    let outcome = tokio::task::spawn_blocking(move || execute_tool(&wd, &n, &a, &p, bypass))
+        .await
+        .unwrap_or_else(|e| crate::tools::ToolOutcome::ok(format!("error: tool join: {e}")));
+    audit_outcome(workdir, &ctx, bypass, &outcome.body);
+    on(ObserveEvent::ToolEnd {
+        body: &outcome.body,
+    });
+    let heal_cmd = {
+        let mut g = agent.lock().await;
+        g.record_tool_outcome(name, args, call_id, &outcome.body, outcome.file_diff);
+        g.heal_plan(name, &outcome.body)
+    };
+    if let Some(cmd) = heal_cmd {
+        on(ObserveEvent::ToolStart {
+            name: "heal",
+            arguments: &cmd,
+        });
+        let (wd, p) = (workdir.to_path_buf(), shell_policy.clone());
+        let c = cmd.clone();
+        let body =
+            tokio::task::spawn_blocking(move || run_heal_command(&wd, &c, &p))
+                .await
+                .unwrap_or_else(|e| format!("error: heal join: {e}"));
+        on(ObserveEvent::ToolEnd { body: &body });
+        agent.lock().await.heal_record(&cmd, &body);
     }
-    agent.api_history.push(ApiMessage::tool_result(call_id, name, api_body));
-    maybe_run_heal(agent, workdir, name, &outcome.body, on);
     Ok(())
 }
 
 /// Write/edit tools whose success triggers the configured post-edit check.
 const HEAL_TOOLS: &[&str] = &["write_file", "patch_file", "multi_edit"];
 
-/// Run `[shell].test_command` after a successful edit, capped per turn; failures go back to the model.
-fn maybe_run_heal(
-    agent: &mut Agent,
-    workdir: &Path,
-    tool_name: &str,
-    tool_body: &str,
-    on: &mut impl FnMut(ObserveEvent<'_>),
-) {
-    if !HEAL_TOOLS.contains(&tool_name) || tool_body.starts_with("error:") {
-        return;
-    }
-    let Some(heal) = agent.heal.clone() else {
-        return;
-    };
-    if agent.heal_ran >= heal.max_steps {
-        return;
-    }
-    agent.heal_ran += 1;
-    on(ObserveEvent::ToolStart {
-        name: "heal",
-        arguments: &heal.command,
-    });
-    let body = crate::tools::shell::run_command(
+/// Run the configured heal/test command (bypasses the shell policy, 120s cap).
+fn run_heal_command(workdir: &Path, command: &str, shell_policy: &ShellPolicy) -> String {
+    crate::tools::shell::run_command(
         workdir,
         crate::tools::RunCommandArgs {
-            command: heal.command.clone(),
+            command: command.into(),
             timeout_secs: Some(120),
         },
-        &agent.shell_policy,
+        shell_policy,
         true,
     )
-    .unwrap_or_else(|e| format!("error: {e:#}"));
-    let passed = body.starts_with("exit=0");
-    on(ObserveEvent::ToolEnd { body: &body });
-    agent
-        .ui_history
-        .lock()
-        .unwrap()
-        .push(UiMessage::tool_result(
+    .unwrap_or_else(|e| format!("error: {e:#}"))
+}
+
+impl Agent {
+    /// Whether this tool outcome should trigger a heal run; bumps `heal_ran`
+    /// and returns the configured command when so.
+    fn heal_plan(&mut self, tool_name: &str, tool_body: &str) -> Option<String> {
+        if !HEAL_TOOLS.contains(&tool_name) || tool_body.starts_with("error:") {
+            return None;
+        }
+        let heal = self.heal.as_ref()?;
+        if self.heal_ran >= heal.max_steps {
+            return None;
+        }
+        self.heal_ran += 1;
+        Some(heal.command.clone())
+    }
+
+    /// Record a heal run's output: transcript entry, `[sys]`/`[heal]` feedback to the model.
+    fn heal_record(&mut self, command: &str, body: &str) {
+        self.ui_history.lock().unwrap().push(UiMessage::tool_result(
             "heal",
-            heal.command.clone(),
-            truncate_tool_ui(&body),
+            command.to_string(),
+            truncate_tool_ui(body),
             None,
         ));
-    if passed {
-        agent.push_system(format!("heal ok: `{}`", heal.command));
-    } else {
+        if body.starts_with("exit=0") {
+            self.push_system(format!("heal ok: `{command}`"));
+            return;
+        }
         let mut api = format!(
-            "[heal] `{}` failed after your edit — fix the errors before continuing.\n{}",
-            heal.command,
-            super::context::truncate_tool_api(&body)
+            "[heal] `{command}` failed after your edit — fix the errors before continuing.\n{}",
+            super::context::truncate_tool_api(body)
         );
-        if let Some(pat) = crate::tools::injection::detect(&body) {
-            agent.push_system(format!(
+        if let Some(pat) = crate::tools::injection::detect(body) {
+            self.push_system(format!(
                 "heal output matched injection pattern {pat:?} — flagged for the model"
             ));
             api = format!("{}{api}", crate::tools::injection::flag_prefix(pat));
         }
-        agent.api_history.push(ApiMessage::user(api));
+        self.api_history.push(ApiMessage::user(api));
     }
 }
 
@@ -479,12 +609,20 @@ mod heal_tests {
         agent
     }
 
+    /// Test shim: plan → run → record in one call (sync path).
+    fn run_heal(agent: &mut Agent, workdir: &Path, tool: &str, body: &str) {
+        if let Some(cmd) = agent.heal_plan(tool, body) {
+            let out = run_heal_command(workdir, &cmd, &agent.shell_policy.clone());
+            agent.heal_record(&cmd, &out);
+        }
+    }
+
     #[test]
     fn heal_failure_appends_user_message() {
         let dir = std::env::temp_dir();
         let mut agent = make_agent(Some("exit 7"), 3);
         let before = agent.api_history.len();
-        maybe_run_heal(&mut agent, &dir, "write_file", "wrote", &mut |_| {});
+        run_heal(&mut agent, &dir, "write_file", "wrote");
         assert_eq!(agent.api_history.len(), before + 1);
         let last = agent.api_history.last().unwrap();
         assert!(matches!(last.role, crate::chat::ApiRole::User));
@@ -497,7 +635,7 @@ mod heal_tests {
         let dir = std::env::temp_dir();
         let mut agent = make_agent(Some("true"), 3);
         let before = agent.api_history.len();
-        maybe_run_heal(&mut agent, &dir, "patch_file", "patched", &mut |_| {});
+        run_heal(&mut agent, &dir, "patch_file", "patched");
         assert_eq!(agent.api_history.len(), before);
         assert_eq!(agent.heal_ran, 1);
     }
@@ -506,8 +644,8 @@ mod heal_tests {
     fn heal_skips_read_tools_and_failed_edits() {
         let dir = std::env::temp_dir();
         let mut agent = make_agent(Some("true"), 3);
-        maybe_run_heal(&mut agent, &dir, "read_file", "x", &mut |_| {});
-        maybe_run_heal(&mut agent, &dir, "write_file", "error: nope", &mut |_| {});
+        run_heal(&mut agent, &dir, "read_file", "x");
+        run_heal(&mut agent, &dir, "write_file", "error: nope");
         assert_eq!(agent.heal_ran, 0);
     }
 
@@ -515,8 +653,8 @@ mod heal_tests {
     fn heal_respects_step_cap() {
         let dir = std::env::temp_dir();
         let mut agent = make_agent(Some("true"), 1);
-        maybe_run_heal(&mut agent, &dir, "write_file", "wrote", &mut |_| {});
-        maybe_run_heal(&mut agent, &dir, "write_file", "wrote", &mut |_| {});
+        run_heal(&mut agent, &dir, "write_file", "wrote");
+        run_heal(&mut agent, &dir, "write_file", "wrote");
         assert_eq!(agent.heal_ran, 1);
     }
 
@@ -524,7 +662,7 @@ mod heal_tests {
     fn heal_disabled_without_command() {
         let dir = std::env::temp_dir();
         let mut agent = make_agent(None, 3);
-        maybe_run_heal(&mut agent, &dir, "write_file", "wrote", &mut |_| {});
+        run_heal(&mut agent, &dir, "write_file", "wrote");
         assert_eq!(agent.heal_ran, 0);
     }
 }
