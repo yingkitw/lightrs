@@ -9,7 +9,7 @@ mod workdir_context;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-pub use tokens::{TokenStats, TokenSummary, context_usage_text};
+pub use tokens::{ContextBreakdown, TokenStats, TokenSummary, context_usage_text};
 
 use crate::chat::{ApiMessage, ApiRole, TokenUsage, UiMessage, UiRole};
 use crate::session::SessionFile;
@@ -18,8 +18,9 @@ use crate::skills::SkillCatalog;
 use crate::tools::ShellPolicy;
 use prompt::system_prompt;
 use tokens::{
-    CONTEXT_WARN_TOKENS, context_pressure_line, estimate_context_tokens, estimate_text_tokens,
-    format_token_count, step_usage_line,
+    CONTEXT_WARN_TOKENS, context_breakdown, context_pressure_line, estimate_context_tokens,
+    estimate_text_tokens, format_breakdown, format_token_count, step_usage_line, top_consumers,
+    turn_usage_line,
 };
 use helpers::remove_trailing_empty_assistant;
 
@@ -104,6 +105,32 @@ impl Agent {
     pub(crate) fn finish_user_turn_api(&mut self) {
         self.active_user_expansion = None;
         helpers::trim_ui_history(&self.ui_history);
+        if !self.quiet_token_sys
+            && let Some(line) = turn_usage_line(&self.token_stats)
+        {
+            self.push_system(line);
+        }
+    }
+
+    /// `/context` detail: where the outgoing tokens sit (per-role breakdown +
+    /// heaviest single messages) and the current turn's real usage so far.
+    pub fn context_report(&self) -> String {
+        let msgs = self.messages_for_request();
+        let mut out = format!("breakdown: {}", format_breakdown(&context_breakdown(&msgs)));
+        let top = top_consumers(&msgs, 3);
+        if !top.is_empty() {
+            out.push_str(&format!("\ntop: {}", top.join(" · ")));
+        }
+        let t = &self.token_stats;
+        if t.turn_calls > 0 {
+            out.push_str(&format!(
+                "\nturn: {} call(s) · {} in + {} out",
+                t.turn_calls,
+                format_token_count(t.turn_prompt),
+                format_token_count(t.turn_completion)
+            ));
+        }
+        out
     }
 
     pub fn restore_session(&mut self, saved: SessionFile) {

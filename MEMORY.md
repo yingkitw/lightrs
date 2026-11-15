@@ -229,6 +229,12 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - The flag goes **into** `api_history` (prepended `[warning: …]` prefix in `execute_one_tool`) so the model sees it inline, plus an ephemeral `[sys]` line. Scanning UI-only would leave the model blind.
 - Scan points: `execute_one_tool` api push (all tools) + `maybe_run_heal` `[heal]` output — any path where external text enters API history needs it.
 
+## Token transparency (2026-11-15)
+
+- Three visibility layers: **header** (always-on `N msg · ~est · session · last in+out`), **`[sys]` lines** (`send · ~N`, per-step `model · in+out`, turn-close `turn · N calls · in+out` — all gated by `/quiet`), **`/context`** (per-role breakdown `sys/user/asst/tool-out/call-args` + top-3 heaviest messages `role #idx ~tok` + turn usage). `/status` shares the tokens line via `context_details`.
+- `TokenStats` carries `last_*` (real API), `session_*` (cumulative real), `turn_*` (reset in `begin_user_turn`, accumulated in `apply_usage` — `turn_calls` counts every model call incl. no-usage ones). New fields need `#[serde(default)]` — TokenStats lives in session JSON.
+- Estimate is `chars/4` and self-consistent; comparing `est` vs `last_prompt` (real) in `/context` shows drift without a tokenizer dep.
+
 ## Agent-mutex discipline / approval deadlock fix (2026-11-15)
 
 - **Audit found**: `run_user_turn_shared` held the `tokio::Mutex<Agent>` guard across `handle_model_message().await`, which contained (a) the approval oneshot wait → **deterministic TUI deadlock** (draw needs `blocking_lock`, which blocks until the mutex frees — the prompt could never render, approval was never functional in the TUI), and (b) synchronous subprocess exec (`run_command`, heal's 120s `run_command`) → full UI freeze per command.

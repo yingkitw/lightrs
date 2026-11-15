@@ -8,7 +8,7 @@ use crate::session;
 use crate::tui::clipboard::{copy_payload_from_markdown, set_text};
 use crate::tui::theme;
 use crate::tui::App;
-use crate::tui::info::{context_details, session_details};
+use crate::tui::info::context_details;
 
 /// Built-in TUI commands (leading `/`); never sent to the model.
 const COMMANDS: &[(&str, &str)] = &[
@@ -20,7 +20,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("editor", "compose the prompt in $EDITOR"),
     ("quit", "exit (same as q)"),
     ("status", "show model, path, and context"),
-    ("context", "message count and token usage"),
+    ("context", "context breakdown and token usage"),
     ("reload", "re-read config.toml [shell] policy"),
     ("quiet", "toggle per-step token sys lines"),
     ("skills", "list discovered agent skills"),
@@ -190,13 +190,17 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
         "editor" => SlashAction::Editor,
         "status" => {
             let n = agent.api_context_len();
-            agent.push_system(session_details(&app.config, n, "status"));
+            let usage = context_usage_text(agent.token_summary(), n);
+            agent.push_system(context_details(&app.config, n, &usage, "status"));
             SlashAction::Handled
         }
         "context" => {
             let n = agent.api_context_len();
             let usage = context_usage_text(agent.token_summary(), n);
-            agent.push_system(context_details(&app.config, n, &usage, "context"));
+            let mut msg = context_details(&app.config, n, &usage, "context");
+            msg.push('\n');
+            msg.push_str(&agent.context_report());
+            agent.push_system(msg);
             SlashAction::Handled
         }
         "quiet" => {
@@ -204,7 +208,7 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             agent.set_quiet_token_sys(on);
             let state = if on { "hidden" } else { "shown" };
             agent.push_system(format!(
-                "per-step token lines: {state} (header and /context unchanged; /quiet toggles)"
+                "token sys lines (send/model/turn): {state} (header and /context unchanged; /quiet toggles)"
             ));
             SlashAction::Handled
         }

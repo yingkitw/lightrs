@@ -78,7 +78,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/undo`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/todo`, `/editor`, `/quit`, …)
 - `/cd <path>` — switch working directory mid-session (keeps the conversation); `/editor` — draft the prompt in `$EDITOR`; `/todo` — show the agent's task list
 - `.claude/commands/*.md` — project slash commands (`/name` sends the file body to the model, args appended)
-- Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details
+- Session header shows **version, provider, model, path, context size, API host**; `/status` prints full details and `/context` shows where the tokens sit (per-role breakdown, heaviest messages, current-turn real usage). A `turn · N calls · X in + Y out` line closes each turn (`/quiet` silences routine token lines)
 - Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** ASCII, collapsible **tool** rows (mouse or `o`), unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
 - **Mouse wheel**, **↑/↓**, **PgUp/PgDn**, **Home/End** — scroll transcript (when the input line is empty)
 - **Click** a tool row or **`o`** — expand/collapse tool detail; **`/copy`** for clean clipboard text

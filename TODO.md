@@ -52,6 +52,7 @@
 - [x] Per-project config overlay — `.lightrs/config.toml` applies model/fallback/`[shell]` only (provider/base_url/keys ignored); `/reload`, auto-mtime, and `/cd` all re-sync (heal included)
 - [x] Approval batching — one y/n prompt covers all `run_command` calls needing approval in a single model step (`agent/approval.rs::resolve_shell_approvals`)
 - [x] Audit fix: agent-mutex deadlock + UI freeze — approval/tool exec no longer run under `tokio::Mutex<Agent>` (`execute_one_tool_shared` + `spawn_blocking`); `ui_history` capped at 500 (`helpers::trim_ui_history`); e2e regression `tests/approval_turn.rs`
+- [x] Token transparency — `TokenStats` gains per-turn totals (`turn_prompt/completion/calls`, `begin_turn`); `/context` adds per-role breakdown + top-3 consumers + turn in/out; `turn · N calls · X in + Y out` closes each turn; `/status` now shows the tokens line; `/quiet` gates all routine token sys lines
 
 ## Backlog
 

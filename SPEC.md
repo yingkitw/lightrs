@@ -63,10 +63,10 @@
 | `/cd` [path] | Change working directory (`~`, `~/x`, absolute, or relative; keeps the conversation; session file follows the new workdir) |
 | `/todo` | Show the task list written by `todo_write` (`.lightrs/todos.json`) |
 | `/editor` | Compose the prompt in `$EDITOR` (e.g. `vim`, `code --wait`); buffer loads into the composer on save |
-| `/status` | Session / model details |
-| `/context` | Message count + token usage |
+| `/status` | Session / model details + token usage |
+| `/context` | Token usage: per-role breakdown, heaviest messages, current-turn in/out |
 | `/reload` | Re-read `config.toml` `[shell]`; rescan skills; refresh agent system prompt |
-| `/quiet` | Toggle per-step `[sys]` token lines (`send · ~N ctx`, model in/out); header + `/context` unchanged |
+| `/quiet` | Toggle `[sys]` token lines (`send · ~N ctx`, per-step in/out, turn total); header + `/context` unchanged |
 | `/skills` | List discovered skills (`$id` to invoke on send) |
 | `/export` [path] | Write UI transcript to markdown under workdir (default `lightrs-transcript.md`; skips `[sys]`) |
 | `/copy` [`code`] | Copy latest assistant reply to the OS clipboard; `code` = last fenced ``` block only |

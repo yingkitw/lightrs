@@ -19,6 +19,7 @@ use super::{Agent, ObserveEvent};
 impl Agent {
     fn begin_user_turn(&mut self, user_text: String) {
         self.heal_ran = 0;
+        self.token_stats.begin_turn();
         self.ui_history
             .lock()
             .unwrap()
