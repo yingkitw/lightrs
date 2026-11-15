@@ -27,6 +27,7 @@ pub async fn run_prompt(cfg: AppConfig, prompt: String, json: bool, approve_shel
             fm.clone(),
         )));
     }
+    agent.set_weak_model(cfg.weak_model.clone());
     if let Some(cmd) = &cfg.test_command {
         agent.set_heal(Some(crate::agent::HealSetting {
             command: cmd.clone(),

@@ -96,6 +96,10 @@ pub struct ModelFlags {
     #[arg(long)]
     pub fallback_model: Option<String>,
 
+    /// Cheaper model used for read-only steps; escalates to `model` on write/exec
+    #[arg(long)]
+    pub weak_model: Option<String>,
+
     #[arg(long)]
     pub base_url: Option<String>,
 

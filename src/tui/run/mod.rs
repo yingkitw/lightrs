@@ -58,6 +58,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
             fm.clone(),
         )));
     }
+    agent_inner.set_weak_model(cfg.weak_model.clone());
     if let Some(cmd) = &cfg.test_command {
         agent_inner.set_heal(Some(crate::agent::HealSetting {
             command: cmd.clone(),
@@ -228,6 +229,7 @@ mod tests {
             provider: Provider::Kimi,
             model: "test".into(),
             fallback_model: None,
+            weak_model: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: PathBuf::from("."),

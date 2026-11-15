@@ -45,6 +45,11 @@ pub struct Agent {
     pub(crate) client: LlmClient,
     /// Optional secondary model client retried once when the primary errors mid-turn.
     pub(crate) fallback_client: Option<LlmClient>,
+    /// Cheaper model name for read-only steps (`weak_model`); escalates to
+    /// `client.model()` once a step calls a write/exec tool.
+    pub(crate) weak_model: Option<String>,
+    /// Whether the current turn is still running on `weak_model`.
+    pub(crate) weak_active: bool,
     pub(crate) workdir: Arc<Path>,
     pub(crate) shell_policy: ShellPolicy,
     pub(crate) api_history: Vec<ApiMessage>,
@@ -78,6 +83,8 @@ impl Agent {
         let mut agent = Self {
             client,
             fallback_client: None,
+            weak_model: None,
+            weak_active: false,
             workdir,
             shell_policy,
             api_history,
@@ -215,6 +222,13 @@ impl Agent {
 
     pub fn set_fallback_client(&mut self, client: Option<LlmClient>) {
         self.fallback_client = client;
+    }
+
+    /// Model name used for read-only steps until a write/exec tool appears
+    /// (`None` disables routing — every step uses the primary model).
+    pub fn set_weak_model(&mut self, model: Option<String>) {
+        self.weak_model = model;
+        self.weak_active = false;
     }
 
     pub fn set_heal(&mut self, heal: Option<HealSetting>) {

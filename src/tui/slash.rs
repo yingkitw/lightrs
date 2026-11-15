@@ -468,6 +468,7 @@ mod tests {
             provider: Provider::Kimi,
             model: "m".into(),
             fallback_model: None,
+            weak_model: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: dir.clone(),

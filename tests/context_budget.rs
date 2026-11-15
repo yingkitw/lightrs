@@ -41,15 +41,17 @@ async fn wire_window_caps_user_turns_on_real_requests() {
             .expect("turn completes");
     }
 
-    let reqs = reqs.lock().unwrap();
-    assert_eq!(reqs.len(), TURNS, "one request per text reply");
-    let last: serde_json::Value = serde_json::from_str(reqs.last().unwrap()).unwrap();
-    let users = last["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|m| m["role"] == "user")
-        .count();
+    let users = {
+        let reqs = reqs.lock().unwrap();
+        assert_eq!(reqs.len(), TURNS, "one request per text reply");
+        let last: serde_json::Value = serde_json::from_str(reqs.last().unwrap()).unwrap();
+        last["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "user")
+            .count()
+    };
     assert_eq!(users, 12, "wire keeps last 12 user turns only");
 
     // Stored history keeps everything: system + 15 user + 15 assistant.

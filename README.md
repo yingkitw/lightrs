@@ -87,11 +87,11 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 
 The agent can **read/write/patch files** (patch tolerates minor whitespace drift), **`grep`** (literal search in tree), **list directories**, **run shell commands** (64 KiB output cap per stream), and maintain a **`todo_write`** task list (`.lightrs/todos.json`) under the configured working directory (same privilege as your user).
 
-**Optional reliability helpers:** `fallback_model` (top of `config.toml`, or `--fallback-model`) retries a failed model call once on a secondary model. `[shell].test_command` (e.g. `cargo test`) runs after every successful file edit — failures are handed back to the model to fix (`[shell].heal_steps`, default 3 per turn).
+**Optional reliability helpers:** `fallback_model` (top of `config.toml`, or `--fallback-model`) retries a failed model call once on a secondary model. `weak_model` (`--weak-model`) serves read-only steps on a cheaper model and escalates to `model` the moment a write/exec tool appears. `[shell].test_command` (e.g. `cargo test`) runs after every successful file edit — failures are handed back to the model to fix (`[shell].heal_steps`, default 3 per turn).
 
 **Context stays bounded:** past ~32k estimated tokens, old tool results and `tool_calls` argument bodies are stubbed automatically; past ~64k, the oldest user turns are dropped (current turn is never touched). `/compact` does the same on demand. Full policy: [`docs/context.md`](docs/context.md).
 
-**Per-project config:** `<workdir>/.lightrs/config.toml` can set `model`, `fallback_model`, and `[shell]` for just that repo (e.g. its own `test_command` for the heal loop). Provider, base URL, and keys are ignored there — see `config.example.toml`.
+**Per-project config:** `<workdir>/.lightrs/config.toml` can set `model`, `fallback_model`, `weak_model`, and `[shell]` for just that repo (e.g. its own `test_command` for the heal loop). Provider, base URL, and keys are ignored there — see `config.example.toml`.
 
 ### ACP (Agent Client Protocol)
 

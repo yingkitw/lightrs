@@ -82,6 +82,7 @@ mod tests {
             provider: config::Provider::Kimi,
             model: "test".into(),
             fallback_model: None,
+            weak_model: None,
             base_url: "https://example.invalid".into(),
             api_key: String::new(),
             workdir: dir.clone(),

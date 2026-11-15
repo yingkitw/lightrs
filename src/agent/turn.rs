@@ -19,6 +19,7 @@ use super::{Agent, ObserveEvent};
 impl Agent {
     fn begin_user_turn(&mut self, user_text: String) {
         self.heal_ran = 0;
+        self.weak_active = self.weak_model.is_some();
         self.token_stats.begin_turn();
         self.ui_history
             .lock()
@@ -100,6 +101,7 @@ impl Agent {
                 let mut g = agent.lock().await;
                 g.after_model_response(usage.as_ref(), finish_reason.as_deref());
                 g.record_tool_call_step(message);
+                g.escalate_from_weak(&calls);
             }
             // Tools run without the agent mutex held: slow subprocess calls and
             // heal commands must not freeze the UI.
@@ -141,7 +143,11 @@ impl Agent {
             ));
         }
         ChatRequest {
-            model: self.client.model().to_string(),
+            model: if self.weak_active {
+                self.weak_model.clone().unwrap_or_default()
+            } else {
+                self.client.model().to_string()
+            },
             messages,
             tools: Some(tool_schemas()),
             tool_choice: Some(serde_json::json!("auto")),
@@ -237,6 +243,26 @@ impl Agent {
     fn record_tool_call_step(&mut self, message: ApiMessage) {
         remove_trailing_empty_assistant(&self.ui_history);
         self.api_history.push(message);
+    }
+
+    /// Weak-model routing (craftine pattern): a `weak_model` serves steps until
+    /// one calls a write/exec tool, then the rest of the turn runs on the
+    /// primary model — the weak pick still executes, only later reasoning
+    /// escalates. One `[sys]` note per escalation.
+    fn escalate_from_weak(&mut self, calls: &[crate::chat::ToolCall]) {
+        const WRITE_STEP_TOOLS: &[&str] =
+            &["write_file", "patch_file", "multi_edit", "run_command"];
+        if self.weak_active
+            && calls
+                .iter()
+                .any(|c| WRITE_STEP_TOOLS.contains(&c.function.name.as_str()))
+        {
+            self.weak_active = false;
+            self.push_system(format!(
+                "weak model → {} (write/exec tool called)",
+                self.client.model()
+            ));
+        }
     }
 
     /// Normal (non-tool) assistant text: store in both histories, end the API turn.

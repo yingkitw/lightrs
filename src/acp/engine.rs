@@ -52,6 +52,7 @@ pub fn make_agent(cfg: &AppConfig, cwd: PathBuf) -> Result<Agent> {
             fm.clone(),
         )));
     }
+    agent.set_weak_model(cfg.weak_model.clone());
     Ok(agent)
 }
 

@@ -64,6 +64,8 @@ pub struct AppConfig {
     pub model: String,
     /// Secondary model retried once on provider errors (`--fallback-model` / `fallback_model`).
     pub fallback_model: Option<String>,
+    /// Cheaper model for read-only steps (`--weak-model` / `weak_model`).
+    pub weak_model: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub workdir: PathBuf,
@@ -132,6 +134,11 @@ impl AppConfig {
                 .clone()
                 .or_else(|| project.as_ref().and_then(|f| f.fallback_model.clone()))
                 .or_else(|| file.as_ref().and_then(|f| f.fallback_model.clone())),
+            weak_model: flags
+                .weak_model
+                .clone()
+                .or_else(|| project.as_ref().and_then(|f| f.weak_model.clone()))
+                .or_else(|| file.as_ref().and_then(|f| f.weak_model.clone())),
             base_url,
             api_key,
             workdir,

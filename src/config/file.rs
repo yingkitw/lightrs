@@ -16,6 +16,8 @@ pub(crate) struct FileConfig {
     pub keys: Option<FileKeys>,
     /// Secondary model retried once when the primary errors mid-turn.
     pub fallback_model: Option<String>,
+    /// Cheaper model for read-only steps; escalates to `model` on write/exec tools.
+    pub weak_model: Option<String>,
     pub shell: Option<FileShell>,
     pub skills: Option<FileSkills>,
     pub tui: Option<FileTui>,
@@ -75,7 +77,7 @@ pub fn config_path() -> PathBuf {
 }
 
 /// `<workdir>/.lightrs/config.toml` — per-project overlay. Same schema, but
-/// only a safe subset is applied (model, fallback_model, `[shell]`); provider,
+/// only a safe subset is applied (model, fallback_model, weak_model, `[shell]`); provider,
 /// base_url, keys, and workdir are ignored so a repo file can't redirect API
 /// calls or inject credentials.
 pub fn project_config_path(workdir: &std::path::Path) -> PathBuf {

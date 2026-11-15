@@ -253,6 +253,7 @@ mod tests {
             provider: Provider::Kimi,
             model: "test".into(),
             fallback_model: None,
+            weak_model: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: PathBuf::from("."),

@@ -1,5 +1,7 @@
 //! Shared test support: a minimal SSE mock provider that serves canned
 //! `data:` bodies per request and records every request body it received.
+// Each test binary uses a different subset — allow unused helpers per-target.
+#![allow(dead_code)]
 
 use std::io::{Read, Write};
 use std::net::TcpListener as StdListener;

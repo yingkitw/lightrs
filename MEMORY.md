@@ -213,7 +213,9 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Two-layer context model**: `messages_for_api` bounds the *wire* copy — last **12** user turns (`MAX_RESENT_TURNS`) then `drop_oldest_turn` until ≤ **48k est** (`WIRE_BUDGET_TOKENS`); `api_history` is never trimmed there so `/rewind` + session save keep everything. `auto_compact_context` shrinks *stored* history (stub 32k / drop 64k) and must measure `api_history` **raw** — `refresh_context_estimate` reports the wire view, so tests asserting raw size need `estimate_context_tokens(&agent.api_history)` directly.
 - Wire-window transparency: one-shot `[sys]` via `wire_window_noted` flag (reset in `clear_conversation`); `/context` leads with `wire: X of Y turns` — windowing is visible, not silent.
 
-## Context module extraction (2026-11-16)
+- **Weak-model routing** (craftine pattern, adapted): `Agent.weak_model` + `weak_active` (reset per `begin_user_turn`); `build_chat_request` picks `weak_model` while `weak_active`; `escalate_from_weak(&calls)` flips to primary when a step's tool_calls include `write_file`/`patch_file`/`multi_edit`/`run_command` — the weak-decided write still executes, only later reasoning escalates. Same-provider model-name swap (no provider split — all lightrs providers are OpenAI-compatible). Included in the `.lightrs/config.toml` safe subset.
+
+## Context module extraction (2026-11-15)
 
 - `agent/context.rs` → `agent/context/` domain module: `wire.rs` (request window: `MAX_RESENT_TURNS=12`, `WIRE_BUDGET_TOKENS=48k`), `compact.rs` (stored-history stubs/drops: `TOOL_API_MAX=6144`, `COMPACT_KEEP_TOOLS=6`), `tokens.rs` (chars/4 estimate, `TokenStats`, breakdown/top/usage lines), `mod.rs` (re-exports + `Agent` context-policy methods + thresholds `AUTO_COMPACT_TOKENS=32k`, `HISTORY_HARD_CAP_TOKENS=64k` — lifted to module consts so `/context`'s `limits:` line can't drift).
 - Thresholds live as named consts next to the policy that uses them; `/context` renders `limits:` from the same consts — never hardcode the numbers in display strings.

@@ -55,6 +55,7 @@
 - [x] Token transparency — `TokenStats` gains per-turn totals (`turn_prompt/completion/calls`, `begin_turn`); `/context` adds per-role breakdown + top-3 consumers + turn in/out; `turn · N calls · X in + Y out` closes each turn; `/status` now shows the tokens line; `/quiet` gates all routine token sys lines
 - [x] Context module extraction — `agent/context/` domain module (`wire`/`compact`/`tokens` + policy `mod.rs`); `/context` gains a `limits:` line rendered from the same consts; `tests/support` mock server captures request bodies; `tests/context_budget.rs` e2e asserts the wire cap (12 turns) + stub markers on real requests; full policy in `docs/context.md`
 - [x] Wire context window — `messages_for_api` trims the request payload to last **12** user turns / ≤**48k est** (non-destructive; `/rewind`+session keep full history); stored-history auto-compact unchanged (stub 32k / drop 64k raw); one-shot `[sys]` note + `/context` `wire: X of Y turns`
+- [x] Weak-model routing — `weak_model`/`--weak-model` serves read-only steps on a cheaper model; first write/exec tool call (`write_file`/`patch_file`/`multi_edit`/`run_command`) escalates to `model` for the rest of the turn (`agent/turn.rs::escalate_from_weak`); e2e `tests/weak_model.rs` asserts the `model` field on captured requests
 - [x] Ponytail audit — single turn loop: deleted `&mut self` path (`drive_turn_loop`, `handle_model_message`, sync `execute_one_tool`); exec/ACP use `run_user_turn_headless` over the shared loop; ACP sessions hold `Arc<Mutex<Agent>>` (sessions lock no longer spans turns); fixed dead `not(acp-v2)` match arm that broke `--features acp` build
 - [x] Native copy without losing scroll — mouse reporting narrowed to `?1000h`+`?1006h` (`tui::MOUSE_ON/OFF`); `?1002` drag tracking off → terminal drag-select + Cmd/Ctrl+C work while wheel scroll and tool-row clicks are unaffected
 
@@ -62,17 +63,17 @@
 
 - [x] MCP import documented (stored `mcp.json`; no in-process server in v0.1)
 
-## Scorecard (2026-11-15)
+## Scorecard (2026-11-15, rev 2)
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 152 tests; queue/interrupt/heal unit coverage + SSE fixtures |
-| Agent reliability | 5 | Step cap, interrupt, heal loop, fallback model retry |
-| UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, trigger hints |
-| Maintainability | 5 | `agent/`, `tui/run/`, `skills/`, shared tool path |
-| Docs alignment | 5 | `docs_sync` + root MDs audited to code |
+| Correctness & coverage | 5 | 191 tests; request-capture e2e (approval, wire budget, weak-model) on the shared mock |
+| Agent reliability | 5 | Step cap, interrupt, heal loop, fallback + weak-model routing, single turn loop |
+| UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, native copy + scroll |
+| Maintainability | 5 | `agent/context/` domain module; duplicated turn loop deleted (net -108) |
+| Docs alignment | 5 | `docs_sync` + `docs/context.md` + root MDs audited to code |
 | Footprint | 4 | `--no-default-features` drops ACP + syntect; syntax highlighting optional |
-| Token efficiency | 4 | Auto-compact at 32k/64k est; 6 KiB tool cap; `tool_calls` args stubbed; estimate is `chars/4` (no real tokenizer) |
+| Token efficiency | 5 | Wire window (12 turns/48k) + stored compact (32k/64k) + weak-model routing; `chars/4` estimate (documented) |
 
 **Weakest next:** MCP wiring (out of v0.1 scope) or optional live SSE capture into `tests/fixtures/`.
 
@@ -92,7 +93,7 @@ Shipped 2026-11-15 (see Done): queued input while `Busy`, interrupt keywords, `/
 
 - ~~**Approval batching**~~ — shipped: `resolve_shell_approvals` pre-scans the step, one prompt, all-or-nothing verdict.
 - ~~**Audit log**~~ — shipped: `.lightrs/audit.log` JSONL per `run_command` decision.
-- **Weak model routing** — read-only tools served by a cheaper `[provider].weak_model` until first write/exec; token-frugal (craftine `--weak-model`).
+- ~~**Weak model routing**~~ — shipped: `weak_model` config/flag; per-turn escalation on write/exec tools.
 - ~~**Per-project config overlay**~~ — shipped: safe-subset `.lightrs/config.toml` (model/fallback/`[shell]`).
 - ~~**Prompt-injection warning**~~ — shipped: `tools/injection.rs` scans tool results; flagged prefix goes into API history + `[sys]` notice.
 - ~~**Atomic session save**~~ — shipped: temp file + same-dir rename.

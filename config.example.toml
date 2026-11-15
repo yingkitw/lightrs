@@ -3,6 +3,7 @@
 provider = "kimi"           # glm | kimi | minimax
 model = ""                  # empty = provider default
 # fallback_model = ""       # retried once when the primary model errors
+# weak_model = ""           # cheaper model for read-only steps; escalates to `model` on write/exec
 base_url = ""               # empty = built-in default
 workdir = "."               # agent file/shell scope
 
@@ -29,7 +30,7 @@ workdir = "."               # agent file/shell scope
 
 # ──────────────────────────────────────────────────────────────
 # Per-project overlay: <workdir>/.lightrs/config.toml
-# Same schema; only model, fallback_model, and [shell] are applied
+# Same schema; only model, fallback_model, weak_model, and [shell] are applied
 # (a project [shell] replaces the global one entirely).
 # provider / base_url / keys / workdir are ignored in the project file.
 # Precedence: CLI flags > project overlay > this global file.

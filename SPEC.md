@@ -96,6 +96,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - **`todo_write`**: replaces the whole task list (`items[].content`, `items[].status` ∈ `pending|in_progress|completed`, max 32) persisted to `.lightrs/todos.json` (`tools/todo.rs`); view with `/todo`
 - **HTTP**: chat requests use 120s timeout, 30s connect timeout, up to **3** retries on 429/5xx and transient transport errors (`provider/http.rs`).
 - **Fallback model**: `--fallback-model <m>` or `fallback_model` in `config.toml` retries a failed model fetch **once** on the secondary model (any non-interrupt error); a `[sys]` line notes the switch
+- **Weak-model routing**: `--weak-model <m>` or `weak_model` runs each user turn on the cheaper model until a step calls a write/exec tool (`write_file`, `patch_file`, `multi_edit`, `run_command`), then escalates to `model` for the rest of that turn (one `[sys]` note per escalation). Next turn starts weak again.
 - **Context pressure**: when estimated API context exceeds **~20k tokens**, the TUI shows a `[sys]` hint (respects `/quiet`).
 - **Wire window**: the model never receives the full stored history — each request is trimmed to the **last 12 user turns**, then oldest whole turns drop until the wire payload fits **~48k est tokens** (never the in-flight turn, never split tool_call pairs). `api_history` keeps everything for `/rewind` and session save; a one-time `[sys]` note announces the first trim, and `/context` shows `wire: X of Y turns`.
 - **Auto-compact**: before each request, if the *stored* history estimate exceeds **~32k tokens**, old tool results and assistant `tool_calls` argument blobs (>512 chars) are stubbed in `api_history`; if still above **~64k tokens**, the oldest whole user turns are dropped permanently. A `[sys]` line reports what was removed. The estimate is recomputed via `chars/4`, not provider tokenizers.
@@ -116,7 +117,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 
 Priority: **CLI > environment > project overlay > config file > defaults** (`config/file.rs`, `config.example.toml`).
 
-**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, and `[shell]` are applied — a project `[shell]` section replaces the global one entirely. `provider`, `base_url`, `keys`, and `workdir` are parsed but ignored, so a repo file cannot redirect API calls or inject credentials.
+**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, `weak_model`, and `[shell]` are applied — a project `[shell]` section replaces the global one entirely. `provider`, `base_url`, `keys`, and `workdir` are parsed but ignored, so a repo file cannot redirect API calls or inject credentials.
 
 ### Shell allowlist
 
@@ -150,6 +151,7 @@ heal_steps = 3                # max runs per user turn
 
 ```toml
 fallback_model = "kimi-k2-0905-preview"   # retried once on provider error
+weak_model = "glm-4.5-air"                # read-only steps; escalates on write/exec
 ```
 
 ### Skills
