@@ -11,7 +11,7 @@ use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crate::tui::{MOUSE_OFF, MOUSE_ON};
+use crate::tui::{MOUSE_OFF, MOUSE_ON, title_escape};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -126,6 +126,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     std::io::Write::write_all(&mut *terminal.backend_mut(), MOUSE_ON.as_bytes())?;
 
     let mut app = App::new(cfg.clone());
+    let mut last_title = String::new();
     crate::tui::theme::sync(&app.theme);
     app.skill_catalog = catalog;
     app.commands = crate::commands::load(&cfg.workdir);
@@ -192,6 +193,16 @@ pub fn run(cfg: AppConfig) -> Result<()> {
             }
             InputAction::Continue => {}
         }
+
+        let title = title_escape(
+            app.workdir(),
+            app.git_branch.as_deref(),
+            app.state == RunState::Busy,
+        );
+        if title != last_title {
+            std::io::Write::write_all(&mut *terminal.backend_mut(), title.as_bytes())?;
+            last_title = title;
+        }
     }
 
     {
@@ -200,6 +211,8 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     }
 
     std::io::Write::write_all(&mut *terminal.backend_mut(), MOUSE_OFF.as_bytes())?;
+    // Clear the OSC title so the shell prompt takes over cleanly.
+    std::io::Write::write_all(&mut *terminal.backend_mut(), "\x1b]2;\x07".as_bytes())?;
     terminal.backend_mut().execute(DisableBracketedPaste)?;
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;

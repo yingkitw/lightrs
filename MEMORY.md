@@ -299,6 +299,25 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 - `[profile.release]` had **no** LTO/strip — adding `lto = true` + `codegen-units = 1` + `strip = "symbols"` cut the binary ~32%: default 11M→7.4M, `--no-default-features` 8.1M→5.6M, `--features full` →9.0M. `panic = "abort"` was skipped on purpose — the TUI installs a panic hook to restore the terminal, and abort kills unwinding before the hook path runs. `opt-level = "z"` also skipped — trades render/regex speed for a marginal size win.
 
+## TUI terminal integration (2026-11-15)
+
+- **OSC title**: `\x1b]2;…\x07` in `tui::title_escape` — compare with last emitted, write only on change (once per loop pass is enough; events that flip state always pass through the same loop). Clear with an empty title on exit so the shell takes over. Always strip control chars from user-influenced pieces (dir/branch names) — a `\x1b` or `\x07` in a branch name would break the escape or inject sequences.
+- **Event-loop batching (verified, don't regress)**: `tui/run` draws once at loop top, drains `rx.try_recv()` in batches, and `redraw_immediately` continues the loop without polling input while events are queued — streamed deltas get one paint per wakeup, not per delta. If this pattern is ever refactored, keep the drain-then-paint ordering.
+- **Composer history nav**: `Composer.draft` snapshots in-progress input on first Ctrl+P and `recall_newer` returns it at the newest end — don't regress to replacing input in place (opencode's "dirty composer" bug class).
+
+## Session change review (2026-11-15, aider intel)
+
+- `/diff` replays **stored `FileDiffUi`s** as tool rows instead of recomputing diffs — the write-time diff is already the source of truth, zero fs reads, and the existing tool-row renderer (collapse/preview/color) does all the display work. When a review-style command needs data that was already rendered once, prefer replaying stored UI data over recomputing from disk (backups are for *restore*, not display).
+- New slash command checklist: `COMMANDS` entry → handler arm → `docs_sync::SLASH` → SPEC table + ARCH slash row + README enumeration. The suite fails on any miss.
+
+## Coverage-driven testing (2026-11-16)
+
+- **`cargo llvm-cov --summary-only`** = the real per-file number; `--lib` alone undercounts (integration tests add ~4%). Rank by *missed lines*, not %. First pass: 68.6%→73.9%.
+- **Ratatui `TestBackend`** makes draw paths testable without a pty: `Terminal::new(TestBackend::new(w,h))` → `term.draw(|f| draw(f, &mut app, &agent))` → scan `buffer()[(x,y)].symbol()` into a string, assert substrings. One smoke test covers header+transcript+chrome at once.
+- **Border-eats-a-row bug class**: `Paragraph::new(text).block(Block::borders(BOTTOM))` in a `Length(n)` area renders only n−1 text rows — the border row comes out of the same allocation. It silently clipped `header_lines[1]` for months; string-builder unit tests can't see it, only a rendered frame can. When a widget has borders, always `+1..+2` the constraint.
+- Fixture pattern for TUI tests: `App::new(AppConfig{...})` + `Agent::new(LlmClient::new("http://127.0.0.1",...))` + `run_slash`/`draw` directly — no network ever contacted.
+- Temp dirs: `std::env::temp_dir() + pid`, `create_dir_all` first, `remove_dir_all` at end (no tempfile dep, by convention).
+
 ## Patterns to harvest next
 
 - Tool-call JSON differences between GLM / Kimi / MiniMax

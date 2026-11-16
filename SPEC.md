@@ -35,6 +35,7 @@
 - **`write_file`** / **`patch_file`**: colorized unified diff (`+`/`-`/`@@`); `+N −M` in collapsed header; full diff when expanded; API tool body remains a one-line summary
 - **Mouse**: wheel scroll; left-click toggles tool expand (with `o` when input empty); drag = native terminal selection (copy) — the app only requests `?1000` click/scroll reporting, never `?1002` drag tracking
 - **Busy**: spinner + optional “waiting for model…” when streaming has not started
+- **Terminal title**: OSC 2 set once per loop pass when it changes — `lightrs · dir[:branch]` with a `· ●` suffix while `Busy`; cleared on exit so the shell title takes over
 
 ### Chrome
 
@@ -73,6 +74,7 @@
 | `/theme` [`id`] | List palettes or set `mocha` / `hc`; saved under `[tui]` in `config.toml` |
 | `/compact` | Replace older API tool bodies + assistant `tool_calls` argument blobs with placeholders (keeps last 6 tool results); no LLM call |
 | `/rewind` [`n`] | Drop the last `n` user turns (default 1) from API + UI history at user-turn boundaries, then resave the session |
+| `/diff` | Replay this session's stored write diffs as expandable tool rows (`+N −M` totals per file; no filesystem reads) |
 | `/undo` | Restore files edited since your last message from `.lightrs/backups/` |
 | `/quit` | Exit (same as `q` when idle) |
 

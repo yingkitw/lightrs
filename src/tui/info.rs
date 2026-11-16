@@ -126,6 +126,8 @@ pub fn header_compact(cfg: &AppConfig, context_usage: &str, app: &App, width: u1
     )
 }
 
+/// Header text lines — 1 (compact) below 22 rows, else 2 (title + `path:`).
+/// The caller must add one more row for the header block's bottom border.
 pub fn header_row_count(term_height: u16) -> u16 {
     if term_height < 22 { 1 } else { 2 }
 }

@@ -102,4 +102,68 @@ mod tests {
             Some("src/main.rs")
         );
     }
+
+    fn tmp(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("lightrs-backup-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn snapshot_writes_bak_and_returns_rel_path() {
+        let dir = tmp("snap");
+        let file = dir.join("src/x.rs");
+        let rel = snapshot_prior(&dir, &file, "v1").unwrap().unwrap();
+        let bak = dir.join(&rel);
+        assert!(rel.starts_with(".lightrs/backups/"), "rel = {rel:?}");
+        assert_eq!(fs::read_to_string(&bak).unwrap(), "v1");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn latest_backup_picks_highest_timestamp() {
+        let dir = tmp("latest");
+        let baks = dir.join(".lightrs/backups");
+        fs::create_dir_all(&baks).unwrap();
+        fs::write(baks.join("a.txt.100.bak"), "old").unwrap();
+        fs::write(baks.join("a.txt.200.bak"), "new").unwrap();
+        fs::write(baks.join("a.txt.notats.bak"), "junk").unwrap();
+        let best = latest_backup_for_rel(&dir, "a.txt").unwrap().unwrap();
+        assert!(best.ends_with("a.txt.200.bak"), "best = {best:?}");
+        assert!(latest_backup_for_rel(&dir, "missing.txt").unwrap().is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_round_trip_brings_back_prior_content() {
+        let dir = tmp("rt");
+        let file = dir.join("notes.md");
+        fs::write(&file, "original").unwrap();
+        snapshot_prior(&dir, &file, "original").unwrap();
+        fs::write(&file, "overwritten").unwrap();
+        let note = restore_from_backup(&dir, "notes.md").unwrap();
+        assert!(note.contains("notes.md"));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_without_backup_errors() {
+        let dir = tmp("none");
+        let err = restore_from_backup(&dir, "nope.txt").unwrap_err();
+        assert!(format!("{err:#}").contains("no backup"), "err = {err:#}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_rejects_backup_that_maps_outside_workdir() {
+        let dir = tmp("escape");
+        let baks = dir.join(".lightrs/backups");
+        fs::create_dir_all(&baks).unwrap();
+        fs::write(baks.join("..__evil.txt.1.bak"), "payload").unwrap();
+        assert!(restore_from_backup(&dir, "../evil.txt").is_err());
+        assert!(!dir.join("../evil.txt").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

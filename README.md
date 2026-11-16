@@ -61,6 +61,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Enter` — send message (supports multi-line input; **paste** multi-line with Cmd/Ctrl+V)
 - `Shift+Enter` or `Ctrl+J` — newline in the composer
 - `/copy` — copy the latest assistant reply to the clipboard (`/copy code` = last ``` fence only)
+- `/diff` — see everything the agent changed this session: one collapsed diff row per write, expand with `o`/click
 - `/theme` — list or set color theme (`mocha`, `hc`; saved as `[tui]` in `config.toml`)
 - `Ctrl+P` / `Ctrl+N` — recall older / newer submitted prompts (Codex-style history)
 - `@path` — attach workdir files to the API message (`Tab` completes); `$skill-id` — attach a **skill** (`Tab` on `$` prefix); paths skip `.git` / `target` / `node_modules`
@@ -75,7 +76,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
-- `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/undo`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/cwd`, `/todo`, `/editor`, `/quit`, …)
+- `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/undo`, `/diff`, `/export`, `/status`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/cwd`, `/todo`, `/editor`, `/quit`, …)
 - `/cd <path>` — switch working directory mid-session (keeps the conversation); `/editor` — draft the prompt in `$EDITOR`; `/todo` — show the agent's task list
 - `.claude/commands/*.md` — project slash commands (`/name` sends the file body to the model, args appended)
 - Session header shows **version, provider, model, path:git-branch, context size (+ % of the model's window), API host**; `/status` prints full details and `/context` shows where the tokens sit (per-role breakdown, heaviest messages, current-turn real usage). A `turn · N calls · X in + Y out · Ns` line closes each turn (`/quiet` silences routine token lines)
@@ -83,6 +84,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - Transcript: **Markdown** (tables, bold/links/blockquotes), **syntect** code, **Mermaid** (real ASCII layout: boxed nodes + `▼`/`►` connectors for `flowchart TD`/`LR`), collapsible **tool** rows (mouse or `o`) that appear live (`◌ … running`) and show elapsed time, unified diff on **write/patch**; `[sys]` status lines use ▏ bars (live only — not saved in session JSON)
 - **Mouse wheel**, **↑/↓**, **PgUp/PgDn**, **Home/End** — scroll transcript (when the input line is empty)
 - **Drag-select + Cmd/Ctrl+C** — copy any transcript text (drags are left to the terminal, so selection always works)
+- **Terminal title** — window/tab shows `lightrs · dir[:branch]` and a `●` while the agent is working
 - **Click** a tool row or **`o`** — expand/collapse tool detail; **`/copy`** for clean clipboard text
 
 The agent can **read/write/patch files** (patch tolerates minor whitespace drift), **`grep`** (literal search in tree), **list directories**, **run shell commands** (64 KiB output cap per stream), and maintain a **`todo_write`** task list (`.lightrs/todos.json`) under the configured working directory (same privilege as your user).

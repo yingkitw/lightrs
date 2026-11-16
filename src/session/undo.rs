@@ -22,6 +22,12 @@ pub fn paths_from_last_turn(ui: &[UiMessage]) -> Vec<String> {
     out
 }
 
+/// Every stored write diff in transcript order — the session's change record
+/// replayed by `/diff` without touching the filesystem.
+pub fn collect_file_diffs(ui: &[UiMessage]) -> Vec<crate::chat::FileDiffUi> {
+    ui.iter().filter_map(|m| m.file_diff.clone()).collect()
+}
+
 /// Restore backups for files edited on the last agent turn.
 pub fn undo_last_turn(workdir: &Path, ui: &[UiMessage]) -> Result<Vec<String>> {
     let paths = paths_from_last_turn(ui);
@@ -58,5 +64,27 @@ mod tests {
             ),
         ];
         assert_eq!(paths_from_last_turn(&ui), vec!["a.rs".to_string()]);
+    }
+
+    #[test]
+    fn collect_file_diffs_preserves_order_and_skips_non_diff() {
+        let fd = |p: &str| FileDiffUi {
+            path: p.into(),
+            unified: String::new(),
+            lines_added: 1,
+            lines_removed: 0,
+            is_new_file: false,
+        };
+        let ui = vec![
+            UiMessage::with_role(UiRole::User, "go"),
+            UiMessage::tool_result("patch_file", "a.rs", "ok", Some(fd("a.rs"))),
+            UiMessage::tool_result("run_command", "{}", "ok", None),
+            UiMessage::tool_result("write_file", "b.rs", "ok", Some(fd("b.rs"))),
+        ];
+        let paths: Vec<String> = collect_file_diffs(&ui)
+            .iter()
+            .map(|d| d.path.clone())
+            .collect();
+        assert_eq!(paths, vec!["a.rs", "b.rs"]);
     }
 }

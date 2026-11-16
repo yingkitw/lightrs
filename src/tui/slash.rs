@@ -26,6 +26,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("skills", "list discovered agent skills"),
     ("export", "write UI transcript to markdown in workdir"),
     ("copy", "copy last reply (or last ``` fence with /copy code) to clipboard"),
+    ("diff", "replay this session's file changes as expandable diff rows"),
     ("theme", "list or set TUI color theme (mocha, hc)"),
     ("compact", "compact old tool results in API history (no model call)"),
     ("rewind", "drop the last n user turns from history (/rewind [n])"),
@@ -347,6 +348,33 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             }
             SlashAction::Handled
         }
+        "diff" => {
+            let diffs = crate::session::collect_file_diffs(&agent.ui_messages());
+            if diffs.is_empty() {
+                agent.push_system("no file changes this session");
+            } else {
+                let files = diffs
+                    .iter()
+                    .map(|d| d.path.as_str())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len();
+                let adds: usize = diffs.iter().map(|d| d.lines_added).sum();
+                let rems: usize = diffs.iter().map(|d| d.lines_removed).sum();
+                agent.push_system(format!(
+                    "session diff · {files} file(s) · +{adds} −{rems} across {} write(s) — expand rows below",
+                    diffs.len()
+                ));
+                for fd in diffs {
+                    agent.push_ui_message(crate::chat::UiMessage::tool_result(
+                        "diff",
+                        fd.path.clone(),
+                        "stored write diff",
+                        Some(fd),
+                    ));
+                }
+            }
+            SlashAction::Handled
+        }
         "reload" => match app.config.reload_shell_from_file() {
             Ok(msg) => {
                 agent.set_shell_policy(app.config.shell_policy.clone());
@@ -498,5 +526,147 @@ mod tests {
             action,
             SlashAction::Prompt("Review the diff.\n\nsrc/lib.rs".into())
         );
+    }
+
+    mod fixture {
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        use crate::agent::Agent;
+        use crate::config::{AppConfig, Provider};
+        use crate::provider::LlmClient;
+        use crate::tools::ShellPolicy;
+        use crate::tui::App;
+
+        pub(super) fn build(tag: &str) -> (PathBuf, App, Agent) {
+            let dir = std::env::temp_dir()
+                .join(format!("lightrs-slash-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let app = App::new(AppConfig {
+                provider: Provider::Kimi,
+                model: "m".into(),
+                fallback_model: None,
+                weak_model: None,
+                base_url: "http://localhost".into(),
+                api_key: String::new(),
+                workdir: dir.clone(),
+                shell_policy: ShellPolicy::default(),
+                test_command: None,
+                heal_steps: 3,
+            });
+            let agent = Agent::new(
+                LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),
+                Arc::from(dir.as_path()),
+                ShellPolicy::default(),
+            );
+            (dir, app, agent)
+        }
+    }
+
+    fn last_ui_content(agent: &crate::agent::Agent) -> String {
+        agent
+            .ui_messages()
+            .last()
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn quit_action() {
+        let (dir, mut app, mut agent) = fixture::build("quit");
+        assert_eq!(run_slash("/quit", &mut agent, &mut app), SlashAction::Quit);
+        assert_eq!(run_slash("/exit", &mut agent, &mut app), SlashAction::Quit);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unknown_command_mentions_help() {
+        let (dir, mut app, mut agent) = fixture::build("unk");
+        assert_eq!(
+            run_slash("/bogus", &mut agent, &mut app),
+            SlashAction::Handled
+        );
+        assert!(last_ui_content(&agent).contains("unknown slash command"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn diff_empty_session_notes_no_changes() {
+        let (dir, mut app, mut agent) = fixture::build("diff0");
+        assert_eq!(
+            run_slash("/diff", &mut agent, &mut app),
+            SlashAction::Handled
+        );
+        assert!(last_ui_content(&agent).contains("no file changes"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn diff_replays_stored_write_diffs() {
+        use crate::chat::{FileDiffUi, UiMessage};
+
+        let (dir, mut app, mut agent) = fixture::build("diff1");
+        agent.push_ui_message(UiMessage::tool_result(
+            "patch_file",
+            "a.rs",
+            "ok",
+            Some(FileDiffUi {
+                path: "a.rs".into(),
+                unified: "@@ x".into(),
+                lines_added: 3,
+                lines_removed: 1,
+                is_new_file: false,
+            }),
+        ));
+        assert_eq!(
+            run_slash("/diff", &mut agent, &mut app),
+            SlashAction::Handled
+        );
+        let ui = agent.ui_messages();
+        let summary = &ui[ui.len() - 2];
+        assert!(summary.content.contains("session diff · 1 file(s) · +3 −1"));
+        let row = ui.last().unwrap();
+        assert_eq!(row.tool_call.as_ref().unwrap().name, "diff");
+        assert!(row.file_diff.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rewind_empty_history_reports_nothing() {
+        let (dir, mut app, mut agent) = fixture::build("rew");
+        assert_eq!(
+            run_slash("/rewind", &mut agent, &mut app),
+            SlashAction::Handled
+        );
+        assert!(last_ui_content(&agent).contains("nothing to rewind"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_without_edits_reports_error() {
+        let (dir, mut app, mut agent) = fixture::build("undo");
+        agent.push_ui_message(crate::chat::UiMessage::with_role(
+            crate::chat::UiRole::User,
+            "hi",
+        ));
+        assert_eq!(
+            run_slash("/undo", &mut agent, &mut app),
+            SlashAction::Handled
+        );
+        assert!(last_ui_content(&agent).contains("undo failed"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cd_to_missing_dir_reports_error() {
+        let (dir, mut app, mut agent) = fixture::build("cd");
+        assert_eq!(
+            run_slash("/cd /nonexistent-path-xyz", &mut agent, &mut app),
+            SlashAction::Handled
+        );
+        let ui = agent.ui_messages();
+        assert!(ui.iter().any(|m| m.content.contains("cd:")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -241,6 +241,11 @@ impl Agent {
             .push(UiMessage::with_role(UiRole::Error, content));
     }
 
+    /// Append a fully-formed UI message (e.g. `/diff` replay rows).
+    pub fn push_ui_message(&mut self, msg: UiMessage) {
+        self.ui_history.lock().unwrap().push(msg);
+    }
+
     pub fn finish_interrupt(&mut self) {
         remove_trailing_empty_assistant(&self.ui_history);
         self.finish_user_turn_api();
