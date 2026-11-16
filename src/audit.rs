@@ -8,6 +8,9 @@
 use std::io::Write;
 use std::path::Path;
 
+/// Rotate at 256 KiB → `audit.log.1` (bounded at ~512 KiB per workdir).
+const AUDIT_MAX_BYTES: u64 = 256 * 1024;
+
 /// Append one shell decision record. `result` should be a short status line,
 /// not full command output.
 pub fn log_shell(workdir: &Path, command: &str, decision: &str, result: &str) {
@@ -26,10 +29,14 @@ pub fn log_shell(workdir: &Path, command: &str, decision: &str, result: &str) {
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
+    let log = dir.join("audit.log");
+    if std::fs::metadata(&log).map(|m| m.len()).unwrap_or(0) > AUDIT_MAX_BYTES {
+        let _ = std::fs::rename(&log, dir.join("audit.log.1"));
+    }
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join("audit.log"))
+        .open(&log)
     {
         let _ = writeln!(f, "{line}");
     }
@@ -66,6 +73,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(text.contains("[REDACTED]"));
         assert!(!text.contains("abcdefghijklmnopqrstuvwx"));
+    }
+
+    #[test]
+    fn rotates_at_size_cap() {
+        let dir = std::env::temp_dir().join(format!("lightrs-audit3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".lightrs")).unwrap();
+        // Pre-seed an oversized log — next append must rotate it aside.
+        std::fs::write(dir.join(".lightrs/audit.log"), "x".repeat(260 * 1024)).unwrap();
+        log_shell(&dir, "ls", "auto", "exit=0");
+        let rotated = dir.join(".lightrs/audit.log.1");
+        assert!(rotated.exists(), "oversized log not rotated");
+        let text = std::fs::read_to_string(dir.join(".lightrs/audit.log")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(text.contains("\"decision\":\"auto\""));
+        assert!(text.len() < 1024, "fresh log must hold only new records");
     }
 
     #[test]

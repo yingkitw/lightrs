@@ -204,9 +204,7 @@ pub async fn post_chat_stream(
             break;
         };
         line_buf.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(newline) = line_buf.find('\n') {
-            let line = line_buf[..newline].trim_end_matches('\r').to_string();
-            line_buf = line_buf[newline + 1..].to_string();
+        for line in take_completed_lines(&mut line_buf)? {
             let Some(payload) = line.strip_prefix("data: ") else {
                 continue;
             };
@@ -219,9 +217,44 @@ pub async fn post_chat_stream(
     Ok(acc)
 }
 
+/// Drain newline-terminated lines out of `line_buf` (trailing `\r` trimmed,
+/// partial tail kept buffered). A single SSE line beyond 1 MiB is malformed —
+/// bound memory on streams that never emit a newline.
+const MAX_SSE_LINE_BYTES: usize = 1024 * 1024;
+
+fn take_completed_lines(line_buf: &mut String) -> Result<Vec<String>> {
+    if line_buf.len() > MAX_SSE_LINE_BYTES && !line_buf.contains('\n') {
+        bail!("stream line exceeded 1 MiB without a newline");
+    }
+    let mut lines = Vec::new();
+    while let Some(newline) = line_buf.find('\n') {
+        lines.push(line_buf[..newline].trim_end_matches('\r').to_string());
+        line_buf.drain(..=newline);
+    }
+    Ok(lines)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn take_completed_lines_splits_and_keeps_partial_tail() {
+        let mut buf = "data: one\r\ndata: two\npartial".to_string();
+        let lines = take_completed_lines(&mut buf).unwrap();
+        assert_eq!(lines, ["data: one", "data: two"]);
+        assert_eq!(buf, "partial", "unterminated tail stays buffered");
+    }
+
+    #[test]
+    fn take_completed_lines_bails_on_newlineless_megabyte() {
+        let mut buf = "x".repeat(MAX_SSE_LINE_BYTES + 1);
+        assert!(take_completed_lines(&mut buf).is_err());
+        // Same size WITH a newline drains normally.
+        buf.insert(3, '\n');
+        let lines = take_completed_lines(&mut buf).unwrap();
+        assert_eq!(lines.len(), 1);
+    }
 
     #[test]
     fn merges_content_deltas() {

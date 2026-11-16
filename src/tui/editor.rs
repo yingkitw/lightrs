@@ -4,7 +4,7 @@ use std::io::Stdout;
 use std::process::Command;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use crossterm::ExecutableCommand;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -59,17 +59,14 @@ fn run_editor_on_tempfile(editor: &str) -> Result<String> {
     let prog = parts.next().unwrap_or(editor);
     let args: Vec<&str> = parts.collect();
 
-    let status = Command::new(prog)
-        .args(&args)
-        .arg(&path)
-        .status()
-        .context("run $EDITOR")?;
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let status = Command::new(prog).args(&args).arg(&path).status();
+    let result = match status {
+        Ok(s) if s.success() => Ok(std::fs::read_to_string(&path).unwrap_or_default()),
+        Ok(s) => Err(anyhow::anyhow!("$EDITOR exited with {s}")),
+        Err(e) => Err(e).context("run $EDITOR"),
+    };
     let _ = std::fs::remove_file(&path);
-    if !status.success() {
-        bail!("$EDITOR exited with {status}");
-    }
-    Ok(text)
+    result
 }
 
 #[cfg(test)]
@@ -103,6 +100,15 @@ mod tests {
     fn missing_editor_errors() {
         let err = run_editor_on_tempfile("/nonexistent-lightrs-editor-xyz").unwrap_err();
         assert!(err.to_string().contains("run $EDITOR"), "err: {err}");
+    }
+
+    #[test]
+    fn tempfile_removed_on_editor_spawn_error() {
+        let path = std::env::temp_dir()
+            .join(format!("lightrs-prompt-{}.md", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let _ = run_editor_on_tempfile("/nonexistent-lightrs-editor-xyz");
+        assert!(!path.exists(), "tempfile leaked after spawn error");
     }
 
     #[test]

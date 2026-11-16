@@ -6,6 +6,10 @@ use anyhow::{Context, Result, bail};
 
 const BACKUP_DIR: &str = ".lightrs/backups";
 
+/// Keep at most this many snapshots per workdir — `/undo` only ever reads
+/// the newest per path, so the tail is preserved and growth stays bounded.
+const MAX_BACKUPS: usize = 256;
+
 /// Snapshot `content` before overwrite; returns backup path relative to workdir when created.
 pub fn snapshot_prior(workdir: &Path, file: &Path, content: &str) -> Result<Option<PathBuf>> {
     let rel = file
@@ -22,11 +26,40 @@ pub fn snapshot_prior(workdir: &Path, file: &Path, content: &str) -> Result<Opti
         fs::create_dir_all(parent).with_context(|| parent.display().to_string())?;
     }
     fs::write(&dest, content.as_bytes()).with_context(|| dest.display().to_string())?;
+    prune_backups(workdir);
     Ok(Some(
         dest.strip_prefix(workdir)
             .map(|p| p.to_path_buf())
             .unwrap_or(dest),
     ))
+}
+
+/// Drop oldest `.bak` files beyond `MAX_BACKUPS` (best-effort — pruning
+/// failures must not fail a write).
+fn prune_backups(workdir: &Path) {
+    let dir = workdir.join(BACKUP_DIR);
+    let Ok(rd) = fs::read_dir(&dir) else { return };
+    let mut files: Vec<(u64, PathBuf)> = rd
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let ts = name
+                .strip_suffix(".bak")?
+                .rsplit_once('.')?
+                .1
+                .parse::<u64>()
+                .ok()?;
+            Some((ts, e.path()))
+        })
+        .collect();
+    if files.len() <= MAX_BACKUPS {
+        return;
+    }
+    files.sort_by_key(|(ts, _)| *ts);
+    for (_, path) in files.drain(..files.len() - MAX_BACKUPS) {
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn safe_rel(rel: &str) -> String {
@@ -94,6 +127,21 @@ pub fn restore_from_backup(workdir: &Path, rel: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_keeps_newest_max_backups() {
+        let dir = tmp("prune");
+        for i in 0..(MAX_BACKUPS + 3) {
+            let f = dir.join(format!("f{i}.txt"));
+            snapshot_prior(&dir, &f, "v").unwrap();
+        }
+        let baks = dir.join(".lightrs/backups");
+        let count = fs::read_dir(&baks).unwrap().count();
+        assert_eq!(count, MAX_BACKUPS, "dir = {count} backups");
+        // Undo path intact: newest snapshot for a recent file resolves.
+        assert!(latest_backup_for_rel(&dir, "f258.txt").unwrap().is_some());
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn backup_name_roundtrip() {
