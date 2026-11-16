@@ -17,6 +17,8 @@ pub fn collapse_diff_preview(unified: &str) -> String {
 }
 
 pub fn render_unified_diff(unified: &str, width: usize) -> Vec<Line<'static>> {
+    // Diff bodies carry file bytes — strip terminal escapes before display.
+    let unified = crate::tools::shell::strip_ansi(unified);
     let mut out = Vec::new();
     for line in unified.lines() {
         let style = diff_line_style(line);
@@ -66,5 +68,17 @@ mod tests {
             .collect();
         assert!(joined.contains("+        let x"), "indent lost: {joined:?}");
         assert!(joined.contains("         let y"), "context indent lost: {joined:?}");
+    }
+
+    #[test]
+    fn render_strips_escapes_from_file_bytes() {
+        let diff = "@@ -1 +1 @@\n+\u{1b}[31mlet x = 1;\u{1b}[0m";
+        let lines = render_unified_diff(diff, 80);
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(!joined.contains('\u{1b}'), "escape leaked: {joined:?}");
+        assert!(joined.contains("let x = 1;"));
     }
 }

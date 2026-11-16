@@ -9,7 +9,8 @@ use super::paths::default_opencode_global_config;
 pub fn import_mcp(doc: &Value, dest: &Path) -> Result<()> {
     if let Some(mcp) = doc.get("mcp") {
         let path = dest.join("mcp.json");
-        fs::write(&path, serde_json::to_string_pretty(mcp)?).with_context(|| path.display().to_string())?;
+        crate::config::write_private_file(&path, &serde_json::to_string_pretty(mcp)?)
+            .with_context(|| path.display().to_string())?;
         println!("wrote {}", path.display());
     }
     Ok(())

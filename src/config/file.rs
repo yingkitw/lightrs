@@ -150,9 +150,28 @@ pub fn save_tui_theme(theme: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    std::fs::write(&path, toml::to_string_pretty(&root)?).with_context(|| {
+    write_private_file(&path, &toml::to_string_pretty(&root)?).with_context(|| {
         format!("write {}", path.display())
     })?;
+    Ok(())
+}
+
+/// Write a file that may hold secrets (`config.toml` carries `[keys]`,
+/// `mcp.json` can embed server env keys) with owner-only permissions.
+/// `mode(0o600)` applies at create; `set_permissions` normalizes a
+/// pre-existing permissive file (`OpenOptions` ignores `mode` on existing).
+pub(crate) fn write_private_file(path: &std::path::Path, contents: &str) -> Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    let mut f = opts
+        .open(path)
+        .with_context(|| format!("open {}", path.display()))?;
+    f.write_all(contents.as_bytes())?;
+    #[cfg(unix)]
+    std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     Ok(())
 }
 
@@ -324,6 +343,30 @@ mod tests {
 
         std::fs::write(project_config_path(&dir), "not [ valid").unwrap();
         assert!(load_project_config_file(&dir).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_private_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("lightrs-priv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        // New file → created 0o600.
+        write_private_file(&path, "[keys]\n").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[keys]\n");
+        // Existing 0o644 → normalized, not left permissive.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private_file(&path, "[keys]\nk = \"v\"\n").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

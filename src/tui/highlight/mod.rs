@@ -14,6 +14,9 @@ use ratatui::text::Line;
 pub use sys::render_system_body;
 
 pub fn render_message_body(content: &str, width: usize, base: Style) -> Vec<Line<'static>> {
+    // Model text is untrusted — strip terminal escapes (OSC 52/title etc.)
+    // before markdown parsing, same defense as tool-output paths.
+    let content = crate::tools::shell::strip_ansi(content);
     let content = content.trim_end();
     let lines = markdown::render_markdown(content, width, base);
     let lines = if lines.is_empty() {
@@ -123,6 +126,24 @@ mod tests {
             .collect();
         assert!(joined.contains("# not a heading | a|b"));
         assert!(!joined.contains('\u{1b}'), "no raw escapes: {joined:?}");
+    }
+
+    #[test]
+    fn message_body_strips_terminal_escapes() {
+        // Model output is untrusted — OSC 52 (clipboard) / CSI must not
+        // reach the terminal through the markdown path.
+        let lines = render_message_body(
+            "look \u{1b}]52;c;aGk=\u{7} here \u{1b}[31mred\u{1b}[0m",
+            80,
+            Style::default(),
+        );
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(!joined.contains('\u{1b}'), "escape leaked: {joined:?}");
+        assert!(!joined.contains("aGk="), "OSC payload leaked: {joined:?}");
+        assert!(joined.contains("look") && joined.contains("red"));
     }
 
     #[test]

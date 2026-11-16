@@ -209,7 +209,9 @@ fn render_tool_block(
         header.push(Span::styled(
             format!(
                 "{} +{} −{}",
-                fd.path, fd.lines_added, fd.lines_removed
+                crate::tools::shell::strip_ansi(&fd.path),
+                fd.lines_added,
+                fd.lines_removed
             ),
             Style::default().fg(theme::active().tool_args),
         ));
@@ -249,11 +251,13 @@ fn render_tool_block(
     }
     if let Some(fd) = &m.file_diff {
         let label = if fd.is_new_file {
-            format!("diff: {} (new file)", fd.path)
+            format!("diff: {} (new file)", crate::tools::shell::strip_ansi(&fd.path))
         } else {
             format!(
                 "diff: {} (+{} −{})",
-                fd.path, fd.lines_added, fd.lines_removed
+                crate::tools::shell::strip_ansi(&fd.path),
+                fd.lines_added,
+                fd.lines_removed
             )
         };
         lines.push(Line::from(Span::styled(
@@ -338,6 +342,9 @@ fn collapse_result(text: &str) -> String {
 }
 
 fn truncate_inline(s: &str, max: usize) -> String {
+    // Tool args are model-generated — escapes embedded mid-token survive
+    // split_whitespace, so strip first.
+    let s = crate::tools::shell::strip_ansi(s);
     let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= max {
         return flat;
@@ -372,6 +379,14 @@ mod tests {
     fn pretty_prints_json_args() {
         let s = format_args_detail(r#"{"path":"a.rs"}"#);
         assert!(s.contains("path"));
+    }
+
+    #[test]
+    fn truncate_inline_strips_embedded_escapes() {
+        // Escapes mid-token survive split_whitespace — must be stripped.
+        let out = truncate_inline("{\"cmd\":\"x\u{1b}[2Jy\"}", 72);
+        assert!(!out.contains('\u{1b}'), "escape leaked: {out:?}");
+        assert!(out.contains("cmd"));
     }
 
     #[test]
