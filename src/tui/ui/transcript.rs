@@ -8,7 +8,8 @@ use crate::agent::Agent;
 use crate::chat::{UiMessage, UiRole};
 use crate::tui::app::{App, RunState};
 use crate::tui::highlight::{
-    collapse_diff_preview, render_message_body, render_pre_body, render_system_body, render_unified_diff,
+    collapse_diff_preview, render_file_result_body, render_message_body, render_pre_body,
+    render_system_body, render_unified_diff,
 };
 use crate::tui::theme;
 
@@ -236,9 +237,39 @@ fn render_tool_block(
             "result:",
             result_style(&body).add_modifier(Modifier::ITALIC),
         )));
-        lines.extend(render_pre_body(&body, width, result_style(&body)));
+        lines.extend(render_result_body(tc, &body, width));
     }
     lines.push(Line::from(""));
+}
+
+/// `read_file` results are source text — syntax-highlight them with the path
+/// extension. Everything else stays literal pre: tool output is data, never
+/// markdown (a shell result's `#`/`|`/backticks would mangle under parsing).
+/// `error:` bodies keep the flat error style.
+fn render_result_body(tc: &crate::chat::ToolCallUi, body: &str, width: usize) -> Vec<Line<'static>> {
+    let style = result_style(body);
+    if body.trim_start().starts_with("error") {
+        return render_pre_body(body, width, style);
+    }
+    match file_result_lang(tc) {
+        Some(lang) => render_file_result_body(body, &lang, width),
+        None => render_pre_body(body, width, style),
+    }
+}
+
+/// Language hint from a file-tool call's `path` argument. The extension goes
+/// straight to syntect (token → extension → plain-text fallback inside
+/// `highlight_code`), so uncommon extensions still resolve.
+fn file_result_lang(tc: &crate::chat::ToolCallUi) -> Option<String> {
+    if tc.name != "read_file" {
+        return None;
+    }
+    let args: serde_json::Value = serde_json::from_str(&tc.arguments).ok()?;
+    let path = args.get("path")?.as_str()?;
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_string)
 }
 
 /// Tool bodies that begin `error:` render in the error color; successes in
@@ -317,5 +348,65 @@ mod tests {
         assert_eq!(tool_msg_index_at_line(12, &spans), Some(3));
         assert_eq!(tool_msg_index_at_line(9, &spans), None);
         assert_eq!(tool_msg_index_at_line(30, &spans), Some(7));
+    }
+
+    #[test]
+    fn file_result_lang_reads_path_extension() {
+        let tc = crate::chat::ToolCallUi {
+            name: "read_file".into(),
+            arguments: r#"{"path":"src/main.ts"}"#.into(),
+        };
+        assert_eq!(file_result_lang(&tc).as_deref(), Some("ts"));
+    }
+
+    #[test]
+    fn file_result_lang_ignores_non_file_tools() {
+        for (name, args) in [
+            ("run_command", r#"{"command":"cat a.rs"}"#),
+            ("write_file", r#"{"path":"a.rs","content":"x"}"#),
+            ("read_file", r#"{"path":"LICENSE"}"#),
+            ("read_file", "not json"),
+        ] {
+            let tc = crate::chat::ToolCallUi {
+                name: name.into(),
+                arguments: args.into(),
+            };
+            assert!(file_result_lang(&tc).is_none(), "{name} {args}");
+        }
+    }
+
+    #[test]
+    fn result_body_highlights_read_file_source() {
+        let tc = crate::chat::ToolCallUi {
+            name: "read_file".into(),
+            arguments: r#"{"path":"a.rs"}"#.into(),
+        };
+        let lines = render_result_body(&tc, "fn main() {\n    let x = 1;\n}", 80);
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("    let x"), "indent lost: {joined:?}");
+        assert!(
+            lines[0].spans.iter().any(|s| s.style.fg.is_some()),
+            "expected syntax colors on code result"
+        );
+    }
+
+    #[test]
+    fn result_body_keeps_errors_and_shell_literal() {
+        let err = crate::chat::ToolCallUi {
+            name: "read_file".into(),
+            arguments: r#"{"path":"a.rs"}"#.into(),
+        };
+        let lines = render_result_body(&err, "error: not found", 80);
+        assert_eq!(lines[0].style.fg, Some(theme::active().error));
+
+        let shell = crate::chat::ToolCallUi {
+            name: "run_command".into(),
+            arguments: r#"{"command":"ls"}"#.into(),
+        };
+        let lines = render_result_body(&shell, "# not a heading | literal", 80);
+        assert_eq!(lines.len(), 1, "shell output must not reflow as markdown");
     }
 }

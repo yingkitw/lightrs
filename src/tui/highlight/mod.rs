@@ -38,6 +38,15 @@ pub fn render_pre_body(content: &str, width: usize, base: Style) -> Vec<Line<'st
     strip_trailing_blank_lines(lines)
 }
 
+/// File-reading tool results are source text — syntax-highlight with the
+/// fenced-code path keyed on a language/extension token. ANSI is stripped
+/// first: file bytes are untrusted input and escapes would inject terminal
+/// control into the transcript.
+pub fn render_file_result_body(content: &str, lang: &str, width: usize) -> Vec<Line<'static>> {
+    let content = crate::tools::shell::strip_ansi(content);
+    wrap::wrap_code_lines(syntect::highlight_code(&content, lang), width)
+}
+
 fn strip_trailing_blank_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
     while let Some(last) = lines.last() {
         if last.spans.iter().all(|s| s.content.trim().is_empty()) {
