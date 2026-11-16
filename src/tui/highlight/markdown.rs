@@ -11,7 +11,7 @@ use super::wrap::wrap_styled_lines;
 fn code_block_lines(code: &str, lang: &str, width: usize) -> Vec<Line<'static>> {
     let trimmed = code.trim_end_matches('\n');
     let highlighted = highlight_code(trimmed, lang);
-    wrap_styled_lines(highlighted, width)
+    super::wrap::wrap_code_lines(highlighted, width)
 }
 
 pub(crate) fn render_markdown(content: &str, width: usize, base: Style) -> Vec<Line<'static>> {

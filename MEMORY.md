@@ -291,7 +291,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 ## Mermaid ASCII layout (2026-11-15)
 
 - `tui/highlight/mermaid.rs` renders real diagrams: Kahn longest-path ranks → layers, barycenter ordering, `Canvas` char grid. Key invariant: `put_line` never writes into `blocked` (box) cells — edges pass *behind* boxes; `junction()` merges overlapping line cells into `┬`/`├`/`┼` from a neighbor bitmask.
-- **Gotcha**: `wrap_plain_lines` word-wraps via `split_whitespace` — it destroys ASCII-art indentation. `MermaidView.pre_wrapped` rows bypass it (emit `Line::styled` directly). Any preformatted block must not go through the word-wrap path.
+- **Gotcha**: `wrap_plain_lines`/`wrap_styled_lines` word-wrap via `split_whitespace` — they destroy indentation, tabs, and ASCII-art spacing. Anything whitespace-significant goes through `wrap_code_lines` (verbatim, char-boundary hard-wrap): code fences, `render_pre_body` tool output, unified diffs, mermaid diagram/source rows. `wrap_plain_lines` remains correct only for prose (message fallback, `[sys]` notices). Audit: `grep -rn "wrap_plain_lines" src/tui/highlight/` — every hit must be a prose path.
 - Panel styling: `Canvas.kind` grid (0=edge, 1=box border, 2=box label) survives layout → `segment_row` splits each row into styled spans over the `code_bg`/`inline_code_bg`/`muted`/`text` ladder, padded to a solid rectangle. Reuses existing palette colors — no new theme fields.
 - Fallbacks → flat edge list: cycles (Kahn leaves nodes unprocessed), `BT`/`RL` directions, `width < 24` or canvas > width, >48 nodes. `flowchart`/`graph` default to TD when no direction keyword.
 

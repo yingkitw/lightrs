@@ -68,6 +68,50 @@ fn push_long_token(
     }
 }
 
+/// Verbatim wrap for code/pre lines: every character — leading whitespace,
+/// tabs, internal spacing — is preserved; a line is only hard-broken when it
+/// exceeds `width`. Used for fenced code and tool output where whitespace is
+/// content, unlike prose which re-flows through `wrap_styled_lines`.
+pub(crate) fn wrap_code_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return lines;
+    }
+    let mut out = Vec::new();
+    for line in lines {
+        let total: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        if total <= width {
+            out.push(line);
+            continue;
+        }
+        let mut row: Vec<Span<'static>> = Vec::new();
+        let mut col = 0usize;
+        for span in line.spans {
+            let mut rest = span.content.into_owned();
+            while !rest.is_empty() {
+                if col == width {
+                    out.push(Line::from(std::mem::take(&mut row)));
+                    col = 0;
+                }
+                // Byte length of the first `width - col` chars.
+                let room = width - col;
+                let bytes: usize = rest
+                    .chars()
+                    .take(room)
+                    .map(char::len_utf8)
+                    .sum();
+                let tail = rest.split_off(bytes);
+                col += rest.chars().count();
+                row.push(Span::styled(rest, span.style));
+                rest = tail;
+            }
+        }
+        if !row.is_empty() {
+            out.push(Line::from(row));
+        }
+    }
+    out
+}
+
 pub(crate) fn wrap_styled_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
     if width == 0 {
         return lines;

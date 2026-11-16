@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 
 use crate::tui::theme;
 
-use super::wrap::wrap_plain_lines;
+use super::wrap::wrap_code_lines;
 
 #[derive(Debug, Clone)]
 struct Edge {
@@ -74,17 +74,23 @@ pub fn render_mermaid(source: &str, width: usize) -> Vec<Line<'static>> {
             )));
         } else {
             for row in &view.body {
-                out.extend(wrap_plain_lines(row, width, edge_style));
+                out.extend(wrap_code_lines(
+                    vec![Line::styled(row.clone(), edge_style)],
+                    width,
+                ));
             }
         }
     }
 
     out.push(Line::from(Span::styled("source:", note_style)));
     let code_style = theme::code_block();
-    out.extend(wrap_plain_lines(
-        source.trim_end_matches('\n'),
+    out.extend(wrap_code_lines(
+        source
+            .trim_end_matches('\n')
+            .split('\n')
+            .map(|l| Line::styled(l.to_string(), code_style))
+            .collect(),
         width,
-        code_style,
     ));
     out.push(Line::from(""));
     out
