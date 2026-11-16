@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -34,56 +33,111 @@ pub fn run_command(
         );
     }
     let timeout = args.timeout_secs.unwrap_or(120).min(600);
-    let mut child = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(&args.command)
         .current_dir(workdir)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .context("spawn shell")?;
+        .stderr(std::process::Stdio::piped());
+    // Own process group → timeout can kill `sh`'s whole subprocess tree
+    // (builds, servers, sleeps), not just the shell.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn().context("spawn shell")?;
+
+    // Drain pipes on threads — a child that fills the OS pipe buffer blocks
+    // on write and never exits, so reading only after try_wait would stall
+    // every high-output command until the timeout.
+    let out_rd = child
+        .stdout
+        .take()
+        .map(|s| drain_stream(s, MAX_SHELL_STREAM_BYTES));
+    let err_rd = child
+        .stderr
+        .take()
+        .map(|s| drain_stream(s, MAX_SHELL_STREAM_BYTES));
 
     let started = std::time::Instant::now();
-    loop {
+    let status = loop {
         if let Some(status) = child.try_wait().context("wait command")? {
-            let mut out = String::new();
-            let mut out_trunc = false;
-            if let Some(mut stdout) = child.stdout.take() {
-                let (text, truncated) = read_limited(&mut stdout, MAX_SHELL_STREAM_BYTES)?;
-                out = strip_ansi(&text);
-                out_trunc = truncated;
-            }
-            let mut err = String::new();
-            let mut err_trunc = false;
-            if let Some(mut stderr) = child.stderr.take() {
-                let (text, truncated) = read_limited(&mut stderr, MAX_SHELL_STREAM_BYTES)?;
-                err = strip_ansi(&text);
-                err_trunc = truncated;
-            }
-            let mut body = format!(
-                "exit={}\n--- stdout ---\n{}",
-                status.code().unwrap_or(-1),
-                out.trim_end(),
-            );
-            if out_trunc {
-                body.push_str(&format!(
-                    "\n[stdout truncated at {MAX_SHELL_STREAM_BYTES} bytes]"
-                ));
-            }
-            body.push_str(&format!("\n--- stderr ---\n{}", err.trim_end()));
-            if err_trunc {
-                body.push_str(&format!(
-                    "\n[stderr truncated at {MAX_SHELL_STREAM_BYTES} bytes]"
-                ));
-            }
-            return Ok(body);
+            break status;
         }
         if started.elapsed() > Duration::from_secs(timeout) {
-            let _ = child.kill();
+            kill_process_tree(&mut child);
             bail!("command timed out after {timeout}s");
         }
         std::thread::sleep(Duration::from_millis(50));
+    };
+    let (out, out_trunc) = out_rd.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
+    let (err, err_trunc) = err_rd.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
+    let out = strip_ansi(&String::from_utf8_lossy(&out));
+    let err = strip_ansi(&String::from_utf8_lossy(&err));
+
+    let mut body = format!(
+        "exit={}\n--- stdout ---\n{}",
+        status.code().unwrap_or(-1),
+        out.trim_end(),
+    );
+    if out_trunc {
+        body.push_str(&format!(
+            "\n[stdout truncated at {MAX_SHELL_STREAM_BYTES} bytes]"
+        ));
     }
+    body.push_str(&format!("\n--- stderr ---\n{}", err.trim_end()));
+    if err_trunc {
+        body.push_str(&format!(
+            "\n[stderr truncated at {MAX_SHELL_STREAM_BYTES} bytes]"
+        ));
+    }
+    Ok(body)
+}
+
+/// Drain a child pipe on a reader thread, retaining at most `max` bytes —
+/// data past the cap is **still consumed** so the child never blocks on a
+/// full pipe (it would otherwise stall until the timeout).
+pub(crate) fn drain_stream(
+    mut r: impl std::io::Read + Send + 'static,
+    max: usize,
+) -> std::thread::JoinHandle<(Vec<u8>, bool)> {
+    std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut tmp = [0u8; 8192];
+        let mut truncated = false;
+        loop {
+            match r.read(&mut tmp) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let room = max.saturating_sub(kept.len());
+                    if room > 0 {
+                        kept.extend_from_slice(&tmp[..n.min(room)]);
+                    }
+                    truncated |= kept.len() >= max;
+                }
+            }
+        }
+        (kept, truncated)
+    })
+}
+
+/// Kill a timed-out command and **reap** it. `kill()` alone signals the
+/// shell and leaves an un-waited zombie; and without a group kill the
+/// shell's children (sleep/build/server) keep running orphaned.
+pub(crate) fn kill_process_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // Child leads its own group (process_group(0) at spawn): negative
+        // pid targets the group. POSIX requires `--` before a negative pid
+        // operand; ignore failure and still signal the direct child below.
+        let pgid = child.id();
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pgid}")])
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Strip ANSI escape sequences (CSI `ESC[…final`, OSC `ESC]…BEL`/`ESC\`,
@@ -123,34 +177,6 @@ pub(crate) fn strip_ansi(s: &str) -> String {
     out
 }
 
-fn read_limited(r: &mut impl Read, max: usize) -> Result<(String, bool)> {
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 8192];
-    let mut truncated = false;
-    loop {
-        if buf.len() >= max {
-            truncated = true;
-            let mut drain = [0u8; 8192];
-            while r.read(&mut drain)? > 0 {}
-            break;
-        }
-        let space = max - buf.len();
-        let take = space.min(chunk.len());
-        let n = r.read(&mut chunk[..take])?;
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        if buf.len() >= max {
-            truncated = true;
-            let mut drain = [0u8; 8192];
-            while r.read(&mut drain)? > 0 {}
-            break;
-        }
-    }
-    Ok((String::from_utf8_lossy(&buf).into_owned(), truncated))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,5 +208,48 @@ mod tests {
                 // python3 may be missing in CI — skip assert
             }
         }
+    }
+
+    /// Output > OS pipe buffer must return promptly — reading only after
+    /// exit deadlocks the child on a full pipe until the timeout.
+    #[test]
+    fn high_output_command_returns_without_timeout() {
+        let dir = std::env::temp_dir();
+        let args = RunCommandArgs {
+            command: "seq 100000".into(), // ~590 KiB ≫ 64 KiB pipe buffer
+            timeout_secs: Some(10),
+        };
+        let policy = ShellPolicy::default();
+        let t = std::time::Instant::now();
+        let out = run_command(&dir, args, &policy, true).unwrap();
+        assert!(
+            t.elapsed() < Duration::from_secs(8),
+            "blocked on full pipe for {:?}",
+            t.elapsed()
+        );
+        assert!(out.contains("[stdout truncated at"), "out: {out:.200}");
+    }
+
+    /// A timed-out command must kill its whole process group — a `sleep`
+    /// grandchild can't survive to write its marker — and the shell must be
+    /// reaped (no zombie), observable via `kill -0` failing after return.
+    #[cfg(unix)]
+    #[test]
+    fn timeout_kills_process_group_and_reaps() {
+        let dir = std::env::temp_dir().join(format!("lightrs-shell-{}", std::process::id()));
+        let marker = dir.join("marker");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let args = RunCommandArgs {
+            command: format!("(sleep 1; touch {}) & sleep 30", marker.display()),
+            timeout_secs: Some(1),
+        };
+        let policy = ShellPolicy::default();
+        let err = run_command(&dir, args, &policy, true).unwrap_err();
+        assert!(err.to_string().contains("timed out"), "{err:#}");
+        // Group-killed grandchild never writes the marker.
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(!marker.exists(), "sleep grandchild survived group kill");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

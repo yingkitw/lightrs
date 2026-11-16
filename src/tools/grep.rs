@@ -109,12 +109,39 @@ fn try_ripgrep(
     if case_insensitive {
         cmd.arg("-i");
     }
-    let out = cmd.output().context("spawn rg")?;
-    let code = out.status.code();
-    if !out.status.success() && !matches!(code, Some(0) | Some(1)) {
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn().context("spawn rg")?;
+    // Bounded drain keeps memory flat on huge result sets AND prevents a
+    // full-pipe stall; the deadline bounds pathological walks (no output()
+    // call exists that both pipes and times out).
+    let out_rd = child
+        .stdout
+        .take()
+        .map(|s| crate::tools::shell::drain_stream(s, MAX_SHELL_STREAM_BYTES * 2));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        if let Some(s) = child.try_wait().context("wait rg")? {
+            break s;
+        }
+        if std::time::Instant::now() >= deadline {
+            crate::tools::shell::kill_process_tree(&mut child);
+            let _ = out_rd.map(|h| h.join());
+            return Ok(Some("error: ripgrep timed out after 60s".into()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let (raw, _) = out_rd.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
+    let code = status.code();
+    if !status.success() && !matches!(code, Some(0) | Some(1)) {
         return Ok(None);
     }
-    let raw = String::from_utf8_lossy(&out.stdout).into_owned();
+    let raw = String::from_utf8_lossy(&raw).into_owned();
     let line_count = raw.lines().count();
     if line_count == 0 {
         return Ok(Some(format!(
