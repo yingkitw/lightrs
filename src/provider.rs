@@ -1,3 +1,4 @@
+pub mod dialect;
 pub mod http;
 pub mod stream;
 
@@ -11,6 +12,7 @@ pub use http::build_http_client;
 pub use stream::{StreamApply, StreamAccumulator, post_chat_stream, replay_sse_body};
 
 use crate::chat::{ApiErrorBody, ApiMessage, ChatRequest, ChatResponse, TokenUsage};
+use dialect::ModelDialect;
 use http::{HttpRetryOptions, auth_headers, post_json_with_retry};
 
 /// Pinned boxed future — keeps `ModelClient` object-safe without `async-trait`.
@@ -36,10 +38,13 @@ pub trait ModelClient: Send + Sync {
     fn model(&self) -> &str;
 
     /// Send one request; returns `(assistant message, finish reason, usage)`.
+    /// Every parsed stream part reaches `on_apply` — content text, reasoning
+    /// (`reasoning_content`, also emitted once post-hoc for non-stream and
+    /// inline-think replies), and tool-argument deltas.
     fn send<'a>(
         &'a self,
         request: ChatRequest,
-        on_delta: &'a mut (dyn FnMut(&str) + Send),
+        on_apply: &'a mut (dyn FnMut(StreamApply) + Send),
         cancel: watch::Receiver<bool>,
     ) -> BoxFuture<'a, Result<ModelReply>>;
 }
@@ -53,6 +58,7 @@ pub struct LlmClient {
     base_url: String,
     api_key: String,
     model: String,
+    dialect: ModelDialect,
 }
 
 impl LlmClient {
@@ -61,6 +67,7 @@ impl LlmClient {
             http: build_http_client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
+            dialect: ModelDialect::for_model(&model),
             model,
         }
     }
@@ -154,27 +161,38 @@ impl ModelClient for LlmClient {
     fn send<'a>(
         &'a self,
         request: ChatRequest,
-        on_delta: &'a mut (dyn FnMut(&str) + Send),
+        on_apply: &'a mut (dyn FnMut(StreamApply) + Send),
         cancel: watch::Receiver<bool>,
     ) -> BoxFuture<'a, Result<ModelReply>> {
         Box::pin(async move {
             let mut request = request;
+            let finish = |mut message: ApiMessage,
+                          finish_reason: Option<String>,
+                          usage: Option<TokenUsage>,
+                          on_apply: &mut (dyn FnMut(StreamApply) + Send)| {
+                self.dialect.adapt(&mut message);
+                // Reasoning that never streamed as deltas (non-stream replies,
+                // inline `<think>` splits) reaches the UI as one post-hoc
+                // apply — field-streamed reasoning already arrived live, so
+                // `into_assistant_message` leaves `reasoning_content` unset.
+                if let Some(reasoning) = message.reasoning_content.clone() {
+                    on_apply(StreamApply::ReasoningDelta(reasoning));
+                }
+                (message, finish_reason, usage)
+            };
             match self
-                .chat_stream(
-                    request.clone(),
-                    |apply| {
-                        if let StreamApply::ContentDelta(text) = apply {
-                            on_delta(&text);
-                        }
-                    },
-                    cancel,
-                )
+                .chat_stream(request.clone(), &mut *on_apply, cancel)
                 .await
             {
                 Ok(acc) => {
                     let finish_reason = acc.finish_reason.clone();
                     let usage = acc.usage;
-                    Ok((acc.into_assistant_message(), finish_reason, usage))
+                    Ok(finish(
+                        acc.into_assistant_message(),
+                        finish_reason,
+                        usage,
+                        on_apply,
+                    ))
                 }
                 Err(e) if is_interrupted(&e) => Err(e),
                 // SSE failed mid-connect — retry once as a plain chat request.
@@ -186,7 +204,12 @@ impl ModelClient for LlmClient {
                         .into_iter()
                         .next()
                         .ok_or_else(|| anyhow::anyhow!("empty choices"))?;
-                    Ok((choice.message, choice.finish_reason, response.usage))
+                    Ok(finish(
+                        choice.message,
+                        choice.finish_reason,
+                        response.usage,
+                        on_apply,
+                    ))
                 }
             }
         })
@@ -220,6 +243,7 @@ impl MockModel {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+                    reasoning_content: None,
         };
         Self::new(model, vec![Ok((msg, Some("stop".into()), None))])
     }
@@ -234,7 +258,7 @@ impl ModelClient for MockModel {
     fn send<'a>(
         &'a self,
         request: ChatRequest,
-        _on_delta: &'a mut (dyn FnMut(&str) + Send),
+        on_apply: &'a mut (dyn FnMut(StreamApply) + Send),
         _cancel: watch::Receiver<bool>,
     ) -> BoxFuture<'a, Result<ModelReply>> {
         self.requests.lock().unwrap().push(request);
@@ -251,11 +275,19 @@ impl ModelClient for MockModel {
                         tool_calls: None,
                         tool_call_id: None,
                         name: None,
+                        reasoning_content: None,
                     },
                     Some("stop".into()),
                     None,
                 ))
             });
+        // Mirror LlmClient: reasoning_content on the reply reaches the
+        // caller as a post-hoc ReasoningDelta.
+        if let Ok((msg, _, _)) = &reply
+            && let Some(r) = msg.reasoning_content.clone()
+        {
+            on_apply(StreamApply::ReasoningDelta(r));
+        }
         Box::pin(async move { reply })
     }
 }

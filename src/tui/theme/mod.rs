@@ -113,6 +113,7 @@ pub fn role_tag(role: UiRole) -> (&'static str, Style) {
         UiRole::Tool => "tool",
         UiRole::System => "sys",
         UiRole::Error => "err",
+        UiRole::Thinking => "think",
     };
     let color = match role {
         UiRole::User => active().user,
@@ -120,6 +121,7 @@ pub fn role_tag(role: UiRole) -> (&'static str, Style) {
         UiRole::Tool => active().tool,
         UiRole::System => active().system,
         UiRole::Error => active().error,
+        UiRole::Thinking => active().muted,
     };
     (
         label,

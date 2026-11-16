@@ -11,7 +11,7 @@ use crate::tui::AgentEvent;
 
 use super::approval::{ShellGate, resolve_shell_gate};
 use super::helpers::{
-    MAX_TOOL_STEPS, append_assistant_delta, normalize_assistant_text,
+    MAX_TOOL_STEPS, append_assistant_delta, append_thinking_delta, normalize_assistant_text,
     remove_trailing_empty_assistant, truncate_tool_ui,
 };
 use super::{Agent, ObserveEvent};
@@ -167,9 +167,17 @@ impl Agent {
         cancel: watch::Receiver<bool>,
     ) -> Result<crate::provider::ModelReply> {
         on(ObserveEvent::ModelWait);
-        let mut on_delta = |text: &str| append_assistant_delta(ui_history, text, on);
+        let mut on_apply = |apply: crate::provider::StreamApply| match apply {
+            crate::provider::StreamApply::ContentDelta(text) => {
+                append_assistant_delta(ui_history, &text, on)
+            }
+            crate::provider::StreamApply::ReasoningDelta(text) => {
+                append_thinking_delta(ui_history, &text, on)
+            }
+            crate::provider::StreamApply::ToolArgumentsDelta { .. } => {}
+        };
         match client
-            .send(request.clone(), &mut on_delta, cancel.clone())
+            .send(request.clone(), &mut on_apply, cancel.clone())
             .await
         {
             Err(e) if is_interrupted(&e) => Err(e),
@@ -181,7 +189,7 @@ impl Agent {
                 ));
                 let mut retry = request;
                 retry.model = fb.model().to_string();
-                fb.send(retry, &mut on_delta, cancel).await
+                fb.send(retry, &mut on_apply, cancel).await
             }
             ok => ok,
         }
@@ -625,6 +633,31 @@ mod model_tests {
                 .iter()
                 .any(|m| m.content.contains("retrying with fallback"))
         );
+    }
+
+    #[tokio::test]
+    async fn reasoning_content_lands_in_thinking_row() {
+        let msg = ApiMessage {
+            role: crate::chat::ApiRole::Assistant,
+            content: Some(serde_json::Value::String("the answer".into())),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            reasoning_content: Some("step by step".into()),
+        };
+        let primary: Arc<dyn ModelClient> = Arc::new(MockModel::new(
+            "m",
+            vec![Ok((msg, Some("stop".into()), None))],
+        ));
+        let ui = Arc::new(Mutex::new(Vec::new()));
+        let (_tx, rx) = watch::channel(false);
+        Agent::fetch_model_message(&primary, None, chat_request(), &ui, &mut |_| {}, rx)
+            .await
+            .expect("reply");
+        let lock = ui.lock().unwrap();
+        assert_eq!(lock.len(), 1);
+        assert_eq!(lock[0].role, UiRole::Thinking);
+        assert_eq!(lock[0].content, "step by step");
     }
 
     #[tokio::test]

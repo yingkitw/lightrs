@@ -8,7 +8,8 @@ chat.rs                 ApiMessage, UiMessage, ToolCallUi, FileDiffUi
 session/                Per-workdir JSON save/load; `export.rs` markdown export, `undo.rs` file-restore
 paths.rs                ~/.config/lightrs paths (no directories crate)
 provider.rs             `ModelClient` trait + `LlmClient` HTTP impl (SSE→non-stream fallback inside `send`)
-provider/stream.rs      SSE reassembly for streaming + tool_calls
+provider/stream.rs      SSE reassembly for streaming + tool_calls + reasoning deltas
+provider/dialect.rs     `ModelDialect` — per-model response policy (lenient parse + inline `<think>` split)
 agent/                  mod, turn, approval, prompt, helpers, workdir_context — tool loop (max 16)
 agent/context/          context budget: wire (request window), compact (stored history), tokens (est/usage) — see docs/context.md
 skills/                 SKILL.md discovery + rules; `$id` attach + system catalog

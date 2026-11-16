@@ -67,6 +67,7 @@ fn role_heading(role: UiRole) -> &'static str {
         UiRole::Tool => "Tool",
         UiRole::System => "System",
         UiRole::Error => "Error",
+        UiRole::Thinking => "Thinking",
     }
 }
 

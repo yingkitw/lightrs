@@ -156,6 +156,7 @@ fn transcript_lines(
         let (label, label_style) = theme::role_tag(m.role);
         let body_style = match m.role {
             UiRole::Tool => theme::body_muted(),
+            UiRole::Thinking => theme::body_muted().add_modifier(Modifier::ITALIC),
             UiRole::Error => theme::error(),
             _ => theme::body(),
         };

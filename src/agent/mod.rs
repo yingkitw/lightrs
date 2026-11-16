@@ -487,6 +487,7 @@ mod streaming_tests {
             }]),
             tool_call_id: None,
             name: None,
+            reasoning_content: None,
         };
         for i in 0..8 {
             agent.api_history.push(ApiMessage::user(format!("u{i}")));

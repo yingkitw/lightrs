@@ -146,6 +146,7 @@ mod tests {
             }]),
             tool_call_id: None,
             name: None,
+            reasoning_content: None,
         }
     }
 

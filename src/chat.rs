@@ -8,6 +8,9 @@ pub enum UiRole {
     Tool,
     System,
     Error,
+    /// Model reasoning (`reasoning_content` field, `<think>` splits) — shown
+    /// muted in the transcript, never part of the API history.
+    Thinking,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -116,6 +119,12 @@ pub struct ApiMessage {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Receive-only: reasoning text some models return beside `content`
+    /// (`reasoning_content`, GLM/Kimi-thinking/MiniMax/DeepSeek style, or a
+    /// `<think>` split applied by the response dialect). Never serialized —
+    /// providers must not get reasoning echoed back, and sessions don't keep it.
+    #[serde(default, skip_serializing)]
+    pub reasoning_content: Option<String>,
 }
 
 impl ApiMessage {
@@ -126,6 +135,7 @@ impl ApiMessage {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            reasoning_content: None,
         }
     }
 
@@ -136,6 +146,7 @@ impl ApiMessage {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            reasoning_content: None,
         }
     }
 
@@ -146,11 +157,25 @@ impl ApiMessage {
             tool_calls: None,
             tool_call_id: Some(id.into()),
             name: Some(name.into()),
+            reasoning_content: None,
         }
     }
 
+    /// Text body — handles both `"content": "…"` and the parts-array form
+    /// `"content": [{"type":"text","text":"…"}]` some providers return.
     pub fn text_content(&self) -> Option<String> {
-        self.content.as_ref().and_then(|v| v.as_str().map(str::to_owned))
+        match self.content.as_ref()? {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Array(parts) => {
+                let text: String = parts
+                    .iter()
+                    .filter(|p| p.get("type").and_then(|t| t.as_str()) == Some("text"))
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                    .collect();
+                if text.is_empty() { None } else { Some(text) }
+            }
+            _ => None,
+        }
     }
 }
 
@@ -224,6 +249,36 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn reasoning_content_is_receive_only() {
+        let mut msg = ApiMessage::user("x");
+        msg.role = ApiRole::Assistant;
+        msg.reasoning_content = Some("chain".into());
+        let wire = serde_json::to_string(&msg).unwrap();
+        assert!(
+            !wire.contains("reasoning"),
+            "reasoning must never go back on the wire: {wire}"
+        );
+        // But it deserializes in from provider responses.
+        let back: ApiMessage =
+            serde_json::from_str(r#"{"role":"assistant","content":"a","reasoning_content":"why"}"#)
+                .unwrap();
+        assert_eq!(back.reasoning_content.as_deref(), Some("why"));
+    }
+
+    #[test]
+    fn text_content_accepts_parts_arrays() {
+        let mut msg = ApiMessage::user("");
+        msg.content = Some(serde_json::json!([
+            {"type": "text", "text": "Hel"},
+            {"type": "image", "url": "x"},
+            {"type": "text", "text": "lo"},
+        ]));
+        assert_eq!(msg.text_content().as_deref(), Some("Hello"));
+        msg.content = Some(serde_json::json!([{"type": "image", "url": "x"}]));
+        assert!(msg.text_content().is_none());
+    }
 
     #[test]
     fn parses_optional_usage() {

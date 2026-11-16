@@ -49,6 +49,28 @@ pub(crate) fn append_assistant_delta(
     on(ObserveEvent::AssistantDelta { text: chunk });
 }
 
+/// Append streamed reasoning text to the trailing `[think]` row, creating it
+/// on first delta. Reasoning arrives before content (providers emit it
+/// first), so the think row naturally precedes the assistant row.
+pub(crate) fn append_thinking_delta(
+    ui_history: &Arc<Mutex<Vec<UiMessage>>>,
+    chunk: &str,
+    on: &mut impl FnMut(ObserveEvent<'_>),
+) {
+    if chunk.is_empty() {
+        return;
+    }
+    let mut ui = ui_history.lock().unwrap();
+    if ui.last().is_none_or(|m| m.role != UiRole::Thinking) {
+        ui.push(UiMessage::with_role(UiRole::Thinking, String::new()));
+    }
+    if let Some(last) = ui.last_mut() {
+        last.content.push_str(chunk);
+    }
+    drop(ui);
+    on(ObserveEvent::AssistantDelta { text: chunk });
+}
+
 pub(crate) fn remove_trailing_empty_assistant(ui_history: &Arc<Mutex<Vec<UiMessage>>>) {
     let mut ui = ui_history.lock().unwrap();
     if let Some(last) = ui.last()
@@ -93,6 +115,21 @@ mod tests {
         assert_eq!(lock[0].role, UiRole::Assistant);
         assert_eq!(lock[0].content, "abc");
         assert_eq!(delta_texts, ["ab", "c"]);
+    }
+
+    #[test]
+    fn append_thinking_delta_builds_separate_row() {
+        let ui = Arc::new(Mutex::new(Vec::new()));
+        super::append_thinking_delta(&ui, "plan", &mut |_| {});
+        super::append_thinking_delta(&ui, " A", &mut |_| {});
+        super::append_thinking_delta(&ui, "", &mut |_| {}); // empty: no-op
+        append_assistant_delta(&ui, "answer", &mut |_| {});
+        let lock = ui.lock().unwrap();
+        assert_eq!(lock.len(), 2);
+        assert_eq!(lock[0].role, UiRole::Thinking);
+        assert_eq!(lock[0].content, "plan A");
+        assert_eq!(lock[1].role, UiRole::Assistant);
+        assert_eq!(lock[1].content, "answer");
     }
 
     #[test]

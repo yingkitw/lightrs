@@ -12,6 +12,11 @@ use crate::chat::{
 #[derive(Debug, Default)]
 pub struct StreamAccumulator {
     pub content: String,
+    /// Reasoning text streamed via `reasoning_content`/`reasoning` delta
+    /// fields — emitted live through `StreamApply::ReasoningDelta`; kept here
+    /// for inspection, but never put on the assistant message (it must not
+    /// be echoed back or stored in API history).
+    pub reasoning: String,
     tool_parts: BTreeMap<usize, PartialToolCall>,
     pub finish_reason: Option<String>,
     pub usage: Option<TokenUsage>,
@@ -44,6 +49,15 @@ impl StreamAccumulator {
                     self.content.push_str(&text);
                     applied.push(StreamApply::ContentDelta(text));
                 }
+            for text in [choice.delta.reasoning_content, choice.delta.reasoning]
+                .into_iter()
+                .flatten()
+            {
+                if !text.is_empty() {
+                    self.reasoning.push_str(&text);
+                    applied.push(StreamApply::ReasoningDelta(text));
+                }
+            }
             if let Some(calls) = choice.delta.tool_calls {
                 for part in calls {
                     let slot = self.tool_parts.entry(part.index).or_default();
@@ -100,6 +114,7 @@ impl StreamAccumulator {
             tool_calls,
             tool_call_id: None,
             name: None,
+                    reasoning_content: None,
         }
     }
 }
@@ -107,6 +122,9 @@ impl StreamAccumulator {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamApply {
     ContentDelta(String),
+    /// Reasoning text (`reasoning_content`/`reasoning` delta fields) — the
+    /// transcript shows it as a `[think]` block; it is not answer content.
+    ReasoningDelta(String),
     ToolArgumentsDelta { index: usize, delta: String },
 }
 
@@ -128,14 +146,44 @@ struct StreamChoice {
 
 #[derive(Debug, Default, Deserialize)]
 struct StreamDelta {
-    #[serde(default)]
+    /// Some providers stream `content` as a parts array
+    /// (`[{"type":"text","text":"…"}]`) instead of a plain string — accept both.
+    #[serde(default, deserialize_with = "de_opt_text")]
     content: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    /// Non-standard alias used by a few OpenAI-compatible gateways.
+    #[serde(default)]
+    reasoning: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<ToolCallDelta>>,
 }
 
+/// `Option<String>` that also accepts `[{"type":"text","text":"…"}]` parts.
+fn de_opt_text<'de, D>(d: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    match v {
+        Some(serde_json::Value::String(s)) => Ok(Some(s)),
+        Some(serde_json::Value::Array(parts)) => {
+            let text: String = parts
+                .iter()
+                .filter(|p| p.get("type").and_then(|t| t.as_str()) == Some("text"))
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect();
+            Ok((!text.is_empty()).then_some(text))
+        }
+        _ => Ok(None),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ToolCallDelta {
+    /// Single-call streams may omit `index` — treat it as 0 rather than
+    /// failing the whole chunk (which would force a non-stream retry).
+    #[serde(default)]
     index: usize,
     #[serde(default)]
     id: Option<String>,
@@ -272,6 +320,50 @@ mod tests {
         assert_eq!(acc.content, "Hello");
         assert_eq!(d1.len(), 1);
         assert_eq!(d2.len(), 1);
+    }
+
+    #[test]
+    fn reasoning_fields_stream_as_reasoning_deltas() {
+        let mut acc = StreamAccumulator::default();
+        let a1 = acc
+            .apply_chunk_json(
+                r#"{"choices":[{"delta":{"reasoning_content":"let me "},"finish_reason":null}]}"#,
+            )
+            .unwrap();
+        let a2 = acc
+            .apply_chunk_json(
+                r#"{"choices":[{"delta":{"reasoning":"think"},"finish_reason":null}]}"#,
+            )
+            .unwrap();
+        acc.apply_chunk_json(
+            r#"{"choices":[{"delta":{"content":"answer"},"finish_reason":null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(acc.reasoning, "let me think");
+        assert!(matches!(a1[0], StreamApply::ReasoningDelta(_)));
+        assert!(matches!(a2[0], StreamApply::ReasoningDelta(_)));
+        assert_eq!(acc.content, "answer");
+        // Reasoning is emitted via applies only — never on the message.
+        let msg = acc.into_assistant_message();
+        assert!(msg.reasoning_content.is_none());
+    }
+
+    #[test]
+    fn accepts_parts_array_content_and_indexless_tool_calls() {
+        let mut acc = StreamAccumulator::default();
+        acc.apply_chunk_json(
+            r#"{"choices":[{"delta":{"content":[{"type":"text","text":"Hel"},{"type":"text","text":"lo"}]}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(acc.content, "Hello");
+        // Single-call streams may omit `index` — defaults to slot 0.
+        acc.apply_chunk_json(
+            r#"{"choices":[{"delta":{"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}]}}]}"#,
+        )
+        .unwrap();
+        let msg = acc.into_assistant_message();
+        let calls = msg.tool_calls.expect("calls");
+        assert_eq!(calls[0].function.name, "read_file");
     }
 
     #[test]

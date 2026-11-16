@@ -55,6 +55,13 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Reload on startup restores API + UI history and token stats; system prompt is refreshed to current workdir.
 - `/clear` deletes the session file for the project.
 
+## Response dialects (2026-11-16)
+
+- **Lenient parse, dialect for policy**: stream + non-stream parsers accept the union of OpenAI-compatible shapes unconditionally — `content` string OR `[{type,text}]` parts (serde `deserialize_with` on the delta; `ApiMessage::text_content` handles the Value array on replies), `reasoning_content` AND `reasoning` delta fields, index-less `tool_calls` deltas (`#[serde(default)] index` — was a hard-required field that killed streams on omit). `ModelDialect::for_model` only carries what a tolerant parser can't infer — `inline_think` for `<think>`-in-content models (deepseek/r1/minimax-m1 names).
+- **Reasoning flow**: `StreamApply::ReasoningDelta` → `append_thinking_delta` → `UiRole::Thinking` row (`[think]`, muted italic). Field-streamed reasoning arrives live BEFORE content (providers emit it first — natural row order). `ModelClient::send` emits one post-hoc `ReasoningDelta` when the final `message.reasoning_content` is set — covers non-stream replies and inline-think splits uniformly; `into_assistant_message` deliberately leaves it `None` to avoid double-emit.
+- **`ApiMessage.reasoning_content` is receive-only**: `#[serde(default, skip_serializing)]` — providers must NOT get reasoning echoed back (DeepSeek says omit it), and it must not persist into session `api_history`. `UiRole::Thinking` rows persist in session `ui_history` only.
+- Mock fidelity: `MockModel::send` mirrors the post-hoc emit so turn tests exercise the same path.
+
 ## Streaming (2026-03-19)
 
 - Fixture tests: `tests/fixtures/stream_tool_*.sse` — Kimi may stream `arguments` before `function.name`; GLM may emit assistant `content` then tool deltas; MiniMax may interleave multiple `index` values in one chunk.

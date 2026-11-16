@@ -305,6 +305,7 @@ mod tests {
                 }]),
                 tool_call_id: None,
                 name: None,
+                reasoning_content: None,
             },
         ];
         let b = context_breakdown(&msgs);
