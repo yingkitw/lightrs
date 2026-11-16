@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::config;
 use crate::mentions;
 use crate::paths::config_dir;
+use crate::tools::truncate_bytes;
 
 const SKILL_FILE: &str = "SKILL.md";
 const MAX_SKILLS: usize = 64;
@@ -108,7 +109,7 @@ pub fn system_appendix(catalog: &SkillCatalog) -> String {
     if !catalog.rules.trim().is_empty() {
         out.push_str("\n\nProject rules (summary; use read_file on `rules/` if needed):\n");
         let rules = if catalog.rules.len() > RULES_MAX_CHARS {
-            format!("{}\n[rules truncated]", &catalog.rules[..RULES_MAX_CHARS])
+            format!("{}\n[rules truncated]", truncate_bytes(&catalog.rules, RULES_MAX_CHARS))
         } else {
             catalog.rules.clone()
         };
@@ -308,7 +309,7 @@ fn load_rules(rules_dir: &Path) -> String {
         let chunk = format!("\n### {name}\n{text}\n");
         let room = RULES_MAX_CHARS.saturating_sub(out.len());
         if chunk.len() > room {
-            out.push_str(&chunk[..room]);
+            out.push_str(truncate_bytes(&chunk, room));
             out.push_str("\n[rules truncated]");
             break;
         }
@@ -331,17 +332,6 @@ fn slug_id(name: &str) -> String {
         out.pop();
     }
     out.to_ascii_lowercase()
-}
-
-fn truncate_bytes(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
-    }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
 }
 
 fn trim_line(s: &str, max: usize) -> String {
@@ -662,6 +652,30 @@ mod tests {
         assert_eq!(truncate_bytes("héllo", 2), "h");
         assert_eq!(truncate_bytes("héllo", 3), "hé");
         assert_eq!(truncate_bytes("abc", 9), "abc");
+    }
+
+    #[test]
+    fn appendix_rules_cap_stops_at_char_boundary() {
+        // 'é' straddles byte RULES_MAX_CHARS — a raw byte slice would panic.
+        let catalog = SkillCatalog {
+            skills: Vec::new(),
+            rules: format!("{}éé", "x".repeat(RULES_MAX_CHARS - 1)),
+        };
+        let out = system_appendix(&catalog);
+        assert!(out.contains("[rules truncated]"), "out: {out}");
+    }
+
+    #[test]
+    fn load_rules_chunk_cap_stops_at_char_boundary() {
+        let dir = std::env::temp_dir().join(format!("lightrs-rules-cap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // chunk = "\n### r.md\n" + text + "\n": pad so 'é' straddles the cap.
+        let fill = RULES_MAX_CHARS - "\n### r.md\n".len() - 1;
+        fs::write(dir.join("r.md"), format!("{}éé", "x".repeat(fill))).unwrap();
+        let out = load_rules(&dir);
+        let _ = fs::remove_dir_all(&dir);
+        assert!(out.contains("[rules truncated]"), "out tail: {}", &out[out.len().saturating_sub(60)..]);
     }
 
     #[test]

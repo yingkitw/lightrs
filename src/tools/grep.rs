@@ -135,8 +135,10 @@ fn try_ripgrep(
         raw
     };
     if s.len() > MAX_SHELL_STREAM_BYTES {
-        s.truncate(MAX_SHELL_STREAM_BYTES);
-        s.push_str("\n\n[output truncated]");
+        s = format!(
+            "{}\n\n[output truncated]",
+            crate::tools::truncate_bytes(&s, MAX_SHELL_STREAM_BYTES)
+        );
     }
     s.push_str(&format!(
         "\n\n({} matches, ripgrep)",
@@ -256,6 +258,24 @@ mod tests {
             case_insensitive: false,
             max_matches: None,
         }
+    }
+
+    #[test]
+    fn rg_output_cap_stops_at_char_boundary() {
+        if !have_rg() {
+            return; // fallback path caps per-line previews instead
+        }
+        let dir = tmp("cap-boundary");
+        // rg prints `<abs-path>:1:<line>`; compute the fill so a 3-byte '€'
+        // straddles byte 65536 of the output — String::truncate would panic.
+        let root = dir.canonicalize().unwrap();
+        let prefix = format!("{}:1:", root.join("big.txt").display());
+        let fill = MAX_SHELL_STREAM_BYTES - prefix.len() - 1;
+        fs::write(dir.join("big.txt"), format!("{}€€€", "x".repeat(fill))).unwrap();
+
+        let out = grep(&dir, args("x")).unwrap();
+        assert!(out.contains("[output truncated]"), "tail: {}", &out[out.len().saturating_sub(80)..]);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

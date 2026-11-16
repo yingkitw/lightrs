@@ -24,7 +24,9 @@ The wire layer is **non-destructive**: `messages_for_api` returns a trimmed copy
 2. **Active-turn expansion** — `@file` contents and `$skill` bodies are appended
    to the *current* user message only. Older user messages keep their composer
    text but have legacy attachment blocks stripped (`strip_legacy_user_expansions`)
-   — attachments don't ride along forever.
+   — attachments don't ride along forever. Stripping requires the block header
+   (`\n--- @file` / `\n--- $skill:`); a literal `[attached]` typed by the user
+   is kept as-is.
 3. **Turn window** — at most the last `MAX_RESENT_TURNS = 12` user turns.
    Whole turns only: an assistant `tool_calls` message is never split from its
    `tool` results, and the in-flight turn is never dropped.

@@ -374,3 +374,25 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 ## No hosted CI (owner decision, 2026-11-16)
 
 - lightrs deliberately runs **no GitHub Actions / hosted CI** — do not scaffold `.github/workflows`, CI badges, or status checks. Verification is local only: `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo build --release`. If binary-size regressions matter, check `stat -f%z target/release/lightrs` (macOS) locally.
+
+## Leanness audit results (2026-11-16)
+
+- **Dep tree clean**: `cargo tree --duplicates` shows only `syn` v2+v3 (proc-macro build deps from different derive crates — unavoidable, build-time only).
+- **Zero dead code**: all 308 `pub`/`pub(crate) fn` have ≥2 references (grep single-mention scan). Clippy `-D warnings` already covers unused imports/vars.
+- **`cargo audit` clean**: 0 vulnerabilities / 309 crates; one *unmaintained* warning — `bincode 1.3.3` via `syntect` (`dump-load` for `default-syntaxes`/`default-themes`). syntect 5.3 is latest and wires it unconditionally; the dumps are syntect's own baked assets, not untrusted input. No action possible without dropping syntax highlighting — **accepted risk, documented**.
+- `cargo audit` is installed (`cargo-audit-audit 0.22.1`); rerun after any dep bump.
+
+## run/ refactor (2026-11-16, commit d951927)
+
+- The "pty-bound" gap resolved by extraction, not a pty harness: `tui/run/mod.rs` shrank to a thin shell (terminal setup + `pump_queued` + 3-arm `InputAction` dispatch); the event machinery moved to `events.rs` (apply/progress table, 80% cov) and `observe.rs` (stream→event mapping, 91%). `run/mod.rs` 26.6% is now genuinely irreducible — remaining lines need a real terminal.
+
+## Attachment-strip precision (2026-11-16)
+
+- `slim_stored_user_content` previously truncated at a bare `\n[attached]`/`\n[skills]` — a user typing that literal text lost the tail of their message on resend/session-save. Real blocks always emit `\n\n[marker]\n--- @file` / `\n--- $skill:` (mentions.rs / skills/mod.rs), so the marker now requires the `\n---` header. Rule for text-stripping markers: match the full block signature, not just the label — labels are user-typable, headers aren't.
+
+## UTF-8 boundary bug class (2026-11-16)
+
+- **`String::truncate(n)` panics mid-char** — `tools/grep.rs` capped rg output at 64KiB with a raw `s.truncate(65536)`; a multi-byte char straddling the boundary → panic in the tool path. Shared fix: `tools::truncate_bytes(&s, n) -> &str` (walks back to `is_char_boundary`), now deduped with skills' private copy. When auditing truncation: byte-index slices/truncates are suspect anywhere *external* text flows (tool output, file bodies); `chars().take()` or `from_utf8_lossy` paths are safe by construction.
+- rg-path fixture trick: compute the exact prefix rg prints (`<abs>:1:`), then fill so a 3-byte char straddles the cap — deterministic boundary test through the real `grep()`.
+
+- **Same bug, two more sites** (skills): `&rules[..RULES_MAX_CHARS]` in `system_appendix` and `&chunk[..room]` in `load_rules` — a `rules/*.md` file pushing the catalog over 4KiB mid-char would panic *on every send* (appendix rebuilds per request). Both now use `tools::truncate_bytes`. Sweep heuristic that found all three: `grep -rn "\[\.\.[A-Z_]*\]\|\.truncate(" src/ | grep -v lossy\|chars()` — every raw byte-index on a `&str`/`String` carrying external text is a candidate panic.

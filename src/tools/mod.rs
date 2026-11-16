@@ -35,6 +35,19 @@ fn finish_body(body: String) -> String {
     redact::redact_secrets(&body)
 }
 
+/// Byte-bounded `&s[..max]` that never splits a UTF-8 char (walks back to the
+/// previous char boundary). `String::truncate` panics on a mid-char index.
+pub(crate) fn truncate_bytes(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 pub fn execute_tool(
     workdir: &Path,
     name: &str,

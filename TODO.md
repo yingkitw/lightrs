@@ -2,6 +2,12 @@
 
 ## Done
 
+- [x] Panic fix ×3: `grep` rg-path 64KiB output cap + `skills` rules caps (`&rules[..RULES_MAX_CHARS]`, `&chunk[..room]`) all used raw byte slices — mid-UTF-8 panic; shared `tools::truncate_bytes` boundary walk, boundary-straddling fixtures per site used `String::truncate` — panics on mid-UTF-8 cuts; shared `tools::truncate_bytes` boundary walk (deduped skills copy), regression test with a computed '€'-straddling fixture
+
+- [x] Context precision fix: `slim_stored_user_content` now requires the `\n---` block header — a user-typed literal `[attached]`/`[skills]` no longer truncates their message on resend/session-save; regression test + `docs/context.md` note
+
+- [x] Leanness audit: dep tree clean (only `syn` v2/v3 build dup), 0 dead `pub fn` of 308, `cargo audit` 0 vulns (bincode-via-syntect unmaintained warning accepted — no fix without losing syntax highlighting); CI skipped by owner decision
+
 - [x] ACP state machines: `AcpV1State` (insert/alloc/remove, distinct ids, remove-miss noop) + `V2State::create` tokio tests — `acp/v1.rs` 0→43% lines; remainder is `Stdio` wiring only
 
 - [x] `run_editor_on_tempfile` seam: `/editor` spawn + read-back unit-testable via fake executable scripts (0→73%); `detect.rs` pi/cursor/aider covered via scan-all fixture test
@@ -89,7 +95,7 @@
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 342 tests, 85.73% lines (llvm-cov); spawned-binary e2e + request-capture on the shared mock |
+| Correctness & coverage | 5 | 346 tests, 85.73% lines (llvm-cov); `run/` event logic extracted to `events.rs` (80%) + `observe.rs` (91%) — remainder is the pty shell; spawned-binary e2e + request-capture on the shared mock |
 | Agent reliability | 5 | Step cap, interrupt, heal loop, fallback + weak-model routing, single turn loop |
 | UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, native copy + scroll; OpenCode signals (ctx %, `path:branch`, jump-to-latest); mermaid ASCII layout panel |
 | Maintainability | 5 | `agent/context/` domain module; duplicated turn loop deleted (net -108) |

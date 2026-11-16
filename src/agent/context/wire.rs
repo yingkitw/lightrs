@@ -78,10 +78,12 @@ pub(crate) fn user_turn_count(history: &[ApiMessage]) -> usize {
     history.iter().filter(|m| m.role == ApiRole::User).count()
 }
 
-/// Drop `@` / `$` attachment blocks (session save / restore migration).
+/// Drop `@` / `$` attachment blocks (session save / restore migration). The
+/// block header (`\n--- @file` / `\n--- $skill:`) is required — a user who
+/// literally types "[attached]" keeps their text intact.
 pub(crate) fn slim_stored_user_content(text: &str) -> String {
     let mut s = text.to_string();
-    for marker in ["\n\n[attached]", "\n[attached]", "\n\n[skills]", "\n[skills]"] {
+    for marker in ["\n[attached]\n---", "\n[skills]\n---"] {
         if let Some(i) = s.find(marker) {
             s.truncate(i);
         }
@@ -129,12 +131,24 @@ mod tests {
     fn active_expansion_only_on_last_user() {
         let history = vec![
             ApiMessage::system("sys"),
-            ApiMessage::user("first\n\n[attached]\nold"),
+            ApiMessage::user("first\n\n[attached]\n--- @a.rs (3B) ---\nabc"),
             ApiMessage::user("second"),
         ];
         let wire = messages_for_api(&history, Some("\n\n[skills]\nbody"));
         assert!(wire[1].text_content().unwrap().contains(LEGACY_OMIT));
         assert_eq!(wire[2].text_content().unwrap(), "second\n\n[skills]\nbody");
+    }
+
+    #[test]
+    fn hand_typed_marker_without_block_header_is_kept() {
+        // "[attached]" typed literally (no `\n---` block header) is user text,
+        // not an attachment block — it must survive slim/strip untouched.
+        let text = "explain [attached] blocks\n\n[attached] note";
+        assert_eq!(slim_stored_user_content(text), "explain [attached] blocks\n\n[attached] note");
+        assert_eq!(
+            strip_legacy_user_expansions(text),
+            "explain [attached] blocks\n\n[attached] note"
+        );
     }
 
     #[test]
