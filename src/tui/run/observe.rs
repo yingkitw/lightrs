@@ -31,6 +31,7 @@ mod tests {
             AgentEvent::Failed(_) => panic!("expected Progress, got Failed"),
             AgentEvent::Interrupted => panic!("expected Progress, got Interrupted"),
             AgentEvent::CommandApproval(_) => panic!("expected Progress, got CommandApproval"),
+            AgentEvent::ModelsListed(_) => panic!("expected Progress, got ModelsListed"),
         }
     }
 

@@ -38,3 +38,17 @@ pub fn opencode_global_config_candidates() -> Vec<PathBuf> {
     }
     paths
 }
+
+/// `opencode auth login` credential store: `{ "<provider>": {"type":"api","key":"…"} }`.
+/// OpenCode uses `~/.local/share/opencode` (or `$XDG_DATA_HOME/opencode`) on all
+/// platforms — it does not use `~/Library/Application Support` on macOS.
+pub fn opencode_auth_candidates() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+        paths.push(PathBuf::from(xdg).join("opencode/auth.json"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        paths.push(PathBuf::from(home).join(".local/share/opencode/auth.json"));
+    }
+    paths
+}

@@ -408,3 +408,21 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Id substring ≠ URL host**: `map_opencode_provider_id` matches provider *ids* (`zai`, `glm4`, `zhipu-*`) — feeding it `https://api.z.ai/…` fails because `z.ai` has a dot (`zai` isn't contiguous). Use `profile::provider_from_base_url` for URLs (substrings `z.ai`/`bigmodel`/`moonshot`/`minimax`, same vocabulary as `anthropic_base_to_profile`), then fall back to the provider *name* for custom proxies (`glm-proxy` → Glm).
 - **e2e key-resolution trick**: `env_key = "HOME"` in a fixture config — HOME is always set in the spawned binary's env, so the env_key→`Keys` path is asserted without env plumbing or real secrets.
 - Priority order in `pick_best` is now `opencode, claude-code, codex, aider, pi, cursor` — codex sits above aider because its provider table carries base_url + env_key (richer import than aider's model-only yaml).
+
+## OpenCode key carrying (2026-11-16)
+
+- Keys live in **two** places: `opencode.json` → `provider.<id>.options.apiKey`, and `~/.local/share/opencode/auth.json` → `{ "<id>": {"type":"api","key":"…"} }` written by `opencode auth login`. Migrate + import must merge both (`merge_opencode_auth` fills only *missing* slots — explicit config wins). OAuth-type auth entries and unmapped provider ids are skipped.
+- OpenCode data dir is `~/.local/share/opencode` (or `$XDG_DATA_HOME/opencode`) on **all** platforms — no `~/Library/Application Support` on macOS.
+- `{env:VAR}` placeholders in opencode.json values resolve at import time; an unset var drops the key rather than carrying the literal placeholder as a secret. `options.baseURL` (not just `settings`) is the documented provider URL location.
+- e2e trick: fabricated `auth.json` under isolated `HOME` exercises the full merge without env plumbing; `run_isolated` now also clears `XDG_DATA_HOME` so ambient auth files can't leak into tests.
+
+## Real-world OpenCode carry + trailing-newline bug (2026-11-16)
+
+- A real auth.json held 7 entries (`zai-coding-plan`, 4 kimi-mapping ids like `kimi-code-plan-global`/`moonshotai-cn`, `minimax-cn-coding-plan`, `openrouter`) — per-provider first-sorted-id wins per Keys slot; unmapped ids skip silently. Multiple same-provider auth entries is normal (regional/plan variants).
+- **`config_lines().join("\n")` wrote files with no trailing newline** — both `migrate` and `import opencode` writers. Any later line-append glues onto the last line and corrupts the TOML (`glm = "…"kimi = "…"`). Both writers now emit `+ "\n"`; `write_config_lands_in_dir` asserts `ends_with('\n')`. Appending to files you didn't generate: always check/emit trailing newline first.
+
+## Async slash fetches (2026-11-16, /model list)
+
+- Pattern for "slash command needs network": `App.rt: Option<Handle>` + `App.ev_tx: Option<UnboundedSender<AgentEvent>>` — set once in `run()` next to channel creation, `None` in tests so handlers stay sync-testable (offline fallback path). The fetch spawns on `rt`, sends back a new `AgentEvent` variant; `events.rs` formats + `push_system`. Do NOT extend `kick_tx` — the worker loop is one-turn-at-a-time; a job sent there queues behind an active turn.
+- `LlmClient::list_models` — `GET {base}/models` bearer → `data[].id` sorted. Z.AI verified live: 12 ids incl. glm-5.3/glm-4.7. Errors (401/no key/unreachable) are per-provider *rows*, not fatal — eligibility = key resolves via `resolve_runtime_api_key`; `provider.env_var()` names the fix.
+- Numeric pick: `model_choices` stored in display order on `App`; `/model <n>` → `model_switch` (same path as named/provider forms — keeps base_url for same provider). Numbered arg without a fetched list bails with "run /model first".

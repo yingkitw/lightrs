@@ -2,6 +2,12 @@
 
 ## Done
 
+- [x] `/model` live picker: bare `/model` fetches `GET /models` per keyed provider on the background runtime (`App.rt`/`ev_tx` wiring, `AgentEvent::ModelsListed`), renders numbered rows (`← current`, error rows for missing keys/401s); `/model <n>` applies the pick through the existing `model_switch` path
+
+- [x] OpenCode key carry is complete: all providers' `options.apiKey` (with `{env:VAR}` resolution), `options.baseURL`, and `opencode auth login`'s `~/.local/share/opencode/auth.json` `type:"api"` entries merged into `[keys]` (config apiKey wins; oauth/unmapped skipped) — covers both `migrate` scan and `import opencode`
+
+- [x] Workdir context reads rule conventions: `.cursorrules`, `.windsurfrules`, `.github/copilot-instructions.md`, and `*.md`/`*.mdc` under `.cursor/rules/` + `.windsurf/rules/` (`.mdc` frontmatter stripped, sorted by name, shared ~12 KiB total cap bounds all sources)
+
 - [x] Migrate detects Codex (`~/.codex/config.toml` → `model_provider`/`model`/`[model_providers.*] base_url`+`env_key`); `provider_from_base_url` host mapper (id substrings ≠ URL hosts: `api.z.ai` ≠ `zai`); priority slot between claude-code and aider; e2e via `env_key = "HOME"`
 
 - [x] Workdir context reads `CLAUDE.md` + `GEMINI.md` (competitor-convention intel: codex→AGENTS, aider→AIDER already covered); SPEC cap corrected 4→6 KiB drift

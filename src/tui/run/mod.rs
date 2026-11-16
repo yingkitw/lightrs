@@ -116,6 +116,8 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     std::io::Write::write_all(&mut *terminal.backend_mut(), MOUSE_ON.as_bytes())?;
 
     let mut app = App::new(cfg.clone());
+    app.rt = Some(rt.handle().clone());
+    app.ev_tx = Some(tx.clone());
     let mut last_title = String::new();
     crate::tui::theme::sync(&app.theme);
     app.skill_catalog = catalog;

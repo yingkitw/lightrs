@@ -34,6 +34,8 @@ pub enum AgentEvent {
     Progress(String),
     /// TUI must approve/deny before the agent continues this shell command.
     CommandApproval(CommandApproval),
+    /// Background `/model` fetch finished: per-provider models or error text.
+    ModelsListed(Vec<(crate::config::Provider, Result<Vec<String>, String>)>),
 }
 
 pub struct App {
@@ -72,6 +74,12 @@ pub struct App {
     pub queued: VecDeque<String>,
     /// Git branch for the header path label; refreshed on `/cd`.
     pub git_branch: Option<String>,
+    /// Tokio handle + event channel for slash commands that spawn background
+    /// work (`/model` list fetch). Set once in `run()`; `None` in tests.
+    pub rt: Option<tokio::runtime::Handle>,
+    pub ev_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
+    /// Last `/model` fetch result in display order — numbered `/model <n>` picks.
+    pub model_choices: Vec<(crate::config::Provider, String)>,
 }
 
 impl App {
@@ -99,6 +107,9 @@ impl App {
             theme: theme::normalize_theme_id(config::load_tui_theme()),
             stream_chars: 0,
             queued: VecDeque::new(),
+            rt: None,
+            ev_tx: None,
+            model_choices: Vec::new(),
             git_branch,
         }
     }

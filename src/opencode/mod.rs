@@ -12,7 +12,7 @@ use crate::config::config_path;
 
 pub use jsonc::load_jsonc;
 pub use paths::{default_opencode_global_config, discover_project_opencode};
-pub use profile::extract_model_profile;
+pub use profile::{extract_model_profile, merge_opencode_auth};
 
 pub fn import(global: Option<PathBuf>, project: Option<PathBuf>) -> Result<()> {
     let mut docs = Vec::new();

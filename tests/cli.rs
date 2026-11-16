@@ -30,6 +30,7 @@ fn run_isolated(home: &PathBuf, args: &[&str]) -> Output {
         .env_remove("GLM_API_KEY")
         .env_remove("MOONSHOT_API_KEY")
         .env_remove("MINIMAX_API_KEY")
+        .env_remove("XDG_DATA_HOME")
         .output()
         .expect("spawn lightrs")
 }
@@ -165,6 +166,35 @@ fn migrate_imports_codex_profile() {
     assert!(cfg.contains("model = \"glm-4.6\""), "cfg: {cfg}");
     assert!(cfg.contains("api/paas/v4"), "cfg: {cfg}");
     assert!(cfg.contains("glm ="), "cfg: {cfg}");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn migrate_carries_opencode_auth_json_keys() {
+    let home = tmp("migrate-opencode-auth");
+    // opencode.json: model + provider id, but credentials live in auth.json
+    // (`opencode auth login`) — the migration must merge both.
+    std::fs::create_dir_all(home.join(".config/opencode")).unwrap();
+    std::fs::write(
+        home.join(".config/opencode/opencode.json"),
+        r#"{"model":"zai/glm-4.6","provider":{"zai":{"options":{"baseURL":"https://api.z.ai/api/paas/v4"}}}}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.join(".local/share/opencode")).unwrap();
+    std::fs::write(
+        home.join(".local/share/opencode/auth.json"),
+        r#"{"zai":{"type":"api","key":"auth-tok-9"},"openai":{"type":"oauth","access":"skip-me"}}"#,
+    )
+    .unwrap();
+
+    let out = run_isolated(&home, &["migrate"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let cfg = std::fs::read_to_string(home.join(".config/lightrs/config.toml")).unwrap();
+    assert!(cfg.contains("provider = \"glm\""), "cfg: {cfg}");
+    assert!(cfg.contains("model = \"glm-4.6\""), "cfg: {cfg}");
+    assert!(cfg.contains("api/paas/v4"), "cfg: {cfg}");
+    assert!(cfg.contains("glm = \"auth-tok-9\""), "cfg: {cfg}");
     let _ = std::fs::remove_dir_all(&home);
 }
 

@@ -69,6 +69,39 @@ impl LlmClient {
         &self.model
     }
 
+    /// OpenAI-compatible `GET {base}/models` — ids this key can reach.
+    pub async fn list_models(&self) -> Result<Vec<String>> {
+        let url = format!("{}/models", self.base_url);
+        let response = self
+            .http
+            .get(&url)
+            .headers(auth_headers(&self.api_key)?)
+            .send()
+            .await
+            .context("http request")?;
+        let status = response.status();
+        let body = response.text().await.context("read response body")?;
+        if !status.is_success() {
+            if let Ok(err) = serde_json::from_str::<ApiErrorBody>(&body) {
+                bail!("api {}: {}", status, err.error.message);
+            }
+            bail!("api {}: {}", status, body);
+        }
+        let doc: serde_json::Value =
+            serde_json::from_str(&body).context("parse models response")?;
+        let mut ids: Vec<String> = doc
+            .get("data")
+            .and_then(|d| d.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        ids.sort();
+        Ok(ids)
+    }
+
     pub async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         let url = format!("{}/chat/completions", self.base_url);
         let headers = auth_headers(&self.api_key)?;

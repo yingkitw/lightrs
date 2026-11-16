@@ -74,9 +74,11 @@ fn push_opencode(out: &mut Vec<DetectedTool>) {
     let path = opencode::default_opencode_global_config().unwrap_or_default();
     let installed = has_binary("opencode");
     let profile = if path.is_file() {
-        opencode::load_jsonc(&path)
-            .ok()
-            .map(|doc| opencode::extract_model_profile(&doc))
+        opencode::load_jsonc(&path).ok().map(|doc| {
+            let mut p = opencode::extract_model_profile(&doc);
+            opencode::merge_opencode_auth(&mut p);
+            p
+        })
     } else {
         None
     };

@@ -98,3 +98,14 @@ fn stream_minimax_dual_tool_calls() {
     assert_eq!(calls[1].function.name, "read_file");
     assert!(calls[1].function.arguments.contains("Cargo.toml"));
 }
+mod support;
+
+#[tokio::test]
+async fn list_models_parses_sorted_ids() {
+    let (base, _reqs) = support::serve_bodies(vec![
+        r#"{"data":[{"id":"glm-5.3"},{"id":"glm-4.6"},{"id":"glm-4.5-air"}]}"#.into(),
+    ]);
+    let client = lightrs::provider::LlmClient::new(base, "k".into(), "m".into());
+    let ids = client.list_models().await.unwrap();
+    assert_eq!(ids, vec!["glm-4.5-air", "glm-4.6", "glm-5.3"]);
+}

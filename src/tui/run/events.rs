@@ -76,6 +76,12 @@ pub(crate) fn handle_agent_event(
             app.status = "approve shell command".into();
             true
         }
+        AgentEvent::ModelsListed(entries) => {
+            app.model_choices = crate::tui::slash::model_choices_from(&entries);
+            let text = crate::tui::slash::format_model_list(&entries, &app.config);
+            agent.blocking_lock().push_system(text);
+            true
+        }
     }
 }
 
@@ -196,6 +202,32 @@ mod tests {
         assert_eq!(app.stream_chars, 5);
         assert_eq!(app.status, "streaming");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn models_listed_sets_choices_and_renders() {
+        let dir = std::env::temp_dir().join(format!("lightrs-ev-models-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let agent = Arc::new(Mutex::new(crate::agent::Agent::new(
+            client,
+            Arc::from(dir.as_path()),
+            ShellPolicy::default(),
+        )));
+        let mut app = test_app("ready");
+        let entries = vec![(
+            crate::config::Provider::Glm,
+            Ok(vec!["glm-4.6".into(), "glm-5.3".into()]),
+        )];
+        assert!(handle_agent_event(
+            &agent,
+            &mut app,
+            AgentEvent::ModelsListed(entries)
+        ));
+        assert_eq!(app.model_choices.len(), 2);
+        assert_eq!(app.model_choices[1].1, "glm-5.3");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

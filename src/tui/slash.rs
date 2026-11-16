@@ -13,6 +13,7 @@ use crate::tui::clipboard::{copy_payload_from_markdown, set_text};
 use crate::tui::theme;
 use crate::tui::App;
 use crate::tui::info::{context_details, provider_name};
+use crate::tui::app::AgentEvent;
 
 /// Built-in TUI commands (leading `/`); never sent to the model.
 const COMMANDS: &[(&str, &str)] = &[
@@ -24,7 +25,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("editor", "compose the prompt in $EDITOR"),
     ("quit", "exit (same as q)"),
     ("status", "show model, path, and context"),
-    ("model", "show or switch model (/model [provider] [name])"),
+    ("model", "list/switch model — fetches /models per keyed provider"),
     ("context", "context breakdown and token usage"),
     ("reload", "re-read config.toml [shell] policy"),
     ("quiet", "toggle per-step token sys lines"),
@@ -207,7 +208,19 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
         }
         "model" => {
             let args: Vec<&str> = line.split_whitespace().skip(1).collect();
-            match resolve_model_args(&args, &app.config) {
+            if args.is_empty() {
+                match start_model_fetch(app) {
+                    Some(note) => agent.push_system(note),
+                    None => agent.push_system(format!(
+                        "model: {} · {} · {}\n/model <name> · /model <provider> [name] — providers: glm, kimi, minimax",
+                        provider_name(app.config.provider),
+                        app.config.model,
+                        app.config.base_url
+                    )),
+                }
+                return SlashAction::Handled;
+            }
+            match resolve_model_args(&args, app) {
                 Ok(Some(sw)) => {
                     agent.set_client(LlmClient::new(
                         sw.base_url.clone(),
@@ -226,7 +239,7 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                     ));
                 }
                 Ok(None) => agent.push_system(format!(
-                    "model: {} · {} · {}\n/model <name> · /model <provider> [name] — providers: glm, kimi, minimax",
+                    "model: {} · {} · {}",
                     provider_name(app.config.provider),
                     app.config.model,
                     app.config.base_url
@@ -451,26 +464,120 @@ struct ModelSwitch {
     api_key: String,
 }
 
-/// `/model` args → `Some(switch)` or `None` when called bare (show current).
-/// Forms: `/model <name>` (same provider, keeps custom `--base-url` and key)
-/// or `/model <provider> [name]` (provider default model when name omitted).
-fn resolve_model_args(args: &[&str], cfg: &AppConfig) -> Result<Option<ModelSwitch>> {
+/// `/model` args → `Some(switch)` or `None` when called bare (list fetched).
+/// Forms: `/model <n>` (pick from the last fetched list),
+/// `/model <name>` (same provider, keeps custom `--base-url` and key), or
+/// `/model <provider> [name]` (provider default model when name omitted).
+fn resolve_model_args(args: &[&str], app: &App) -> Result<Option<ModelSwitch>> {
+    let cfg = &app.config;
     let Some(first) = args.first() else {
         return Ok(None);
     };
     match (Provider::from_str(first, true).ok(), args.get(1)) {
         (Some(p), name) => model_switch(p, name.copied().unwrap_or_else(|| p.default_model()), cfg)
             .map(Some),
-        (None, None) => Ok(Some(ModelSwitch {
-            provider: cfg.provider,
-            model: (*first).into(),
-            base_url: cfg.base_url.clone(),
-            api_key: cfg.api_key.clone(),
-        })),
+        (None, None) => {
+            if let Ok(n) = first.parse::<usize>() {
+                return match n.checked_sub(1).and_then(|i| app.model_choices.get(i)) {
+                    Some((p, m)) => model_switch(*p, m, cfg).map(Some),
+                    None => bail!("no model #{n} — run /model first to fetch the list"),
+                };
+            }
+            Ok(Some(ModelSwitch {
+                provider: cfg.provider,
+                model: (*first).into(),
+                base_url: cfg.base_url.clone(),
+                api_key: cfg.api_key.clone(),
+            }))
+        }
         (None, Some(extra)) => {
-            bail!("unexpected argument `{extra}` — usage: /model [provider] [name]")
+            bail!("unexpected argument `{extra}` — usage: /model [n|name|provider name]")
         }
     }
+}
+
+/// Spawn the background `/models` fetch for every provider with a resolvable
+/// key (current provider keeps its custom base_url). Returns the "fetching…"
+/// note, or `None` when the event plumbing isn't wired (tests).
+fn start_model_fetch(app: &App) -> Option<String> {
+    let (rt, tx) = (app.rt.clone()?, app.ev_tx.clone()?);
+    let mut targets = Vec::new();
+    for p in [Provider::Glm, Provider::Kimi, Provider::Minimax] {
+        let (base, key) = if p == app.config.provider {
+            (app.config.base_url.clone(), Ok(app.config.api_key.clone()))
+        } else {
+            (
+                p.default_base_url().to_string(),
+                AppConfig::resolve_runtime_api_key(p)
+                    .map_err(|_| format!("no key — set {}", p.env_var())),
+            )
+        };
+        targets.push((p, base, key));
+    }
+    rt.spawn(async move {
+        let mut results = Vec::new();
+        for (p, base, key) in targets {
+            let res = match key {
+                Err(e) => Err(e),
+                Ok(key) => LlmClient::new(base, key, String::new())
+                    .list_models()
+                    .await
+                    .map_err(|e| format!("{e:#}")),
+            };
+            results.push((p, res));
+        }
+        let _ = tx.send(AgentEvent::ModelsListed(results));
+    });
+    Some(format!(
+        "model: {} · {} · {}\nfetching model lists…",
+        provider_name(app.config.provider),
+        app.config.model,
+        app.config.base_url
+    ))
+}
+
+/// Flatten fetch results into numbered `/model <n>` choices (display order).
+pub(crate) fn model_choices_from(
+    entries: &[(Provider, Result<Vec<String>, String>)],
+) -> Vec<(Provider, String)> {
+    entries
+        .iter()
+        .filter_map(|(p, r)| r.as_ref().ok().map(|ms| (p, ms)))
+        .flat_map(|(p, ms)| ms.iter().map(move |m| (*p, m.clone())))
+        .collect()
+}
+
+/// Numbered model list for the transcript: `1. glm-4.6 · glm  ← current`.
+/// Per-provider failures render as `provider: <error>` lines.
+pub(crate) fn format_model_list(
+    entries: &[(Provider, Result<Vec<String>, String>)],
+    cfg: &AppConfig,
+) -> String {
+    let mut out = String::from("available models:");
+    let mut n = 0;
+    for (p, res) in entries {
+        match res {
+            Ok(models) if models.is_empty() => {
+                out.push_str(&format!("\n  {}: endpoint returned no models", provider_name(*p)));
+            }
+            Ok(models) => {
+                for m in models {
+                    n += 1;
+                    let cur = if *p == cfg.provider && m == &cfg.model {
+                        "  ← current"
+                    } else {
+                        ""
+                    };
+                    out.push_str(&format!("\n  {n}. {m} · {}{cur}", provider_name(*p)));
+                }
+            }
+            Err(e) => out.push_str(&format!("\n  {}: {}", provider_name(*p), e)),
+        }
+    }
+    if n > 0 {
+        out.push_str("\n/model <n> to switch · /model <name> for any id");
+    }
+    out
 }
 
 /// Same-provider switch keeps the session's base_url + key; a provider switch
@@ -642,6 +749,59 @@ mod tests {
         assert_eq!(app.config.model, "other-model");
         assert_eq!(app.config.base_url, "http://localhost");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn model_number_picks_fetched_choice() {
+        let (dir, mut app, mut agent) = fixture::build("model-num");
+        app.model_choices = vec![
+            (crate::config::Provider::Glm, "glm-5.3".into()),
+            (crate::config::Provider::Kimi, "kimi-k2-0905-preview".into()),
+        ];
+        run_slash("/model 2", &mut agent, &mut app);
+        assert_eq!(app.config.model, "kimi-k2-0905-preview");
+        assert_eq!(app.config.provider, crate::config::Provider::Kimi);
+        // Same provider keeps the session base_url + key.
+        assert_eq!(app.config.base_url, "http://localhost");
+        assert_eq!(agent.client.model(), "kimi-k2-0905-preview");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn model_number_without_fetched_list_errors() {
+        let (dir, mut app, mut agent) = fixture::build("model-num-err");
+        run_slash("/model 9", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("run /model first"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn model_list_formats_rows_and_choices() {
+        let (_dir, app, _agent) = fixture::build("model-fmt");
+        let entries = vec![
+            (
+                crate::config::Provider::Glm,
+                Ok(vec!["glm-4.6".into(), "glm-5.3".into()]),
+            ),
+            (
+                crate::config::Provider::Kimi,
+                Ok(vec!["m".into()]),
+            ),
+            (
+                crate::config::Provider::Minimax,
+                Err("no key — set MINIMAX_API_KEY".into()),
+            ),
+        ];
+        let text = format_model_list(&entries, &app.config);
+        assert!(text.contains("1. glm-4.6 · glm"), "text: {text}");
+        // Fixture model is "m" on provider Kimi → current marker on row 3.
+        assert!(text.contains("3. m · kimi  ← current"), "text: {text}");
+        assert!(text.contains("minimax: no key"), "text: {text}");
+        assert!(text.contains("/model <n>"), "text: {text}");
+        let choices = model_choices_from(&entries);
+        assert_eq!(choices.len(), 3);
+        assert_eq!(choices[2].1, "m");
+        let _ = std::fs::remove_dir_all(_dir);
     }
 
     #[test]

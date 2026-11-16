@@ -3,7 +3,7 @@ mod scan;
 mod write;
 
 pub use profile::{
-    ModelProfile, infer_provider_from_env, map_opencode_provider_id,
+    Keys, ModelProfile, infer_provider_from_env, map_opencode_provider_id,
 };
 pub use scan::{DetectedTool, format_scan_report, scan_local_tools};
 pub use write::{config_lines, write_config};
