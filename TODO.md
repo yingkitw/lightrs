@@ -2,6 +2,8 @@
 
 ## Done
 
+- [x] `[endpoints]` per-provider base-url overrides: `AppConfig::endpoint_for` (active `base_url` → override → default) used by `/model` switch + list fetch; OpenCode import fills it from `options.baseURL` + coding-plan auth ids (`kimi-code-plan-global`→api.kimi.ai, `minimax-cn-*`→api.minimaxi.com); project overlays ignore it (redirect-attack surface)
+
 - [x] `/model` live picker: bare `/model` fetches `GET /models` per keyed provider on the background runtime (`App.rt`/`ev_tx` wiring, `AgentEvent::ModelsListed`), renders numbered rows (`← current`, error rows for missing keys/401s); `/model <n>` applies the pick through the existing `model_switch` path
 
 - [x] OpenCode key carry is complete: all providers' `options.apiKey` (with `{env:VAR}` resolution), `options.baseURL`, and `opencode auth login`'s `~/.local/share/opencode/auth.json` `type:"api"` entries merged into `[keys]` (config apiKey wins; oauth/unmapped skipped) — covers both `migrate` scan and `import opencode`

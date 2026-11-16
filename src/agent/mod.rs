@@ -419,6 +419,7 @@ mod streaming_tests {
             shell_policy: ShellPolicy::default(),
             test_command: None,
             heal_steps: 3,
+            endpoints: Default::default(),
         };
         let agent = Agent::from_config(&cfg, Arc::from(Path::new(".")));
         assert_eq!(agent.client.model(), "main");

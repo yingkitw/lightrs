@@ -183,7 +183,7 @@ fn migrate_carries_opencode_auth_json_keys() {
     std::fs::create_dir_all(home.join(".local/share/opencode")).unwrap();
     std::fs::write(
         home.join(".local/share/opencode/auth.json"),
-        r#"{"zai":{"type":"api","key":"auth-tok-9"},"openai":{"type":"oauth","access":"skip-me"}}"#,
+        r#"{"zai":{"type":"api","key":"auth-tok-9"},"kimi-code-plan-global":{"type":"api","key":"kimi-tok"},"openai":{"type":"oauth","access":"skip-me"}}"#,
     )
     .unwrap();
 
@@ -195,6 +195,13 @@ fn migrate_carries_opencode_auth_json_keys() {
     assert!(cfg.contains("model = \"glm-4.6\""), "cfg: {cfg}");
     assert!(cfg.contains("api/paas/v4"), "cfg: {cfg}");
     assert!(cfg.contains("glm = \"auth-tok-9\""), "cfg: {cfg}");
+    assert!(cfg.contains("kimi = \"kimi-tok\""), "cfg: {cfg}");
+    // Coding-plan auth ids carry their non-default endpoint.
+    assert!(cfg.contains("[endpoints]"), "cfg: {cfg}");
+    assert!(
+        cfg.contains("kimi = \"https://api.kimi.ai/coding/v1\""),
+        "cfg: {cfg}"
+    );
     let _ = std::fs::remove_dir_all(&home);
 }
 

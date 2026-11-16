@@ -21,7 +21,25 @@ pub fn config_lines(profile: &ModelProfile, header: &str) -> Vec<String> {
         lines.push(format!("base_url = \"{url}\""));
     }
     append_keys(&mut lines, &profile.keys);
+    append_endpoints(&mut lines, profile);
     lines
+}
+
+/// `[endpoints]` for non-active providers — the chosen provider's URL is
+/// already the top-level `base_url`, so duplicating it would be dead data.
+pub fn append_endpoints(lines: &mut Vec<String>, profile: &ModelProfile) {
+    let extra: Vec<_> = profile
+        .endpoints
+        .iter()
+        .filter(|(p, _)| Some(**p) != profile.provider)
+        .collect();
+    if extra.is_empty() {
+        return;
+    }
+    lines.push("[endpoints]".into());
+    for (p, url) in extra {
+        lines.push(format!("{} = \"{url}\"", p.id()));
+    }
 }
 
 pub fn write_config(profile: &ModelProfile, dir: &Path) -> Result<()> {
@@ -58,6 +76,7 @@ mod tests {
             model: Some("m1".into()),
             base_url: Some("https://x/v1".into()),
             keys: Keys::default(),
+            ..Default::default()
         }
     }
 
@@ -75,6 +94,20 @@ mod tests {
             assert!(text.contains("base_url = \"https://x/v1\""));
             assert!(!text.contains("[keys]"));
         }
+    }
+
+    #[test]
+    fn append_endpoints_writes_overrides_and_skips_active() {
+        let mut p = profile(Provider::Glm);
+        p.endpoints
+            .insert(Provider::Glm, "https://dup.example/v1".into());
+        p.endpoints
+            .insert(Provider::Kimi, "https://api.kimi.ai/coding/v1".into());
+        let lines = config_lines(&p, "# h").join("\n");
+        assert!(lines.contains("[endpoints]"), "{lines}");
+        assert!(lines.contains("kimi = \"https://api.kimi.ai/coding/v1\""), "{lines}");
+        // Active provider's endpoint is the top-level base_url — not repeated.
+        assert!(!lines.contains("dup.example"), "{lines}");
     }
 
     #[test]

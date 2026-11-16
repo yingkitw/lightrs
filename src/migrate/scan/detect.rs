@@ -57,6 +57,7 @@ pub(crate) fn parse_codex_config(text: &str) -> Option<ModelProfile> {
         model: doc.get("model").and_then(|v| v.as_str()).map(str::to_string),
         base_url: Some(base_url.to_string()),
         keys: Keys::default(),
+        ..Default::default()
     };
     if let Some(env_key) = table.get("env_key").and_then(|v| v.as_str())
         && let Ok(val) = std::env::var(env_key)

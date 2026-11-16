@@ -6,6 +6,9 @@ pub struct ModelProfile {
     pub model: Option<String>,
     pub base_url: Option<String>,
     pub keys: Keys,
+    /// Per-provider endpoint overrides → written as `[endpoints]` (e.g. a
+    /// coding-plan key that needs a non-default URL for its provider).
+    pub endpoints: std::collections::BTreeMap<Provider, String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -84,6 +87,7 @@ pub fn anthropic_base_to_profile(base_url: &str, token: &str) -> ModelProfile {
                 "https://api.z.ai/api/paas/v4".into()
             }),
             keys,
+            ..Default::default()
         }
     } else if base.contains("moonshot") {
         keys.kimi = Some(token.to_string());
@@ -92,6 +96,7 @@ pub fn anthropic_base_to_profile(base_url: &str, token: &str) -> ModelProfile {
             model: None,
             base_url: Some(base),
             keys,
+            ..Default::default()
         }
     } else {
         ModelProfile::default()

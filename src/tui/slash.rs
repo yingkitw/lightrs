@@ -507,7 +507,7 @@ fn start_model_fetch(app: &App) -> Option<String> {
             (app.config.base_url.clone(), Ok(app.config.api_key.clone()))
         } else {
             (
-                p.default_base_url().to_string(),
+                app.config.endpoint_for(p),
                 AppConfig::resolve_runtime_api_key(p)
                     .map_err(|_| format!("no key — set {}", p.env_var())),
             )
@@ -597,7 +597,7 @@ fn model_switch(provider: Provider, model: &str, cfg: &AppConfig) -> Result<Mode
     Ok(ModelSwitch {
         provider,
         model: model.into(),
-        base_url: provider.default_base_url().to_string(),
+        base_url: cfg.endpoint_for(provider),
         api_key,
     })
 }
@@ -706,6 +706,7 @@ mod tests {
             shell_policy: ShellPolicy::default(),
             test_command: None,
             heal_steps: 3,
+            endpoints: Default::default(),
         });
         let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
         let mut agent = Agent::new(
@@ -851,6 +852,7 @@ mod tests {
                 shell_policy: ShellPolicy::default(),
                 test_command: None,
                 heal_steps: 3,
+                endpoints: Default::default(),
             });
             let agent = Agent::new(
                 LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),

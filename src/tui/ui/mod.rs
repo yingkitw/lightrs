@@ -60,6 +60,7 @@ mod tests {
             shell_policy: ShellPolicy::default(),
             test_command: None,
             heal_steps: 3,
+            endpoints: Default::default(),
         });
         let agent = Agent::new(
             LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),

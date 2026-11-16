@@ -5,6 +5,7 @@ mod write;
 pub use profile::{
     Keys, ModelProfile, infer_provider_from_env, map_opencode_provider_id,
 };
+pub(crate) use profile::provider_from_base_url;
 pub use scan::{DetectedTool, format_scan_report, scan_local_tools};
 pub use write::{config_lines, write_config};
 

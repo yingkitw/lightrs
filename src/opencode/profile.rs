@@ -26,37 +26,47 @@ pub fn extract_model_profile(doc: &Value) -> ModelProfile {
             if profile.provider.is_none() {
                 profile.provider = migrate::map_opencode_provider_id(id);
             }
-            if let Some(options) = cfg.get("options").and_then(Value::as_object) {
-                if let Some(key) = options
-                    .get("apiKey")
-                    .or_else(|| options.get("api_key"))
-                    .and_then(Value::as_str)
-                    .and_then(resolve_key)
-                    && let Some(p) = migrate::map_opencode_provider_id(id)
+            let provider = migrate::map_opencode_provider_id(id)
+                .or_else(|| {
+                    cfg.get("options")
+                        .and_then(|o| o.get("baseURL").or_else(|| o.get("base_url")))
+                        .and_then(Value::as_str)
+                        .and_then(crate::migrate::provider_from_base_url)
+                });
+            if let Some(p) = provider {
+                // Every provider's baseURL lands in `[endpoints]`; the
+                // profile's own base_url is picked from it below.
+                for key in ["options", "settings"] {
+                    if let Some(url) = cfg
+                        .get(key)
+                        .and_then(|o| o.get("baseURL").or_else(|| o.get("base_url")))
+                        .and_then(Value::as_str)
+                    {
+                        profile
+                            .endpoints
+                            .entry(p)
+                            .or_insert_with(|| url.trim_end_matches('/').to_string());
+                        break;
+                    }
+                }
+                if let Some(options) = cfg.get("options").and_then(Value::as_object)
+                    && let Some(key) = options
+                        .get("apiKey")
+                        .or_else(|| options.get("api_key"))
+                        .and_then(Value::as_str)
+                        .and_then(resolve_key)
                 {
                     set_key(&mut profile.keys, p, key);
                 }
-                if profile.base_url.is_none()
-                    && let Some(url) = options
-                        .get("baseURL")
-                        .or_else(|| options.get("base_url"))
-                        .and_then(Value::as_str)
-                {
-                    profile.base_url = Some(url.trim_end_matches('/').to_string());
-                }
-            }
-            if let Some(settings) = cfg.get("settings").and_then(Value::as_object)
-                && profile.base_url.is_none()
-                && let Some(url) = settings
-                    .get("baseURL")
-                    .or_else(|| settings.get("base_url"))
-                    .and_then(Value::as_str)
-            {
-                profile.base_url = Some(url.trim_end_matches('/').to_string());
             }
         }
     }
 
+    if profile.base_url.is_none()
+        && let Some(p) = profile.provider
+    {
+        profile.base_url = profile.endpoints.get(&p).cloned();
+    }
     profile
 }
 
@@ -119,7 +129,36 @@ fn merge_auth_doc(profile: &mut ModelProfile, doc: &Value) {
         };
         if slot.is_none() {
             *slot = Some(key.to_string());
+            // Plan/region variants carry their own endpoint (e.g. a
+            // kimi-code-plan-global key only works on api.kimi.ai/coding/v1,
+            // not the moonshot default).
+            if let Some(url) = auth_endpoint(id) {
+                profile
+                    .endpoints
+                    .entry(p)
+                    .or_insert_with(|| url.to_string());
+            }
         }
+    }
+}
+
+/// OpenCode auth ids that imply a non-default provider endpoint (coding-plan
+/// and region variants). Keep entries minimal — only ids that differ from
+/// `Provider::default_base_url`.
+fn auth_endpoint(id: &str) -> Option<&'static str> {
+    match id {
+        "kimi-code-plan-global" | "kimi-for-coding-global" => {
+            Some("https://api.kimi.ai/coding/v1")
+        }
+        "kimi-for-coding" | "kimi-coding" | "kimi-code-plan" => {
+            Some("https://api.kimi.com/coding/v1")
+        }
+        "moonshotai-cn" | "moonshot-cn" => Some("https://api.moonshot.cn/v1"),
+        // MiniMax CN host (coding-plan and regional keys) vs api.minimax.io.
+        "minimax-cn-coding-plan" | "minimax-cn" | "minimaxi-cn" => {
+            Some("https://api.minimaxi.com/v1")
+        }
+        _ => None,
     }
 }
 
@@ -150,7 +189,7 @@ mod tests {
             "model": "zai/glm-4.6",
             "provider": {
                 "zai": {"options": {"apiKey": "glm-key", "baseURL": "https://api.z.ai/api/paas/v4/"}},
-                "moonshot": {"options": {"apiKey": "kimi-key"}},
+                "moonshot": {"options": {"apiKey": "kimi-key", "baseURL": "https://api.kimi.ai/coding/v1"}},
                 "minimax": {"options": {"apiKey": "mm-key"}}
             }
         });
@@ -161,6 +200,15 @@ mod tests {
         assert_eq!(
             p.base_url.as_deref(),
             Some("https://api.z.ai/api/paas/v4")
+        );
+        // Every provider's baseURL lands in endpoints, not just the active one.
+        assert_eq!(
+            p.endpoints.get(&Provider::Glm).map(String::as_str),
+            Some("https://api.z.ai/api/paas/v4")
+        );
+        assert_eq!(
+            p.endpoints.get(&Provider::Kimi).map(String::as_str),
+            Some("https://api.kimi.ai/coding/v1")
         );
     }
 
@@ -186,13 +234,25 @@ mod tests {
         p.keys.glm = Some("explicit".into());
         let auth = json!({
             "zai": {"type": "api", "key": "auth-glm"},
-            "moonshot": {"type": "api", "key": "auth-kimi"},
+            "kimi-code-plan-global": {"type": "api", "key": "auth-kimi"},
+            "minimax-cn-coding-plan": {"type": "api", "key": "auth-mm"},
             "anthropic": {"type": "api", "key": "unmapped"},
             "openai": {"type": "oauth", "access": "tok"}
         });
         merge_auth_doc(&mut p, &auth);
         assert_eq!(p.keys.glm.as_deref(), Some("explicit"));
         assert_eq!(p.keys.kimi.as_deref(), Some("auth-kimi"));
-        assert!(p.keys.minimax.is_none());
+        assert_eq!(p.keys.minimax.as_deref(), Some("auth-mm"));
+        // Coding-plan ids carry their non-default endpoint.
+        assert_eq!(
+            p.endpoints.get(&Provider::Kimi).map(String::as_str),
+            Some("https://api.kimi.ai/coding/v1")
+        );
+        assert_eq!(
+            p.endpoints.get(&Provider::Minimax).map(String::as_str),
+            Some("https://api.minimaxi.com/v1")
+        );
+        // …but not for the glm slot, which auth never filled.
+        assert!(!p.endpoints.contains_key(&Provider::Glm));
     }
 }

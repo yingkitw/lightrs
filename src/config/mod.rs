@@ -17,7 +17,9 @@ pub fn config_file_mtime() -> Option<SystemTime> {
     std::fs::metadata(config_path()).ok()?.modified().ok()
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, clap::ValueEnum, Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     Glm,
@@ -55,6 +57,20 @@ impl Provider {
             Provider::Glm => Some("GLM_API_KEY"),
             _ => None,
         }
+    }
+
+    /// Stable lowercase id used in `[endpoints]` config keys and CLI values.
+    pub fn id(self) -> &'static str {
+        match self {
+            Provider::Glm => "glm",
+            Provider::Kimi => "kimi",
+            Provider::Minimax => "minimax",
+        }
+    }
+
+    pub fn from_id(s: &str) -> Option<Provider> {
+        use clap::ValueEnum;
+        Provider::from_str(s, true).ok()
     }
 }
 
@@ -94,6 +110,25 @@ pub struct AppConfig {
     pub test_command: Option<String>,
     /// Max heal runs per user turn (`[shell].heal_steps`, default 3).
     pub heal_steps: u32,
+    /// Per-provider endpoint overrides from `[endpoints]` (e.g. a
+    /// kimi-for-coding key needs `api.kimi.ai/coding/v1`, not moonshot).
+    /// Global config only — project overlays ignore it like keys/base_url.
+    pub endpoints: std::collections::BTreeMap<Provider, String>,
+}
+
+impl AppConfig {
+    /// Base URL to reach `provider` — the active provider's explicit
+    /// `base_url` wins, then a `[endpoints]` override, then the provider
+    /// default.
+    pub fn endpoint_for(&self, provider: Provider) -> String {
+        if provider == self.provider {
+            return self.base_url.clone();
+        }
+        self.endpoints
+            .get(&provider)
+            .cloned()
+            .unwrap_or_else(|| provider.default_base_url().to_string())
+    }
 }
 
 impl AppConfig {
@@ -165,6 +200,17 @@ impl AppConfig {
             shell_policy: shell_policy_from_parts(allowlist, require_approval),
             test_command,
             heal_steps,
+            // Global file only — a project overlay `endpoints` is parsed but
+            // never applied (same redirect-attack surface as base_url/keys).
+            endpoints: file
+                .as_ref()
+                .and_then(|f| f.endpoints.as_ref())
+                .map(|m| {
+                    m.iter()
+                        .filter_map(|(k, v)| Provider::from_id(k).map(|p| (p, v.clone())))
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 
@@ -357,5 +403,54 @@ mod path_tests {
         let path = resolve_work_output_path(&dir, &target).unwrap();
         assert_eq!(path, target);
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+#[cfg(test)]
+mod endpoint_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn cfg() -> AppConfig {
+        AppConfig {
+            provider: Provider::Glm,
+            model: "glm-4.6".into(),
+            fallback_model: None,
+            weak_model: None,
+            base_url: "https://custom.example/v1".into(),
+            api_key: "k".into(),
+            workdir: PathBuf::from("."),
+            shell_policy: ShellPolicy::default(),
+            test_command: None,
+            heal_steps: 3,
+            endpoints: BTreeMap::from([(
+                Provider::Kimi,
+                "https://api.kimi.ai/coding/v1".into(),
+            )]),
+        }
+    }
+
+    #[test]
+    fn endpoint_for_prefers_active_then_override_then_default() {
+        let c = cfg();
+        // Active provider: explicit base_url always wins.
+        assert_eq!(c.endpoint_for(Provider::Glm), "https://custom.example/v1");
+        // `[endpoints]` override for a non-active provider.
+        assert_eq!(
+            c.endpoint_for(Provider::Kimi),
+            "https://api.kimi.ai/coding/v1"
+        );
+        // No override → provider default.
+        assert_eq!(
+            c.endpoint_for(Provider::Minimax),
+            Provider::Minimax.default_base_url()
+        );
+    }
+
+    #[test]
+    fn provider_id_roundtrip() {
+        for p in [Provider::Glm, Provider::Kimi, Provider::Minimax] {
+            assert_eq!(Provider::from_id(p.id()), Some(p));
+        }
+        assert_eq!(Provider::from_id("bogus"), None);
     }
 }

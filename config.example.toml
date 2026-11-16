@@ -16,6 +16,15 @@ workdir = "."               # agent file/shell scope
 # kimi = "..."
 # minimax = "..."
 
+# Optional: per-provider base-url overrides when a key targets a non-default
+# endpoint (e.g. Kimi Code plan vs pay-as-you-go Moonshot). Applies to
+# `/model <provider>` switches and the `/model` list fetch.
+# [endpoints]
+# kimi = "https://api.kimi.ai/coding/v1"   # Kimi Code (global)
+# kimi = "https://api.kimi.com/coding/v1"  # Kimi Code (China)
+# kimi = "https://api.moonshot.cn/v1"      # Moonshot pay-as-you-go (China)
+# minimax = "https://api.minimaxi.com/v1"  # MiniMax CN (coding-plan keys)
+
 # Optional: restrict and/or confirm run_command before execution
 # [shell]
 # allowlist = ["cargo ", "git ", "rustc ", "ls", "pwd"]  # empty = allow all prefixes

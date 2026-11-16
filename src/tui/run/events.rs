@@ -119,6 +119,7 @@ mod tests {
             shell_policy: ShellPolicy::default(),
             test_command: None,
             heal_steps: 3,
+            endpoints: Default::default(),
         });
         app.set_busy();
         app.status = status.into();

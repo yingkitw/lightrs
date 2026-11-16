@@ -14,6 +14,9 @@ pub(crate) struct FileConfig {
     pub base_url: Option<String>,
     pub workdir: Option<PathBuf>,
     pub keys: Option<FileKeys>,
+    /// `[endpoints]` per-provider base-url overrides (`kimi = "…"`). Global
+    /// file only — project overlays never apply it (API-call redirect risk).
+    pub endpoints: Option<std::collections::BTreeMap<String, String>>,
     /// Secondary model retried once when the primary errors mid-turn.
     pub fallback_model: Option<String>,
     /// Cheaper model for read-only steps; escalates to `model` on write/exec tools.

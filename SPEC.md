@@ -120,7 +120,9 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 
 Priority: **CLI/env > project overlay > config file > defaults** (`config/file.rs`, `config.example.toml`). API-key env vars feed the CLI tier via clap `env=` args.
 
-**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, `weak_model`, and `[shell]` are applied — a project `[shell]` section replaces the global one entirely. `provider`, `base_url`, `keys`, and `workdir` are parsed but ignored, so a repo file cannot redirect API calls or inject credentials.
+**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, `weak_model`, and `[shell]` are applied — a project `[shell]` section replaces the global one entirely. `provider`, `base_url`, `keys`, `endpoints`, and `workdir` are parsed but ignored, so a repo file cannot redirect API calls or inject credentials.
+
+**`[endpoints]`** — per-provider base-url overrides (`kimi = "https://api.kimi.ai/coding/v1"`), used when a key targets a non-default endpoint (coding-plan/region variants). `AppConfig::endpoint_for(p)`: active provider's `base_url` wins → `[endpoints]` override → provider default. Migration writes it from OpenCode `options.baseURL` and known coding-plan auth ids.
 
 ### Shell allowlist
 

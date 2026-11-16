@@ -355,6 +355,7 @@ mod tests {
             shell_policy: crate::tools::ShellPolicy::default(),
             test_command: None,
             heal_steps: 3,
+            endpoints: Default::default(),
         })
     }
 
