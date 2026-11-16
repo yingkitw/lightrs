@@ -353,3 +353,24 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **`run_slash` rescans `.claude/commands/` on every unknown `/name`** (`other` arm reloads `app.commands` from disk) — injecting `app.commands` in a test is silently overwritten. Write a real `.claude/commands/<name>.md` into the fixture workdir instead. `expand` = body + "\n\n" + args; `SlashAction::Prompt` flows to `submit_line` → `kick_turn` (composer commits the *typed* line, model gets the *expanded* body).
 - `tui/slash.rs` 61%→86% via the `fixture::build` pattern for every handler; remaining misses are `/editor` ($EDITOR-bound) and error paths needing real session files.
 - `git diff` after big batches still the cheapest sanity: 333 tests, **84.99%** lines total.
+
+## Coverage pass 6 findings (2026-11-16)
+
+- **HOME-bound orchestrators are fully testable via spawned binary + fabricated fixtures**: `migrate::run_migrate`/`bootstrap_if_needed` scan `~/.claude`, `~/.config/opencode`, etc. — write the fake tool config under the isolated `HOME` in `tests/cli.rs` and run the real subcommand. `doctor --check` doubles as a bootstrap e2e: `AppConfig::load(auto_migrate)` → `bootstrap_if_needed` → writes config → doctor runs on the imported profile.
+- **Verify flag names against clap, not memory**: `migrate`'s filter flag is `--from` (not `--only`); `doctor` is a `visible_alias` of `migrate` and prints `format_scan_report` at the end. Provider in doctor output is `{:?}` — "Glm", not "GLM".
+- `pick_best` priority (opencode > claude-code > aider > pi > cursor, else any-with-profile) is pure — unit-test it directly; `migrate/mod.rs` 22.6%→86.4%, scan/mod.rs →100%.
+
+## Coverage pass 7 findings (2026-11-16)
+
+- **`$EDITOR`-bound code: extract the spawn from the terminal suspend**: `run_editor_on_tempfile(editor)` takes the command *string*, not `std::env::var("EDITOR")` — unit-testable with a real executable fixture script (temp `.sh` + `chmod 0o755`; lightrs appends the temp path as last arg so `$1`/`$2` indexing exercises arg forwarding). Terminal suspend/resume stays in the pty-bound caller. `tui/editor.rs` 0→73%.
+- **`split_whitespace` can't parse quoted `EDITOR` args** (`EDITOR='sh -c "echo x"'` splits inside the quotes) — acceptable for `code --wait`/`vim`; use a path-only script in tests.
+- Fake-tool detection fixtures: `~/.pi/agent/settings.json` (any file = installed), `~/.cursor/mcp.json` (parsed as mcp_json), `~/.aider.conf.yml` (`model:` line = profile) — one `migrate --dry-run` asserts all names in the report. `detect.rs` →86%.
+
+## ACP coverage note (2026-11-16)
+
+- `cargo llvm-cov --summary-only` uses *default* features — `acp/*` is invisible until `--features acp` (and `acp-v2` for v2). Measure feature-gated code separately or `--all-features` totals get diluted by untestable `Stdio` wiring.
+- ACP testable seam = the `Mutex<HashMap<SessionId, _>>` state machine (`AcpV1State`, `V2State`) — `#[tokio::test]` + fixture `AppConfig`; `make_agent` needs no network. The `Agent.v1().on_receive_request…connect_to(Stdio)` table is protocol-crate wiring — skip it, same class as the pty `run` loop.
+
+## No hosted CI (owner decision, 2026-11-16)
+
+- lightrs deliberately runs **no GitHub Actions / hosted CI** — do not scaffold `.github/workflows`, CI badges, or status checks. Verification is local only: `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo build --release`. If binary-size regressions matter, check `stat -f%z target/release/lightrs` (macOS) locally.

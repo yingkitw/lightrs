@@ -95,3 +95,52 @@ fn apply_tool(tool: &DetectedTool) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn tool(name: &'static str, with_profile: bool) -> DetectedTool {
+        DetectedTool {
+            name,
+            config_path: PathBuf::from(format!("/fake/{name}")),
+            installed: true,
+            profile: with_profile.then(ModelProfile::default),
+            mcp_json: None,
+        }
+    }
+
+    #[test]
+    fn pick_best_prefers_opencode_over_others() {
+        let picked = pick_best(vec![tool("aider", true), tool("opencode", true)])
+            .unwrap();
+        assert_eq!(picked.name, "opencode");
+    }
+
+    #[test]
+    fn pick_best_follows_declared_order() {
+        // claude-code outranks aider and pi regardless of input order.
+        let picked = pick_best(vec![
+            tool("pi", true),
+            tool("aider", true),
+            tool("claude-code", true),
+        ])
+        .unwrap();
+        assert_eq!(picked.name, "claude-code");
+    }
+
+    #[test]
+    fn pick_best_falls_back_to_any_tool_with_profile() {
+        // A tool outside the priority list still wins when it has a profile
+        // and ordered candidates do not.
+        let picked = pick_best(vec![tool("opencode", false), tool("cursor", true)]).unwrap();
+        assert_eq!(picked.name, "cursor");
+    }
+
+    #[test]
+    fn pick_best_returns_none_without_profiles() {
+        assert!(pick_best(vec![tool("opencode", false), tool("pi", false)]).is_none());
+        assert!(pick_best(vec![]).is_none());
+    }
+}

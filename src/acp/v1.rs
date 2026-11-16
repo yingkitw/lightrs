@@ -175,3 +175,51 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
         .connect_to(Stdio::new())
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AppConfig, Provider};
+    use crate::tools::ShellPolicy;
+
+    fn cfg() -> AppConfig {
+        AppConfig {
+            provider: Provider::Glm,
+            model: "m".into(),
+            fallback_model: None,
+            weak_model: None,
+            base_url: "http://127.0.0.1:9".into(),
+            api_key: "k".into(),
+            workdir: std::env::temp_dir(),
+            shell_policy: ShellPolicy::default(),
+            test_command: None,
+            heal_steps: 3,
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_alloc_remove_session() {
+        let state = AcpV1State::new(cfg());
+        let dir = std::env::temp_dir();
+
+        let id1 = state.insert_session(dir.clone()).await.unwrap();
+        let id2 = state.insert_session(dir).await.unwrap();
+        // Monotonic allocation — each session gets a distinct id.
+        assert_ne!(id1, id2);
+        assert_eq!(state.sessions.lock().await.len(), 2);
+
+        state.remove_session(&id1).await;
+        let sessions = state.sessions.lock().await;
+        assert!(!sessions.contains_key(&id1));
+        assert!(sessions.contains_key(&id2));
+    }
+
+    #[tokio::test]
+    async fn remove_missing_session_is_noop() {
+        let state = AcpV1State::new(cfg());
+        state
+            .remove_session(&SessionId::new("lightrs-999"))
+            .await;
+        assert!(state.sessions.lock().await.is_empty());
+    }
+}

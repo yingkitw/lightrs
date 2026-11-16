@@ -2,6 +2,12 @@
 
 ## Done
 
+- [x] ACP state machines: `AcpV1State` (insert/alloc/remove, distinct ids, remove-miss noop) + `V2State::create` tokio tests — `acp/v1.rs` 0→43% lines; remainder is `Stdio` wiring only
+
+- [x] `run_editor_on_tempfile` seam: `/editor` spawn + read-back unit-testable via fake executable scripts (0→73%); `detect.rs` pi/cursor/aider covered via scan-all fixture test
+
+- [x] Migrate orchestrator coverage: `pick_best` unit tests + spawned-binary e2e (`migrate` real run from fake `~/.claude/settings.json`, `--from` miss error, `doctor` auto-bootstrap → config.toml → GLM doctor pass); `migrate/mod.rs` 22.6→86.4%
+
 - [x] `/model` mid-session switch (`/model`, `/model <name>`, `/model <provider> [name]`); `Agent::set_client` swap + `resolve_runtime_api_key`; coverage passes: `tui/slash.rs` 61→86%, `tui/run/input.rs` →94% (synthetic key events + project-command kick), total 84.99%
 
 - [x] Mermaid renderer: layered box layout for `flowchart TD`/`LR` (Kahn ranks, barycenter ordering, `Canvas` junction merging, edge labels on wide spans); flat edge list for cycles / `BT`/`RL` / over-width; sequence rows unchanged; panel bg (`code_bg` + `inline_code_bg` node fill) via `Canvas.kind` → `segment_row`
@@ -83,7 +89,7 @@
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 333 tests, 84.99% lines (llvm-cov); spawned-binary e2e + request-capture on the shared mock |
+| Correctness & coverage | 5 | 342 tests, 85.73% lines (llvm-cov); spawned-binary e2e + request-capture on the shared mock |
 | Agent reliability | 5 | Step cap, interrupt, heal loop, fallback + weak-model routing, single turn loop |
 | UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, native copy + scroll; OpenCode signals (ctx %, `path:branch`, jump-to-latest); mermaid ASCII layout panel |
 | Maintainability | 5 | `agent/context/` domain module; duplicated turn loop deleted (net -108) |
@@ -95,7 +101,7 @@
 
 ## Brainstorm (unprioritized)
 
-- Release binary size badge in CI (sizes now: 7.4M default / 5.6M `--no-default-features` / 9.0M `full` after `[profile.release]` lto+strip)
+- ~~Release binary size badge in CI~~ — **deliberately skipped**: project runs no GitHub Actions / hosted CI (owner decision 2026-11-16). Verification stays local: `cargo test`, `clippy`, `cargo build --release` per AGENTS.md Step 3.
 
 ## Competitive intel — craftine + vendored minicode (2026-11-15)
 

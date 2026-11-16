@@ -188,3 +188,36 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
         .connect_to(Stdio::new())
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AppConfig, Provider};
+    use crate::tools::ShellPolicy;
+
+    fn cfg() -> AppConfig {
+        AppConfig {
+            provider: Provider::Glm,
+            model: "m".into(),
+            fallback_model: None,
+            weak_model: None,
+            base_url: "http://127.0.0.1:9".into(),
+            api_key: "k".into(),
+            workdir: std::env::temp_dir(),
+            shell_policy: ShellPolicy::default(),
+            test_command: None,
+            heal_steps: 3,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_allocates_distinct_sessions() {
+        let state = V2State::new(cfg());
+        let dir = std::env::temp_dir();
+
+        let id1 = state.create(dir.clone()).await.unwrap();
+        let id2 = state.create(dir).await.unwrap();
+        assert_ne!(id1, id2);
+        assert_eq!(state.sessions.lock().await.len(), 2);
+    }
+}

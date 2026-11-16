@@ -106,6 +106,94 @@ fn migrate_dry_run_scans_without_writing() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
+fn write_fake_claude_settings(home: &std::path::Path) {
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    std::fs::write(
+        home.join(".claude/settings.json"),
+        r#"{"model":"claude-glm-4.6","env":{"ANTHROPIC_BASE_URL":"https://api.z.ai/api/anthropic","ANTHROPIC_AUTH_TOKEN":"tok-123"}}"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn migrate_imports_claude_code_profile() {
+    let home = tmp("migrate-apply");
+    write_fake_claude_settings(&home);
+
+    let out = run_isolated(&home, &["migrate"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Migrated settings from claude-code"),
+        "out: {}",
+        stdout(&out)
+    );
+    let cfg = std::fs::read_to_string(home.join(".config/lightrs/config.toml")).unwrap();
+    assert!(cfg.contains("provider = \"glm\""), "cfg: {cfg}");
+    assert!(cfg.contains("model = \"glm-4.6\""), "cfg: {cfg}");
+    assert!(cfg.contains("api/paas/v4"), "cfg: {cfg}");
+    assert!(cfg.contains("glm = \"tok-123\""), "cfg: {cfg}");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn migrate_scan_reports_all_detected_tools() {
+    let home = tmp("scan-all");
+    write_fake_claude_settings(&home);
+    // pi: any file under ~/.pi/agent counts as installed
+    std::fs::create_dir_all(home.join(".pi/agent")).unwrap();
+    std::fs::write(home.join(".pi/agent/settings.json"), "{}").unwrap();
+    // cursor: mcp.json content is imported as mcp_json
+    std::fs::create_dir_all(home.join(".cursor")).unwrap();
+    std::fs::write(home.join(".cursor/mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
+    // aider: yaml model line yields a profile
+    std::fs::write(home.join(".aider.conf.yml"), "model: glm-4.6\n").unwrap();
+
+    let out = run_isolated(&home, &["migrate", "--dry-run"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    for name in ["claude-code", "aider", "pi", "cursor"] {
+        assert!(text.contains(name), "missing {name} in: {text}");
+    }
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn migrate_only_unknown_tool_errors() {
+    let home = tmp("migrate-only");
+    write_fake_claude_settings(&home);
+    // Filtering to a tool that was not detected leaves nothing to import.
+    let out = run_isolated(&home, &["migrate", "--from", "aider"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("no recognizable agent config"),
+        "stderr: {}",
+        stderr(&out)
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn doctor_bootstraps_config_from_claude_settings() {
+    let home = tmp("bootstrap");
+    write_fake_claude_settings(&home);
+
+    // No lightrs config yet: AppConfig::load auto-migrates from the best
+    // detected tool, then doctor runs against the imported GLM profile.
+    let out = run_isolated(&home, &["doctor", "--check"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("migrating from claude-code"),
+        "stderr: {}",
+        stderr(&out)
+    );
+    assert!(stdout(&out).contains("Glm"), "out: {}", stdout(&out));
+    assert!(home.join(".config/lightrs/config.toml").exists());
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 #[test]
 fn exec_prints_mock_reply() {
     let home = tmp("exec");
