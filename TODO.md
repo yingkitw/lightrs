@@ -2,6 +2,10 @@
 
 ## Done
 
+- [x] Migrate detects Codex (`~/.codex/config.toml` → `model_provider`/`model`/`[model_providers.*] base_url`+`env_key`); `provider_from_base_url` host mapper (id substrings ≠ URL hosts: `api.z.ai` ≠ `zai`); priority slot between claude-code and aider; e2e via `env_key = "HOME"`
+
+- [x] Workdir context reads `CLAUDE.md` + `GEMINI.md` (competitor-convention intel: codex→AGENTS, aider→AIDER already covered); SPEC cap corrected 4→6 KiB drift
+
 - [x] Panic fix ×3: `grep` rg-path 64KiB output cap + `skills` rules caps (`&rules[..RULES_MAX_CHARS]`, `&chunk[..room]`) all used raw byte slices — mid-UTF-8 panic; shared `tools::truncate_bytes` boundary walk, boundary-straddling fixtures per site used `String::truncate` — panics on mid-UTF-8 cuts; shared `tools::truncate_bytes` boundary walk (deduped skills copy), regression test with a computed '€'-straddling fixture
 
 - [x] Context precision fix: `slim_stored_user_content` now requires the `\n---` block header — a user-typed literal `[attached]`/`[skills]` no longer truncates their message on resend/session-save; regression test + `docs/context.md` note

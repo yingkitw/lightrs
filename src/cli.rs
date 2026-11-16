@@ -55,7 +55,7 @@ pub enum Command {
         /// Print setup health (config, keys, workdir, rg) without importing
         #[arg(long, conflicts_with_all = ["dry_run", "from"])]
         check: bool,
-        #[arg(long, help = "Only migrate from this tool (opencode, claude-code, aider, pi, cursor)")]
+        #[arg(long, help = "Only migrate from this tool (opencode, claude-code, codex, aider, pi, cursor)")]
         from: Option<String>,
     },
     /// Run one prompt without the TUI (stdout or JSON)

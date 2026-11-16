@@ -3,9 +3,15 @@ use std::path::Path;
 
 const MAX_CHARS: usize = 6_144;
 
-const CANDIDATE_NAMES: &[&str] = &["AGENTS.md", "AIDER.md", ".lightrs/AGENTS.md"];
+const CANDIDATE_NAMES: &[&str] = &[
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "AIDER.md",
+    ".lightrs/AGENTS.md",
+];
 
-/// Load project-local agent hints from the workdir (Aider/Codex-style).
+/// Load project-local agent hints from the workdir (Aider/Codex/Claude/Gemini-style).
 pub fn load_workdir_context(workdir: &Path) -> String {
     let mut sections = Vec::new();
     for rel in CANDIDATE_NAMES {
@@ -55,6 +61,19 @@ mod tests {
         fs::write(dir.join("AGENTS.md"), "use cargo test").unwrap();
         let ctx = load_workdir_context(&dir);
         assert!(ctx.contains("use cargo test"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn loads_claude_and_gemini_md() {
+        let dir = std::env::temp_dir().join(format!("lightrs-wd-ctx2-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("CLAUDE.md"), "claude rule").unwrap();
+        fs::write(dir.join("GEMINI.md"), "gemini rule").unwrap();
+        let ctx = load_workdir_context(&dir);
+        assert!(ctx.contains("claude rule"), "ctx: {ctx}");
+        assert!(ctx.contains("gemini rule"), "ctx: {ctx}");
         let _ = fs::remove_dir_all(&dir);
     }
 }

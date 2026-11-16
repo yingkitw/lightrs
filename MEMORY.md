@@ -396,3 +396,15 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - rg-path fixture trick: compute the exact prefix rg prints (`<abs>:1:`), then fill so a 3-byte char straddles the cap — deterministic boundary test through the real `grep()`.
 
 - **Same bug, two more sites** (skills): `&rules[..RULES_MAX_CHARS]` in `system_appendix` and `&chunk[..room]` in `load_rules` — a `rules/*.md` file pushing the catalog over 4KiB mid-char would panic *on every send* (appendix rebuilds per request). Both now use `tools::truncate_bytes`. Sweep heuristic that found all three: `grep -rn "\[\.\.[A-Z_]*\]\|\.truncate(" src/ | grep -v lossy\|chars()` — every raw byte-index on a `&str`/`String` carrying external text is a candidate panic.
+
+## Convention mining (2026-11-16)
+
+- When a feature already exists, mine it for *convention coverage* before declaring done: `workdir_context` loaded AGENTS/AIDER but not `CLAUDE.md`/`GEMINI.md` — the two most common names in the wild. Candidate-list gaps are invisible to tests until you check each competitor's filename.
+- `floor_char_boundary` (stable since Rust 1.9-era API, stabilized later) is the built-in boundary-safe byte cut — prefer it over re-adding walk-backs in new code; `tools::truncate_bytes` already exists for `&str` caps.
+
+## Codex migration (2026-11-16)
+
+- **`~/.codex/config.toml`** shape: top-level `model` + `model_provider = "<name>"`; `[model_providers.<name>]` table holds `base_url` + `env_key` (name of the env var holding the key, not the key itself). Parsed with the existing `toml` dep in `migrate/scan/detect.rs::parse_codex_config`.
+- **Id substring ≠ URL host**: `map_opencode_provider_id` matches provider *ids* (`zai`, `glm4`, `zhipu-*`) — feeding it `https://api.z.ai/…` fails because `z.ai` has a dot (`zai` isn't contiguous). Use `profile::provider_from_base_url` for URLs (substrings `z.ai`/`bigmodel`/`moonshot`/`minimax`, same vocabulary as `anthropic_base_to_profile`), then fall back to the provider *name* for custom proxies (`glm-proxy` → Glm).
+- **e2e key-resolution trick**: `env_key = "HOME"` in a fixture config — HOME is always set in the spawned binary's env, so the env_key→`Keys` path is asserted without env plumbing or real secrets.
+- Priority order in `pick_best` is now `opencode, claude-code, codex, aider, pi, cursor` — codex sits above aider because its provider table carries base_url + env_key (richer import than aider's model-only yaml).

@@ -50,6 +50,22 @@ pub fn map_opencode_provider_id(id: &str) -> Option<Provider> {
     }
 }
 
+/// Provider inference from an API endpoint (`api.z.ai` → GLM, `moonshot` →
+/// Kimi, `minimax` → MiniMax). Host substrings differ from provider *ids*:
+/// `api.z.ai` does not contain contiguous `zai`.
+pub(crate) fn provider_from_base_url(base_url: &str) -> Option<Provider> {
+    let b = base_url.to_ascii_lowercase();
+    if b.contains("z.ai") || b.contains("bigmodel") {
+        Some(Provider::Glm)
+    } else if b.contains("moonshot") {
+        Some(Provider::Kimi)
+    } else if b.contains("minimax") {
+        Some(Provider::Minimax)
+    } else {
+        None
+    }
+}
+
 pub fn anthropic_base_to_profile(base_url: &str, token: &str) -> ModelProfile {
     let base = base_url.trim_end_matches('/').to_string();
     let mut keys = Keys::default();

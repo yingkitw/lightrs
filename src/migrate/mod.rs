@@ -62,7 +62,7 @@ pub fn run_migrate(dry_run: bool, only: Option<&str>) -> Result<()> {
 }
 
 fn pick_best(tools: Vec<DetectedTool>) -> Option<DetectedTool> {
-    const ORDER: &[&str] = &["opencode", "claude-code", "aider", "pi", "cursor"];
+    const ORDER: &[&str] = &["opencode", "claude-code", "codex", "aider", "pi", "cursor"];
     for name in ORDER {
         if let Some(t) = tools.iter().find(|t| t.name == *name && t.profile.is_some()) {
             return Some(t.clone());
@@ -128,6 +128,9 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(picked.name, "claude-code");
+        // codex sits between claude-code and aider.
+        let picked = pick_best(vec![tool("aider", true), tool("codex", true)]).unwrap();
+        assert_eq!(picked.name, "codex");
     }
 
     #[test]

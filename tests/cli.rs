@@ -136,6 +136,38 @@ fn migrate_imports_claude_code_profile() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
+fn write_fake_codex_config(home: &std::path::Path) {
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    // env_key = "HOME" is always set in the spawned env, proving the
+    // env_key → key resolution end-to-end without extra env plumbing.
+    std::fs::write(
+        home.join(".codex/config.toml"),
+        "model = \"glm-4.6\"\nmodel_provider = \"zai\"\n\n[model_providers.zai]\nname = \"Z.AI\"\nbase_url = \"https://api.z.ai/api/paas/v4\"\nenv_key = \"HOME\"\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn migrate_imports_codex_profile() {
+    let home = tmp("migrate-codex");
+    write_fake_codex_config(&home);
+
+    let out = run_isolated(&home, &["migrate"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Migrated settings from codex"),
+        "out: {}",
+        stdout(&out)
+    );
+    let cfg = std::fs::read_to_string(home.join(".config/lightrs/config.toml")).unwrap();
+    assert!(cfg.contains("provider = \"glm\""), "cfg: {cfg}");
+    assert!(cfg.contains("model = \"glm-4.6\""), "cfg: {cfg}");
+    assert!(cfg.contains("api/paas/v4"), "cfg: {cfg}");
+    assert!(cfg.contains("glm ="), "cfg: {cfg}");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 #[test]
 fn migrate_scan_reports_all_detected_tools() {
     let home = tmp("scan-all");
@@ -148,12 +180,14 @@ fn migrate_scan_reports_all_detected_tools() {
     std::fs::write(home.join(".cursor/mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
     // aider: yaml model line yields a profile
     std::fs::write(home.join(".aider.conf.yml"), "model: glm-4.6\n").unwrap();
+    // codex: ~/.codex/config.toml with a recognized provider yields a profile
+    write_fake_codex_config(&home);
 
     let out = run_isolated(&home, &["migrate", "--dry-run"]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let text = stdout(&out);
-    for name in ["claude-code", "aider", "pi", "cursor"] {
+    for name in ["claude-code", "codex", "aider", "pi", "cursor"] {
         assert!(text.contains(name), "missing {name} in: {text}");
     }
     let _ = std::fs::remove_dir_all(&home);

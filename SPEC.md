@@ -12,7 +12,7 @@
 - **ACP v1** — `lightrs acp` (initialize, authenticate, session/new, session/prompt, session/cancel); requires `acp` feature (default)
 - **ACP v2** — `lightrs acp --protocol v2` (baseline session lifecycle, async prompt + `session/update`)
 - **Import** — `lightrs import opencode` merges OpenCode JSON into `~/.config/lightrs/`
-- **Migrate** — `lightrs migrate` / `lightrs tui --auto-migrate` scans OpenCode, Claude Code, Aider
+- **Migrate** — `lightrs migrate` / `lightrs tui --auto-migrate` scans OpenCode, Claude Code, Codex, Aider
 
 ## Non-goals (v0.1)
 
@@ -112,7 +112,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - **Secret redaction**: tool results scrubbed for common key/token shapes before API history (`tools/redact.rs`, via `truncate_tool_api`)
 - **Audit log**: every `run_command` decision appends a JSON line to `.lightrs/audit.log` — `{ts, tool, command, decision, result}` where decision is `auto` / `approved` / `approved_bypass` / `denied` / `denied_headless`. Command text is redacted; `result` is a short status line. Best-effort (failures are ignored).
 - **Prompt-injection scan** (`tools/injection.rs`): tool results matching instruction-override patterns ("ignore previous instructions", "system prompt:", …) get a `[warning: …]` prefix prepended to the **API** history copy plus a `[sys]` transcript notice. Also applies to `[heal]` test output. Warning only — the result is still sent.
-- **Workdir context**: `AGENTS.md`, `AIDER.md`, or `.lightrs/AGENTS.md` in workdir merged into system prompt (4 KiB cap each)
+- **Workdir context**: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `AIDER.md`, or `.lightrs/AGENTS.md` in workdir merged into system prompt (6 KiB cap each)
 - **Skills**: `skills/mod.rs` scans `SKILL.md` directories (`[skills].paths` first — declared roots win id collisions and the 64-cap — then OpenCode import tree, Cursor, Claude Code, pi, Codex). Catalog appended to system prompt; `$skill-id` in the user message attaches skill body to the API payload (UI unchanged). `@path` file attach unchanged (`mentions.rs`). Rules from `~/.config/lightrs/rules/*.md` merge into system prompt. A `trigger:` frontmatter keyword shows a non-blocking `[sys]` hint when the user input contains it (and `$id` wasn't already used).
 - **Heal loop** (`agent/turn.rs::maybe_run_heal`): when `[shell].test_command` is set, it runs after each successful `write_file`/`patch_file`/`multi_edit` (max `heal_steps` per user turn, default 3; bypasses allowlist, deny list still applies). A pass shows `heal ok` in the transcript; a failure appends the output to the API history so the model can fix it
 

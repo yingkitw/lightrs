@@ -2,16 +2,72 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::migrate::profile::{self, ModelProfile};
+use crate::config::Provider;
+use crate::migrate::profile::{self, Keys, ModelProfile};
 use crate::migrate::scan::DetectedTool;
 use crate::opencode;
 
 pub(crate) fn push_all(out: &mut Vec<DetectedTool>) {
     push_opencode(out);
     push_claude_code(out);
+    push_codex(out);
     push_aider(out);
     push_pi(out);
     push_cursor_mcp(out);
+}
+
+fn push_codex(out: &mut Vec<DetectedTool>) {
+    let home = home_dir();
+    let path = home.join(".codex/config.toml");
+    let installed = has_binary("codex") || home.join(".codex").is_dir();
+    if !installed && !path.is_file() {
+        return;
+    }
+    let profile = path
+        .is_file()
+        .then(|| std::fs::read_to_string(&path).ok())
+        .flatten()
+        .and_then(|text| parse_codex_config(&text));
+    if path.is_file() || installed {
+        out.push(DetectedTool {
+            name: "codex",
+            config_path: path,
+            installed,
+            profile,
+            mcp_json: None,
+        });
+    }
+}
+
+/// `~/.codex/config.toml`: `model_provider` names a
+/// `[model_providers.<name>]` table holding `base_url` + `env_key`. Only emit
+/// a profile when the base_url maps to a provider lightrs speaks — a foreign
+/// provider would produce a broken config (default model on the wrong API).
+pub(crate) fn parse_codex_config(text: &str) -> Option<ModelProfile> {
+    let doc: toml::Value = toml::from_str(text).ok()?;
+    let provider_name = doc.get("model_provider")?.as_str()?;
+    let table = doc.get("model_providers")?.get(provider_name)?.as_table()?;
+    let base_url = table.get("base_url")?.as_str()?.trim_end_matches('/');
+    // Host substring first; fall back to the provider name (a named provider
+    // behind a custom proxy still maps correctly).
+    let provider = profile::provider_from_base_url(base_url)
+        .or_else(|| profile::map_opencode_provider_id(provider_name))?;
+    let mut p = ModelProfile {
+        provider: Some(provider),
+        model: doc.get("model").and_then(|v| v.as_str()).map(str::to_string),
+        base_url: Some(base_url.to_string()),
+        keys: Keys::default(),
+    };
+    if let Some(env_key) = table.get("env_key").and_then(|v| v.as_str())
+        && let Ok(val) = std::env::var(env_key)
+    {
+        match provider {
+            Provider::Glm => p.keys.glm = Some(val),
+            Provider::Kimi => p.keys.kimi = Some(val),
+            Provider::Minimax => p.keys.minimax = Some(val),
+        }
+    }
+    Some(p)
 }
 
 fn push_opencode(out: &mut Vec<DetectedTool>) {
