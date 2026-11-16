@@ -55,7 +55,7 @@ const TOOLS: &[&str] = &[
 ];
 
 const SLASH: &[&str] = &[
-    "help", "clear", "cwd", "cd", "todo", "editor", "status", "context", "reload", "quiet",
+    "help", "clear", "cwd", "cd", "todo", "editor", "status", "model", "context", "reload", "quiet",
     "skills", "export", "copy", "diff", "theme", "compact", "rewind", "undo", "quit",
 ];
 

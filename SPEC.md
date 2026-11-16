@@ -65,6 +65,7 @@
 | `/todo` | Show the task list written by `todo_write` (`.lightrs/todos.json`) |
 | `/editor` | Compose the prompt in `$EDITOR` (e.g. `vim`, `code --wait`); buffer loads into the composer on save |
 | `/status` | Session / model details + token usage |
+| `/model` | Show current model. `/model <name>` switches model on the same provider (keeps base URL + key); `/model <provider> [name]` switches provider (default endpoint, provider default model when omitted; key re-resolved from config/env — fails fast when missing). Header + context % update |
 | `/context` | Context budgets (`limits:`), wire vs stored turn counts, per-role breakdown, heaviest messages, current-turn in/out — full policy in `docs/context.md` |
 | `/reload` | Re-read `config.toml` `[shell]`; rescan skills; refresh agent system prompt |
 | `/quiet` | Toggle `[sys]` token lines (`send · ~N ctx`, per-step in/out, turn total); header + `/context` unchanged |

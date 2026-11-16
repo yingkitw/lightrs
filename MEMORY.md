@@ -331,3 +331,10 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Assistant messages with empty `content` but populated `tool_calls`
 - Error body shapes (`ApiErrorBody` vs raw HTML)
 - `agent-client-protocol-schema` 1.18 blocked on `agent-client-protocol` 5.2 pin to 1.17
+## Mid-session model switch + cli e2e (2026-11-16)
+
+- **`/model` swaps the whole client, not a field**: `Agent.client` is `Arc<dyn ModelClient>` — `set_client(new LlmClient)` replaces it (mirrors `set_fallback_client`); header + context % read `client.model()` at render so nothing else needs syncing. `AppConfig` in `App` is the source of base_url/api_key for the rebuild — the agent doesn't store them.
+- **Provider switch re-resolves the key** via `AppConfig::resolve_runtime_api_key` (global file + env, no CLI flags — flags only applied at startup); fails fast naming the missing env var rather than half-switching. Same-provider switch keeps custom `--base-url` + session key.
+- **Path-seam for HOME-bound code**: `session::load/save/remove` hardcode `session_path()`; splitting each into a pub wrapper + private `load_file(path, workdir)` / `save_to(agent, workdir, path)` / `remove_file(path)` made every reject branch (version, workdir mismatch, empty history, malformed) unit-testable in temp dirs — 6-line cost, 41%→90% coverage.
+- **Spawned-binary tests cover what unit tests can't**: anything touching `config_path()`/`HOME` (opencode import orchestrator, migrate, exec) goes in `tests/cli.rs` with isolated `HOME` + cleared key env vars (`run_isolated`). `env!("CARGO_BIN_EXE_lightrs")` gives the built binary; support mock serves SSE.
+- llvm-cov after pass 3: 79.4% total. Still thin: `tui/run/mod` (pty event loop, ~25%), `migrate/` (mostly spawnable paths), `acp/` (feature-gated, needs protocol frames).

@@ -87,7 +87,7 @@ pub enum ImportSource {
 
 /// Top-level model/config flags. `global = true` lets them appear before or
 /// after the subcommand (`lightrs exec -p hi --model x` and vice versa).
-#[derive(Debug, Parser, Clone)]
+#[derive(Debug, Parser, Clone, Default)]
 pub struct ModelFlags {
     #[arg(long, value_enum, global = true)]
     pub provider: Option<Provider>,

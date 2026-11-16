@@ -258,6 +258,14 @@ impl Agent {
         self.ensure_system_prompt();
     }
 
+    /// `/model` — swap the primary client mid-session; fallback/weak unchanged.
+    /// The header and context % read `client.model()` at render, so no other
+    /// state needs updating.
+    pub fn set_client(&mut self, client: impl ModelClient + 'static) {
+        self.client = Arc::new(client);
+        self.refresh_context_estimate();
+    }
+
     pub fn set_fallback_client(&mut self, client: Option<impl ModelClient + 'static>) {
         self.fallback_client = client.map(|c| Arc::new(c) as Arc<dyn ModelClient>);
     }

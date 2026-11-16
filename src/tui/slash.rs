@@ -2,13 +2,17 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+use clap::ValueEnum;
+
 use crate::agent::{Agent, context_usage_text};
 use crate::commands::SlashDef;
+use crate::config::{AppConfig, Provider};
+use crate::provider::LlmClient;
 use crate::session;
 use crate::tui::clipboard::{copy_payload_from_markdown, set_text};
 use crate::tui::theme;
 use crate::tui::App;
-use crate::tui::info::context_details;
+use crate::tui::info::{context_details, provider_name};
 
 /// Built-in TUI commands (leading `/`); never sent to the model.
 const COMMANDS: &[(&str, &str)] = &[
@@ -20,6 +24,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("editor", "compose the prompt in $EDITOR"),
     ("quit", "exit (same as q)"),
     ("status", "show model, path, and context"),
+    ("model", "show or switch model (/model [provider] [name])"),
     ("context", "context breakdown and token usage"),
     ("reload", "re-read config.toml [shell] policy"),
     ("quiet", "toggle per-step token sys lines"),
@@ -198,6 +203,36 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                 crate::config::model_context_window(&app.config.model),
             );
             agent.push_system(context_details(&app.config, n, &usage, "status"));
+            SlashAction::Handled
+        }
+        "model" => {
+            let args: Vec<&str> = line.split_whitespace().skip(1).collect();
+            match resolve_model_args(&args, &app.config) {
+                Ok(Some(sw)) => {
+                    agent.set_client(LlmClient::new(
+                        sw.base_url.clone(),
+                        sw.api_key.clone(),
+                        sw.model.clone(),
+                    ));
+                    app.config.provider = sw.provider;
+                    app.config.model = sw.model.clone();
+                    app.config.base_url = sw.base_url.clone();
+                    app.config.api_key = sw.api_key;
+                    agent.push_system(format!(
+                        "model → {} · {} · {}",
+                        provider_name(sw.provider),
+                        sw.model,
+                        sw.base_url
+                    ));
+                }
+                Ok(None) => agent.push_system(format!(
+                    "model: {} · {} · {}\n/model <name> · /model <provider> [name] — providers: glm, kimi, minimax",
+                    provider_name(app.config.provider),
+                    app.config.model,
+                    app.config.base_url
+                )),
+                Err(e) => agent.push_error(format!("{e:#}")),
+            }
             SlashAction::Handled
         }
         "context" => {
@@ -408,6 +443,58 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
 }
 
 /// Keep `agent.heal` in sync with the (possibly project-overlaid) `[shell]` config.
+/// Target of `/model` — everything needed to rebuild the primary client.
+struct ModelSwitch {
+    provider: Provider,
+    model: String,
+    base_url: String,
+    api_key: String,
+}
+
+/// `/model` args → `Some(switch)` or `None` when called bare (show current).
+/// Forms: `/model <name>` (same provider, keeps custom `--base-url` and key)
+/// or `/model <provider> [name]` (provider default model when name omitted).
+fn resolve_model_args(args: &[&str], cfg: &AppConfig) -> Result<Option<ModelSwitch>> {
+    let Some(first) = args.first() else {
+        return Ok(None);
+    };
+    match (Provider::from_str(first, true).ok(), args.get(1)) {
+        (Some(p), name) => model_switch(p, name.copied().unwrap_or_else(|| p.default_model()), cfg)
+            .map(Some),
+        (None, None) => Ok(Some(ModelSwitch {
+            provider: cfg.provider,
+            model: (*first).into(),
+            base_url: cfg.base_url.clone(),
+            api_key: cfg.api_key.clone(),
+        })),
+        (None, Some(extra)) => {
+            bail!("unexpected argument `{extra}` — usage: /model [provider] [name]")
+        }
+    }
+}
+
+/// Same-provider switch keeps the session's base_url + key; a provider switch
+/// resets to the provider's default endpoint and re-resolves its key from
+/// global config/env (fails fast when the key is missing).
+fn model_switch(provider: Provider, model: &str, cfg: &AppConfig) -> Result<ModelSwitch> {
+    if provider == cfg.provider {
+        return Ok(ModelSwitch {
+            provider,
+            model: model.into(),
+            base_url: cfg.base_url.clone(),
+            api_key: cfg.api_key.clone(),
+        });
+    }
+    let api_key = AppConfig::resolve_runtime_api_key(provider)
+        .with_context(|| format!("cannot switch to {}", provider_name(provider)))?;
+    Ok(ModelSwitch {
+        provider,
+        model: model.into(),
+        base_url: provider.default_base_url().to_string(),
+        api_key,
+    })
+}
+
 fn sync_heal(agent: &mut Agent, app: &App) {
     agent.set_heal(app.config.test_command.clone().map(|command| {
         crate::agent::HealSetting {
@@ -526,6 +613,56 @@ mod tests {
             action,
             SlashAction::Prompt("Review the diff.\n\nsrc/lib.rs".into())
         );
+    }
+
+    #[test]
+    fn model_bare_shows_current() {
+        let (dir, mut app, mut agent) = fixture::build("model-show");
+        run_slash("/model", &mut agent, &mut app);
+        let msg = last_ui_content(&agent);
+        assert!(msg.contains("model: kimi · m") && msg.contains("providers:"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn model_switches_same_provider_and_client() {
+        let (dir, mut app, mut agent) = fixture::build("model-switch");
+        run_slash("/model kimi-k2-thinking", &mut agent, &mut app);
+        assert_eq!(app.config.model, "kimi-k2-thinking");
+        assert_eq!(app.config.provider, crate::config::Provider::Kimi);
+        assert_eq!(app.config.base_url, "http://localhost");
+        assert_eq!(agent.client.model(), "kimi-k2-thinking");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn model_provider_keeps_base_when_same() {
+        let (dir, mut app, mut agent) = fixture::build("model-prov");
+        run_slash("/model kimi other-model", &mut agent, &mut app);
+        assert_eq!(app.config.model, "other-model");
+        assert_eq!(app.config.base_url, "http://localhost");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn model_rejects_extra_arg_and_unknown_provider_key() {
+        let (dir, mut app, mut agent) = fixture::build("model-err");
+        run_slash("/model k2 extra", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("unexpected argument"));
+
+        // Different provider: either the env/config key exists (switch
+        // succeeds with the provider default endpoint) or it fails fast
+        // naming the missing key — never silently half-switches.
+        run_slash("/model glm glm-4.6", &mut agent, &mut app);
+        if app.config.provider == crate::config::Provider::Glm {
+            assert_eq!(app.config.base_url, "https://api.z.ai/api/paas/v4");
+            assert_eq!(agent.client.model(), "glm-4.6");
+        } else {
+            let msg = last_ui_content(&agent);
+            assert!(msg.contains("ZAI_API_KEY") || msg.contains("GLM_API_KEY"));
+            assert_eq!(app.config.provider, crate::config::Provider::Kimi);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     mod fixture {

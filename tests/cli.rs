@@ -164,6 +164,30 @@ fn exec_json_wraps_reply() {
 }
 
 #[test]
+fn import_opencode_copies_assets_into_isolated_config() {
+    let home = tmp("import");
+    let src = tmp("import-src");
+    let oc = src.join("opencode.json");
+    std::fs::write(&oc, r#"{"mcp": {"srv": {"command": "x"}}, "instructions": []}"#).unwrap();
+
+    let out = run_isolated(
+        &home,
+        &["import", "opencode", "--config", oc.to_str().unwrap()],
+    );
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("Imported"), "out: {}", stdout(&out));
+
+    let mcp = home.join(".config/lightrs/mcp.json");
+    assert!(mcp.is_file(), "expected mcp.json under isolated config dir");
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
+    assert_eq!(v["srv"]["command"], "x");
+
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
 fn exec_reports_provider_error_cleanly() {
     let home = tmp("execerr");
     let out = run_isolated(

@@ -40,11 +40,14 @@ pub fn session_path(workdir: &Path) -> PathBuf {
 }
 
 pub fn load(workdir: &Path) -> Result<Option<SessionFile>> {
-    let path = session_path(workdir);
+    load_file(&session_path(workdir), workdir)
+}
+
+fn load_file(path: &Path, workdir: &Path) -> Result<Option<SessionFile>> {
     if !path.is_file() {
         return Ok(None);
     }
-    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let file: SessionFile = serde_json::from_str(&text).context("parse session json")?;
     if file.version != FORMAT_VERSION {
         return Ok(None);
@@ -66,11 +69,15 @@ pub fn load(workdir: &Path) -> Result<Option<SessionFile>> {
 }
 
 pub fn save(agent: &Agent, workdir: &Path) -> Result<()> {
+    save_to(agent, workdir, &session_path(workdir))
+}
+
+fn save_to(agent: &Agent, workdir: &Path, path: &Path) -> Result<()> {
     if !agent.is_persistable() {
         return Ok(());
     }
-    let dir = sessions_dir();
-    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let dir = path.parent().context("session path has no parent")?;
+    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     let file = SessionFile {
         version: FORMAT_VERSION,
         workdir: workdir
@@ -80,12 +87,11 @@ pub fn save(agent: &Agent, workdir: &Path) -> Result<()> {
         ui_history: conversation_ui_history(agent.export_ui_history()),
         token_stats: agent.token_summary().stats,
     };
-    let path = session_path(workdir);
     let json = serde_json::to_string_pretty(&file).context("serialize session")?;
     // Temp file + same-dir rename: a crash leaves old or new, never half JSON.
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, json).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, &path).with_context(|| format!("rename {}", path.display()))?;
+    fs::rename(&tmp, path).with_context(|| format!("rename {}", path.display()))?;
     Ok(())
 }
 
@@ -97,9 +103,12 @@ pub fn conversation_ui_history(ui: Vec<UiMessage>) -> Vec<UiMessage> {
 }
 
 pub fn remove(workdir: &Path) -> Result<()> {
-    let path = session_path(workdir);
+    remove_file(&session_path(workdir))
+}
+
+fn remove_file(path: &Path) -> Result<()> {
     if path.is_file() {
-        fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
     }
     Ok(())
 }
@@ -140,5 +149,88 @@ mod tests {
         let json = serde_json::to_string(&file).unwrap();
         let again: SessionFile = serde_json::from_str(&json).unwrap();
         assert_eq!(again.ui_history[0].content, "hi");
+    }
+
+    fn write_session(path: &Path, file: &SessionFile) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, serde_json::to_string(file).unwrap()).unwrap();
+    }
+
+    fn file_for(workdir: &Path) -> SessionFile {
+        SessionFile {
+            version: FORMAT_VERSION,
+            workdir: workdir.to_path_buf(),
+            api_history: vec![ApiMessage::user("hi")],
+            ui_history: vec![UiMessage::with_role(UiRole::User, "hi")],
+            token_stats: TokenStats::default(),
+        }
+    }
+
+    #[test]
+    fn load_file_missing_and_malformed() {
+        let dir = temp_dir().join(format!("lb-sess-miss-{}", std::process::id()));
+        let path = dir.join("s.json");
+        assert!(load_file(&path, &dir).unwrap().is_none());
+
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&path, "{ not json").unwrap();
+        assert!(load_file(&path, &dir).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_file_rejects_version_workdir_and_empty_history() {
+        let dir = temp_dir().join(format!("lb-sess-rej-{}", std::process::id()));
+        let path = dir.join("s.json");
+
+        let mut bad_version = file_for(&dir);
+        bad_version.version = 99;
+        write_session(&path, &bad_version);
+        assert!(load_file(&path, &dir).unwrap().is_none());
+
+        let other = temp_dir().join(format!("lb-sess-other-{}", std::process::id()));
+        fs::create_dir_all(&other).unwrap();
+        write_session(&path, &file_for(&other));
+        assert!(load_file(&path, &dir).unwrap().is_none());
+
+        let mut empty = file_for(&dir);
+        empty.api_history.clear();
+        write_session(&path, &empty);
+        assert!(load_file(&path, &dir).unwrap().is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn save_to_and_load_file_round_trip() {
+        use crate::provider::LlmClient;
+        use crate::tools::ShellPolicy;
+        use std::sync::Arc;
+
+        let dir = temp_dir().join(format!("lb-sess-rt-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let path = dir.join("s.json");
+
+        let mut agent = Agent::new(
+            LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),
+            Arc::from(dir.as_path()),
+            ShellPolicy::default(),
+        );
+        save_to(&agent, &dir, &path).unwrap();
+        assert!(!path.exists(), "non-persistable agent writes nothing");
+
+        agent.push_ui_message(UiMessage::with_role(UiRole::User, "hi"));
+        save_to(&agent, &dir, &path).unwrap();
+        assert!(path.is_file());
+
+        let loaded = load_file(&path, &dir).unwrap().expect("loads back");
+        assert_eq!(loaded.ui_history[0].content, "hi");
+
+        remove_file(&path).unwrap();
+        assert!(!path.exists());
+        remove_file(&path).unwrap();
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -69,6 +69,8 @@
 - [x] `/diff` — session change review (aider-style): `session::collect_file_diffs` replays stored `FileDiffUi`s as collapsed `diff` tool rows (expand with `o`/click); `[sys]` summary totals unique files + `+N −M` across writes — zero filesystem reads
 - [x] Terminal title — OSC 2 `lightrs · dir[:branch]` + `· ●` while Busy, set on change each loop pass, cleared on exit (`tui::title_escape`, control chars stripped)
 - [x] Native copy without losing scroll — mouse reporting narrowed to `?1000h`+`?1006h` (`tui::MOUSE_ON/OFF`); `?1002` drag tracking off → terminal drag-select + Cmd/Ctrl+C work while wheel scroll and tool-row clicks are unaffected
+- [x] `/model` — mid-session switch: `/model <name>` (same provider, keeps base URL + key), `/model <provider> [name]` (provider default endpoint + model; key re-resolved via `AppConfig::resolve_runtime_api_key`, fails fast); `Agent::set_client` swaps `Arc<dyn ModelClient>` — header + context % recompute from `client.model()`
+- [x] Coverage pass 3 (76.8%→79.4%): `session/mod` 41→90% (`load_file`/`save_to`/`remove_file` path-seam refactor + all reject branches), `opencode/assets` 0→90% (mcp/skills/rules/hooks import + tilde), `tui/info` 66→98% (header/session builders, host label, row-count threshold); `tests/cli.rs` + import e2e → `opencode/mod` orchestrator covered
 
 ## Backlog
 
@@ -78,7 +80,7 @@
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 258 tests; request-capture e2e (approval, wire budget, weak-model) on the shared mock |
+| Correctness & coverage | 5 | 286 tests, 79.4% lines (llvm-cov); spawned-binary e2e + request-capture on the shared mock |
 | Agent reliability | 5 | Step cap, interrupt, heal loop, fallback + weak-model routing, single turn loop |
 | UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, native copy + scroll; OpenCode signals (ctx %, `path:branch`, jump-to-latest); mermaid ASCII layout panel |
 | Maintainability | 5 | `agent/context/` domain module; duplicated turn loop deleted (net -108) |

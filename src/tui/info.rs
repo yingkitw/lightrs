@@ -194,6 +194,93 @@ pub fn git_branch_label(dir: &std::path::Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AppConfig;
+    use crate::tools::ShellPolicy;
+
+    fn cfg() -> AppConfig {
+        AppConfig {
+            provider: Provider::Kimi,
+            model: "k2".into(),
+            fallback_model: None,
+            weak_model: None,
+            base_url: "https://api.moonshot.ai/v1".into(),
+            api_key: String::new(),
+            workdir: std::path::PathBuf::from("/work/proj"),
+            shell_policy: ShellPolicy::default(),
+            test_command: None,
+            heal_steps: 3,
+        }
+    }
+
+    fn app() -> App {
+        App::new(cfg())
+    }
+
+    #[test]
+    fn provider_labels() {
+        assert_eq!(provider_name(Provider::Glm), "glm");
+        assert_eq!(provider_name(Provider::Kimi), "kimi");
+        assert_eq!(provider_name(Provider::Minimax), "minimax");
+    }
+
+    #[test]
+    fn end_truncation() {
+        assert_eq!(truncate_end("short", 10), "short");
+        assert_eq!(truncate_end("abcdefghij", 5), "abcd…");
+    }
+
+    #[test]
+    fn host_label_strips_scheme_and_slash() {
+        assert_eq!(api_host_label("https://api.z.ai/api/paas/v4/"), "api.z.ai/api/paas/v4");
+        assert_eq!(api_host_label("http://127.0.0.1:8080"), "127.0.0.1:8080");
+        assert_eq!(api_host_label("naked-host"), "naked-host");
+    }
+
+    #[test]
+    fn row_count_threshold() {
+        assert_eq!(header_row_count(21), 1);
+        assert_eq!(header_row_count(22), 2);
+        assert_eq!(header_row_count(80), 2);
+    }
+
+    #[test]
+    fn start_and_resume_messages_identify_setup() {
+        let c = cfg();
+        let start = session_start_message(&c);
+        assert!(start.contains("kimi") && start.contains("k2") && start.contains("/help"));
+
+        let resume = session_resume_message(&c, 7, 3);
+        assert!(resume.contains("Resumed") && resume.contains("7 UI lines") && resume.contains("3 API msgs"));
+    }
+
+    #[test]
+    fn details_report_key_state() {
+        let mut c = cfg();
+        let missing = session_details(&c, 4, "ready");
+        assert!(missing.contains("MOONSHOT_API_KEY (missing)"));
+        assert!(missing.contains("provider: kimi") && missing.contains("model: k2"));
+        assert!(missing.contains("4 API message(s)"));
+
+        c.api_key = "secret".into();
+        assert!(session_details(&c, 4, "ready").contains("MOONSHOT_API_KEY (set)"));
+
+        let ctx = context_details(&c, 4, "~2k", "ready");
+        assert!(ctx.ends_with("tokens: ~2k"));
+    }
+
+    #[test]
+    fn header_lines_include_path_branch_and_ctx() {
+        let c = cfg();
+        let mut a = app();
+        a.git_branch = Some("main".into());
+        let [l1, l2] = header_lines(&c, "~1k", &a, 120);
+        assert!(l1.contains("kimi") && l1.contains("ready"));
+        assert!(l2.starts_with("path: ") && l2.contains(":main") && l2.contains("~1k"));
+        assert!(l2.contains("api.moonshot.ai/v1"));
+
+        let compact = header_compact(&c, "~1k", &a, 120);
+        assert!(compact.contains("lightrs") && compact.contains(":main"));
+    }
 
     #[test]
     fn middle_truncation() {

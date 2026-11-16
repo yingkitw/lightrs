@@ -158,3 +158,94 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn temp(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("lb-oc-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn mcp_writes_only_when_present() {
+        let dest = temp("mcp");
+        import_mcp(&json!({}), &dest).unwrap();
+        assert!(!dest.join("mcp.json").exists());
+
+        import_mcp(&json!({"mcp": {"s": {"cmd": "x"}}}), &dest).unwrap();
+        let written: Value =
+            serde_json::from_str(&fs::read_to_string(dest.join("mcp.json")).unwrap()).unwrap();
+        assert_eq!(written["s"]["cmd"], "x");
+        let _ = fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn skills_links_existing_and_skips_missing() {
+        let dest = temp("sk");
+        let src = dest.join("my-skill-src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("SKILL.md"), "# s").unwrap();
+
+        let doc = json!({"skills": {"paths": [
+            src.to_string_lossy(),
+            dest.join("missing-src").to_string_lossy(),
+            42
+        ]}});
+        import_skills(&doc, &dest).unwrap();
+
+        let link = dest.join("skills/my-skill-src");
+        assert!(link.exists());
+        #[cfg(unix)]
+        assert!(link.is_symlink());
+        assert!(!dest.join("skills/missing-src").exists());
+        let _ = fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn rules_copies_found_files_and_marks_missing() {
+        let dest = temp("rules");
+        let rule = dest.join("coding.md");
+        fs::write(&rule, "be good").unwrap();
+        let missing = dest.join("nope.md");
+
+        let doc = json!({"instructions": [
+            rule.to_string_lossy(),
+            missing.to_string_lossy()
+        ]});
+        import_rules(&doc, &dest).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dest.join("rules/coding.md")).unwrap(),
+            "be good"
+        );
+        let index = fs::read_to_string(dest.join("rules/INDEX.md")).unwrap();
+        assert!(index.contains("rules/coding.md"));
+        assert!(index.contains("(missing)"));
+        let _ = fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn hooks_writes_plugin_metadata() {
+        let dest = temp("hooks");
+        import_hooks(&json!({"plugin": ["p1", "p2"]}), &dest).unwrap();
+        let written: Value = serde_json::from_str(
+            &fs::read_to_string(dest.join("hooks/plugins.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(written, json!(["p1", "p2"]));
+        let _ = fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn tilde_expands_home() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(shellexpand_tilde("~/x"), format!("{home}/x"));
+        assert_eq!(shellexpand_tilde("/abs/x"), "/abs/x");
+        assert_eq!(shellexpand_tilde("no-tilde"), "no-tilde");
+    }
+}

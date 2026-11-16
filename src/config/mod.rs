@@ -168,6 +168,13 @@ impl AppConfig {
         })
     }
 
+    /// Re-resolve an API key for `provider` from global config + env (no CLI
+    /// flags — CLI keys only applied at startup). Used by `/model <provider>`.
+    pub fn resolve_runtime_api_key(provider: Provider) -> Result<String> {
+        let file = file::load_config_file()?;
+        file::resolve_api_key(&ModelFlags::default(), file.as_ref(), provider)
+    }
+
     /// Re-read `config.toml` + `.lightrs/config.toml` and apply `[shell]` (model/provider need restart).
     pub fn reload_shell_from_file(&mut self) -> Result<String> {
         let path = config_path();
