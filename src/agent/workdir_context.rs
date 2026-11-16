@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 
 const MAX_CHARS: usize = 6_144;
+/// Instruction files are user-supplied — bound the read itself.
+const MAX_FILE_READ: usize = 256 * 1024;
 
 const CANDIDATE_NAMES: &[&str] = &[
     "AGENTS.md",
@@ -54,7 +56,7 @@ pub fn load_workdir_context(workdir: &Path) -> String {
 }
 
 fn push_section(sections: &mut Vec<String>, rel: &str, path: &Path, strip_meta: bool) {
-    let Ok(data) = fs::read_to_string(path) else {
+    let Some(data) = crate::tools::read_to_string_capped(path, MAX_FILE_READ as u64) else {
         return;
     };
     let mut body = data.trim();

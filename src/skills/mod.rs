@@ -213,7 +213,7 @@ fn collect_skills_under(root: &Path, out: &mut HashMap<String, SkillEntry>) {
 }
 
 fn try_insert_skill(dir: &Path, skill_md: &Path, out: &mut HashMap<String, SkillEntry>) {
-    let Ok(text) = fs::read_to_string(skill_md) else {
+    let Some(text) = crate::tools::read_to_string_capped(skill_md, 256 * 1024) else {
         return;
     };
     let (name, description, trigger, body) = parse_skill_md(&text);
@@ -299,7 +299,7 @@ fn load_rules(rules_dir: &Path) -> String {
         if out.len() >= RULES_MAX_CHARS {
             break;
         }
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Some(text) = crate::tools::read_to_string_capped(&path, 256 * 1024) else {
             continue;
         };
         let name = path

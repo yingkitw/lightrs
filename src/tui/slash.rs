@@ -382,6 +382,11 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                 agent.push_system("nothing to rewind");
             } else {
                 let _ = session::save(agent, app.workdir());
+                // Expansion indices point into ui_history — dropped turns
+                // leave dead entries (prefix indices stay valid since
+                // rewind truncates the tail only).
+                let len = agent.ui_messages().len();
+                app.expanded_tools.retain(|i| *i < len);
                 agent.push_system(format!(
                     "rewound {dropped} turn(s) — history and session file updated"
                 ));
@@ -939,6 +944,44 @@ mod tests {
             SlashAction::Handled
         );
         assert!(last_ui_content(&agent).contains("nothing to rewind"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rewind_prunes_expanded_tool_indices() {
+        let (dir, mut app, mut agent) = fixture::build("rew-exp");
+        for i in 0..2 {
+            agent
+                .api_history
+                .push(crate::chat::ApiMessage::user(format!("u{i}")));
+            agent
+                .api_history
+                .push(crate::chat::ApiMessage::tool_result(
+                    format!("t{i}"),
+                    "read_file",
+                    "b",
+                ));
+        }
+        for i in 0..3 {
+            agent.push_ui_message(crate::chat::UiMessage::with_role(
+                if i == 2 {
+                    crate::chat::UiRole::User
+                } else {
+                    crate::chat::UiRole::Tool
+                },
+                format!("m{i}"),
+            ));
+        }
+        // Expand index 1 (survives) and 2 (dropped by the rewind).
+        app.expanded_tools.insert(1);
+        app.expanded_tools.insert(2);
+        assert_eq!(
+            run_slash("/rewind 1", &mut agent, &mut app),
+            SlashAction::Handled
+        );
+        let len = agent.ui_messages().len();
+        assert!(app.expanded_tools.contains(&1));
+        assert!(app.expanded_tools.iter().all(|i| *i < len));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

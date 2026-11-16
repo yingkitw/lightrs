@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -21,7 +23,17 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
     let viewport = usize::from(app.transcript_viewport);
 
     let messages = agent.ui_messages();
-    let (mut lines, tool_spans) = transcript_lines(messages.as_slice(), width, app);
+    // Rebuild only when rendered inputs change — markdown/syntect parsing of
+    // the whole history on every 16ms busy frame is the expensive part.
+    let key = transcript_fingerprint(messages.as_slice(), width, &app.expanded_tools);
+    let (mut lines, tool_spans) = match &app.transcript_cache {
+        Some((k, l, s)) if *k == key => (l.clone(), s.clone()),
+        _ => {
+            let (l, s) = transcript_lines(messages.as_slice(), width, app);
+            app.transcript_cache = Some((key, l.clone(), s.clone()));
+            (l, s)
+        }
+    };
     app.focus_tool_msg_idx = pick_visible_tool(
         &tool_spans,
         lines.len(),
@@ -79,6 +91,40 @@ pub fn draw_transcript(frame: &mut Frame, area: Rect, agent: &Agent, app: &mut A
 }
 
 /// `(first_line, last_line_exclusive, message_index)` for each tool block.
+/// Fingerprint of every input `transcript_lines` reads — width, the expanded
+/// set, and each message's rendered fields. A collision only costs a stale
+/// frame, but full content bytes are hashed so an in-place same-length edit
+/// can't slip through.
+fn transcript_fingerprint(messages: &[UiMessage], width: usize, expanded: &HashSet<usize>) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    width.hash(&mut h);
+    // Order-independent: HashSet iteration order isn't a rendered input.
+    let exp: u64 = expanded
+        .iter()
+        .fold(0u64, |acc, i| acc ^ (*i as u64).wrapping_mul(0x9e37_79b9));
+    exp.hash(&mut h);
+    for m in messages {
+        std::mem::discriminant(&m.role).hash(&mut h);
+        m.content.hash(&mut h);
+        m.pending.hash(&mut h);
+        m.elapsed_ms.hash(&mut h);
+        if let Some(tc) = &m.tool_call {
+            tc.name.hash(&mut h);
+            tc.arguments.hash(&mut h);
+        }
+        if let Some(fd) = &m.file_diff {
+            fd.path.hash(&mut h);
+            fd.unified.hash(&mut h);
+            fd.lines_added.hash(&mut h);
+            fd.lines_removed.hash(&mut h);
+            fd.is_new_file.hash(&mut h);
+        }
+    }
+    h.finish()
+}
+
 fn transcript_lines(
     messages: &[UiMessage],
     width: usize,
@@ -348,6 +394,44 @@ mod tests {
         assert_eq!(tool_msg_index_at_line(12, &spans), Some(3));
         assert_eq!(tool_msg_index_at_line(9, &spans), None);
         assert_eq!(tool_msg_index_at_line(30, &spans), Some(7));
+    }
+
+    #[test]
+    fn fingerprint_stable_for_identical_inputs() {
+        let no_exp = HashSet::new();
+        let msgs = vec![UiMessage::with_role(UiRole::User, "hello")];
+        assert_eq!(
+            transcript_fingerprint(&msgs, 80, &no_exp),
+            transcript_fingerprint(&msgs, 80, &no_exp)
+        );
+        // A rebuilt Vec with identical content must hit the cache.
+        let msgs2 = vec![UiMessage::with_role(UiRole::User, "hello")];
+        assert_eq!(
+            transcript_fingerprint(&msgs, 80, &no_exp),
+            transcript_fingerprint(&msgs2, 80, &no_exp)
+        );
+    }
+
+    #[test]
+    fn fingerprint_invalidates_on_each_rendered_input() {
+        let msgs = || vec![UiMessage::with_role(UiRole::User, "hello")];
+        let no_exp = || HashSet::new();
+        let base = transcript_fingerprint(&msgs(), 80, &no_exp());
+        assert_ne!(base, transcript_fingerprint(&msgs(), 81, &no_exp()), "width");
+        let mut grown = msgs();
+        grown.push(UiMessage::with_role(UiRole::Assistant, "reply"));
+        assert_ne!(base, transcript_fingerprint(&grown, 80, &no_exp()), "append");
+        let mut edited = msgs();
+        edited[0].content = "hello2".into();
+        assert_ne!(base, transcript_fingerprint(&edited, 80, &no_exp()), "edit");
+        assert_ne!(
+            base,
+            transcript_fingerprint(&msgs(), 80, &HashSet::from([3])),
+            "expand"
+        );
+        let mut timed = msgs();
+        timed[0].elapsed_ms = Some(42);
+        assert_ne!(base, transcript_fingerprint(&timed, 80, &no_exp()), "elapsed");
     }
 
     #[test]

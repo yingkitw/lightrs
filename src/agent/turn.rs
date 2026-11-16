@@ -115,6 +115,7 @@ impl Agent {
                     &call.function.arguments,
                     &call.id,
                     shell_verdict,
+                    cancel.clone(),
                     &mut on,
                     ui_tx,
                 )
@@ -363,6 +364,7 @@ async fn execute_one_tool_shared(
     args: &str,
     call_id: &str,
     shell_verdict: Option<bool>,
+    cancel: watch::Receiver<bool>,
     on: &mut (impl FnMut(ObserveEvent<'_>) + Send),
     ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
 ) -> Result<()> {
@@ -394,8 +396,10 @@ async fn execute_one_tool_shared(
         args.to_string(),
         shell_policy.clone(),
     );
-    let outcome = tokio::task::spawn_blocking(move || execute_tool(&wd, &n, &a, &p, bypass))
-        .await
+    let cancel_rx = cancel.clone();
+    let outcome =
+        tokio::task::spawn_blocking(move || execute_tool(&wd, &n, &a, &p, bypass, Some(&cancel_rx)))
+            .await
         .unwrap_or_else(|e| crate::tools::ToolOutcome::ok(format!("error: tool join: {e}")));
     audit_outcome(workdir, &ctx, bypass, &outcome.body);
     on(ObserveEvent::ToolEnd {
@@ -413,8 +417,9 @@ async fn execute_one_tool_shared(
         });
         let (wd, p) = (workdir.to_path_buf(), shell_policy.clone());
         let c = cmd.clone();
+        let heal_cancel = cancel.clone();
         let body =
-            tokio::task::spawn_blocking(move || run_heal_command(&wd, &c, &p))
+            tokio::task::spawn_blocking(move || run_heal_command(&wd, &c, &p, Some(&heal_cancel)))
                 .await
                 .unwrap_or_else(|e| format!("error: heal join: {e}"));
         on(ObserveEvent::ToolEnd { body: &body });
@@ -427,7 +432,12 @@ async fn execute_one_tool_shared(
 const HEAL_TOOLS: &[&str] = &["write_file", "patch_file", "multi_edit"];
 
 /// Run the configured heal/test command (bypasses the shell policy, 120s cap).
-fn run_heal_command(workdir: &Path, command: &str, shell_policy: &ShellPolicy) -> String {
+fn run_heal_command(
+    workdir: &Path,
+    command: &str,
+    shell_policy: &ShellPolicy,
+    cancel: Option<&watch::Receiver<bool>>,
+) -> String {
     crate::tools::shell::run_command(
         workdir,
         crate::tools::RunCommandArgs {
@@ -436,6 +446,7 @@ fn run_heal_command(workdir: &Path, command: &str, shell_policy: &ShellPolicy) -
         },
         shell_policy,
         true,
+        cancel,
     )
     .unwrap_or_else(|e| format!("error: {e:#}"))
 }
@@ -507,7 +518,7 @@ mod heal_tests {
     /// Test shim: plan → run → record in one call (sync path).
     fn run_heal(agent: &mut Agent, workdir: &Path, tool: &str, body: &str) {
         if let Some(cmd) = agent.heal_plan(tool, body) {
-            let out = run_heal_command(workdir, &cmd, &agent.shell_policy.clone());
+            let out = run_heal_command(workdir, &cmd, &agent.shell_policy.clone(), None);
             agent.heal_record(&cmd, &out);
         }
     }

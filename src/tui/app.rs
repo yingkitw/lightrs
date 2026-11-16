@@ -4,6 +4,10 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use ratatui::layout::Rect;
+use ratatui::text::Line;
+
+/// (fingerprint, lines, tool hit-spans) — see `App::transcript_cache`.
+pub type TranscriptCache = (u64, Vec<Line<'static>>, Vec<(usize, usize, usize)>);
 use tokio::sync::Mutex;
 
 use crate::agent::Agent;
@@ -59,6 +63,10 @@ pub struct App {
     pub transcript_rect: Rect,
     /// First visible line index in the full transcript layout.
     pub transcript_visible_start: usize,
+    /// Rendered transcript cache — (fingerprint, lines, tool spans). The
+    /// fingerprint covers width, expanded set, and every rendered field of
+    /// each message; a hit skips the whole markdown/syntect rebuild.
+    pub transcript_cache: Option<TranscriptCache>,
     /// `(first_line, last_line_exclusive, ui_message_index)` per tool block.
     pub tool_hit_spans: Vec<(usize, usize, usize)>,
     pub pending_approval: Option<CommandApproval>,
@@ -99,6 +107,7 @@ impl App {
             focus_tool_msg_idx: None,
             transcript_rect: Rect::default(),
             transcript_visible_start: 0,
+            transcript_cache: None,
             tool_hit_spans: Vec::new(),
             pending_approval: None,
             config_mtime: None,

@@ -51,7 +51,7 @@
 - `$skill-id` invokes discovered skills (`Tab` on `$` prefix); skill bodies attach to the API message (see **Skills** below)
 - `Ctrl+P` / `Ctrl+N` prompt history
 - Scroll transcript when input empty (`↑`/`↓`, PgUp/PgDn, Home/End)
-- Interrupt while busy: `Esc`, `Ctrl+C`, `Ctrl+Q`, or send a bare `stop` / `wait` / `halt` (does not quit)
+- Interrupt while busy: `Esc`, `Ctrl+C`, `Ctrl+Q`, or send a bare `stop` / `wait` / `halt` (does not quit). Interrupt reaches a running `run_command` within ~50ms and kills its process group — no waiting out `timeout_secs`
 - **Queued input**: typing while busy edits the composer; `Enter` queues the line (`queued N` in the status bar) and it sends automatically when the turn ends or is interrupted. Slash commands queued the same way run when idle
 
 ### Slash commands (not sent to model)
@@ -110,7 +110,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - **CLI `doctor --check`**: health report (config, keys, workdir, `rg`, rustc, local agent configs) without importing
 - **Shell deny list** (`tools/shell_deny.rs`): hard-block catastrophic commands (e.g. `rm -rf /`, fork bomb, `curl | sh`); not bypassed by TUI approval
 - **Secret redaction**: tool results scrubbed for common key/token shapes before API history (`tools/redact.rs`, via `truncate_tool_api`)
-- **Audit log**: every `run_command` decision appends a JSON line to `.lightrs/audit.log` — `{ts, tool, command, decision, result}` where decision is `auto` / `approved` / `approved_bypass` / `denied` / `denied_headless`. Command text is redacted; `result` is a short status line. Rotates to `audit.log.1` past 256 KiB. Best-effort (failures are ignored).
+- **Audit log**: every `run_command` decision appends a JSON line to `.lightrs/audit.log` — `{ts, tool, command, decision, result}` where decision is `auto` / `approved` / `approved_bypass` / `denied` / `denied_headless`. Command text **and** the short `result` line are secret-redacted. Rotates to `audit.log.1` past 256 KiB. Best-effort (failures are ignored). `.lightrs/` gets a `.gitignore` for machine state (`audit.log*`, `backups/`, `todos.json`) — `config.toml` stays committable.
 - **Prompt-injection scan** (`tools/injection.rs`): tool results matching instruction-override patterns ("ignore previous instructions", "system prompt:", …) get a `[warning: …]` prefix prepended to the **API** history copy plus a `[sys]` transcript notice. Also applies to `[heal]` test output. Warning only — the result is still sent.
 - **Workdir context**: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `AIDER.md`, `.cursorrules`, `.windsurfrules`, `.github/copilot-instructions.md`, `.lightrs/AGENTS.md`, plus `*.md`/`*.mdc` under `.cursor/rules/` and `.windsurf/rules/` (frontmatter stripped), merged into system prompt (6 KiB cap each, ~12 KiB total)
 - **Skills**: `skills/mod.rs` scans `SKILL.md` directories (`[skills].paths` first — declared roots win id collisions and the 64-cap — then OpenCode import tree, Cursor, Claude Code, pi, Codex). Catalog appended to system prompt; `$skill-id` in the user message attaches skill body to the API payload (UI unchanged). `@path` file attach unchanged (`mentions.rs`). Rules from `~/.config/lightrs/rules/*.md` merge into system prompt. A `trigger:` frontmatter keyword shows a non-blocking `[sys]` hint when the user input contains it (and `$id` wasn't already used).

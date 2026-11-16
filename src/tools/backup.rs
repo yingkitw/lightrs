@@ -24,6 +24,7 @@ pub fn snapshot_prior(workdir: &Path, file: &Path, content: &str) -> Result<Opti
     let dest = workdir.join(BACKUP_DIR).join(format!("{safe}.{ts}.bak"));
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).with_context(|| parent.display().to_string())?;
+        let _ = crate::tools::ensure_lightrs_dir(workdir);
     }
     fs::write(&dest, content.as_bytes()).with_context(|| dest.display().to_string())?;
     prune_backups(workdir);

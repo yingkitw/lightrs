@@ -45,6 +45,7 @@ pub fn todo_write(workdir: &Path, args: TodoArgs) -> Result<String> {
     let path = todos_path(workdir);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        let _ = crate::tools::ensure_lightrs_dir(workdir);
     }
     fs::write(&path, serde_json::to_string_pretty(&items)?)
         .with_context(|| format!("write {}", path.display()))?;

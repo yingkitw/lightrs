@@ -22,6 +22,7 @@ pub fn run_command(
     args: RunCommandArgs,
     policy: &ShellPolicy,
     bypass_allowlist: bool,
+    cancel: Option<&tokio::sync::watch::Receiver<bool>>,
 ) -> Result<String> {
     if let Some(reason) = shell_deny::deny_reason(&args.command) {
         bail!("command denied ({reason}): {}", args.command.trim());
@@ -64,6 +65,10 @@ pub fn run_command(
     let status = loop {
         if let Some(status) = child.try_wait().context("wait command")? {
             break status;
+        }
+        if cancel.is_some_and(|c| *c.borrow()) {
+            kill_process_tree(&mut child);
+            bail!("command interrupted");
         }
         if started.elapsed() > Duration::from_secs(timeout) {
             kill_process_tree(&mut child);
@@ -201,7 +206,7 @@ mod tests {
             timeout_secs: Some(30),
         };
         let policy = ShellPolicy::default();
-        let out = run_command(&dir, args, &policy, false);
+        let out = run_command(&dir, args, &policy, false, None);
         match out {
             Ok(s) => assert!(s.len() < 200_000),
             Err(_) => {
@@ -221,13 +226,34 @@ mod tests {
         };
         let policy = ShellPolicy::default();
         let t = std::time::Instant::now();
-        let out = run_command(&dir, args, &policy, true).unwrap();
+        let out = run_command(&dir, args, &policy, true, None).unwrap();
         assert!(
             t.elapsed() < Duration::from_secs(8),
             "blocked on full pipe for {:?}",
             t.elapsed()
         );
         assert!(out.contains("[stdout truncated at"), "out: {out:.200}");
+    }
+
+    /// Interrupting a running command must kill it promptly — the cancel
+    /// receiver is checked on each poll iteration.
+    #[test]
+    fn cancel_stops_running_command() {
+        let dir = std::env::temp_dir();
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            let _ = tx.send(true);
+        });
+        let args = RunCommandArgs {
+            command: "sleep 30".into(),
+            timeout_secs: Some(60),
+        };
+        let policy = ShellPolicy::default();
+        let t = std::time::Instant::now();
+        let err = run_command(&dir, args, &policy, true, Some(&rx)).unwrap_err();
+        assert!(err.to_string().contains("interrupted"), "{err:#}");
+        assert!(t.elapsed() < Duration::from_secs(5), "took {:?}", t.elapsed());
     }
 
     /// A timed-out command must kill its whole process group — a `sleep`
@@ -245,7 +271,7 @@ mod tests {
             timeout_secs: Some(1),
         };
         let policy = ShellPolicy::default();
-        let err = run_command(&dir, args, &policy, true).unwrap_err();
+        let err = run_command(&dir, args, &policy, true, None).unwrap_err();
         assert!(err.to_string().contains("timed out"), "{err:#}");
         // Group-killed grandchild never writes the marker.
         std::thread::sleep(Duration::from_millis(1500));

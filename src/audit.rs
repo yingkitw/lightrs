@@ -23,12 +23,11 @@ pub fn log_shell(workdir: &Path, command: &str, decision: &str, result: &str) {
         "tool": "run_command",
         "command": crate::tools::redact::redact_secrets(command),
         "decision": decision,
-        "result": result,
+        "result": crate::tools::redact::redact_secrets(result),
     });
-    let dir = workdir.join(".lightrs");
-    if std::fs::create_dir_all(&dir).is_err() {
+    let Some(dir) = crate::tools::ensure_lightrs_dir(workdir) else {
         return;
-    }
+    };
     let log = dir.join("audit.log");
     if std::fs::metadata(&log).map(|m| m.len()).unwrap_or(0) > AUDIT_MAX_BYTES {
         let _ = std::fs::rename(&log, dir.join("audit.log.1"));
@@ -89,6 +88,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(text.contains("\"decision\":\"auto\""));
         assert!(text.len() < 1024, "fresh log must hold only new records");
+    }
+
+    #[test]
+    fn redacts_secrets_in_result_head() {
+        let dir = std::env::temp_dir().join(format!("lightrs-audit4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // `env`-style output must not land in the log — command was already
+        // covered; the result line needs the same treatment.
+        log_shell(&dir, "env", "auto", "AWS_SECRET_ACCESS_KEY=abc123def456ghi");
+        let text = std::fs::read_to_string(dir.join(".lightrs/audit.log")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(text.contains("[REDACTED]"), "log: {text}");
+        assert!(!text.contains("abc123def456ghi"));
     }
 
     #[test]
