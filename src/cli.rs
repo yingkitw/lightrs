@@ -15,6 +15,7 @@ pub enum AcpProtocol {
 #[derive(Debug, Parser)]
 #[command(
     name = "lightrs",
+    version,
     about = "Lightweight TUI / ACP coding agent (GLM, Kimi, MiniMax)"
 )]
 pub struct Cli {
@@ -84,34 +85,36 @@ pub enum ImportSource {
     },
 }
 
+/// Top-level model/config flags. `global = true` lets them appear before or
+/// after the subcommand (`lightrs exec -p hi --model x` and vice versa).
 #[derive(Debug, Parser, Clone)]
 pub struct ModelFlags {
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, global = true)]
     pub provider: Option<Provider>,
 
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub model: Option<String>,
 
     /// Secondary model retried once when the primary errors mid-turn
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub fallback_model: Option<String>,
 
     /// Cheaper model used for read-only steps; escalates to `model` on write/exec
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub weak_model: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub base_url: Option<String>,
 
-    #[arg(long, default_value = ".")]
+    #[arg(long, default_value = ".", global = true)]
     pub workdir: PathBuf,
 
-    #[arg(long, env = "ZAI_API_KEY")]
+    #[arg(long, env = "ZAI_API_KEY", global = true)]
     pub glm_api_key: Option<String>,
 
-    #[arg(long, env = "MOONSHOT_API_KEY")]
+    #[arg(long, env = "MOONSHOT_API_KEY", global = true)]
     pub kimi_api_key: Option<String>,
 
-    #[arg(long, env = "MINIMAX_API_KEY")]
+    #[arg(long, env = "MINIMAX_API_KEY", global = true)]
     pub minimax_api_key: Option<String>,
 }

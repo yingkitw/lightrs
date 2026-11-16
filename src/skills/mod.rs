@@ -59,8 +59,10 @@ pub fn load(settings: &SkillsSettings) -> SkillCatalog {
     if !settings.enabled {
         return SkillCatalog::default();
     }
-    let mut roots = default_skill_roots();
-    roots.extend(settings.extra_paths.clone());
+    // Declared extra_paths come first: they win id collisions and can't be
+    // evicted by the MAX_SKILLS ambient cap on machines with many skills.
+    let mut roots = settings.extra_paths.clone();
+    roots.extend(default_skill_roots());
     let mut by_id: HashMap<String, SkillEntry> = HashMap::new();
     for root in roots {
         if by_id.len() >= MAX_SKILLS {
@@ -531,5 +533,171 @@ mod tests {
             collect_skill_invocations("a $foo and $bar-baz"),
             vec!["foo".to_string(), "bar-baz".to_string()]
         );
+        assert_eq!(collect_skill_invocations("$a $a"), vec!["a".to_string()]);
+        assert!(collect_skill_invocations("ends with $").is_empty());
+        assert_eq!(collect_skill_invocations("$$a"), vec!["a".to_string()]);
+    }
+
+    fn entry(id: &str) -> SkillEntry {
+        SkillEntry {
+            id: id.into(),
+            name: id.to_uppercase(),
+            description: format!("{id} desc"),
+            path: PathBuf::from("."),
+            body: format!("{id} body"),
+            trigger: None,
+        }
+    }
+
+    fn catalog(ids: &[&str]) -> SkillCatalog {
+        SkillCatalog {
+            skills: ids.iter().map(|i| entry(i)).collect(),
+            rules: String::new(),
+        }
+    }
+
+    #[test]
+    fn load_disabled_returns_empty_catalog() {
+        let cat = load(&SkillsSettings {
+            enabled: false,
+            extra_paths: Vec::new(),
+        });
+        assert!(cat.skills.is_empty());
+        assert!(cat.rules.is_empty());
+    }
+
+    #[test]
+    fn load_picks_up_extra_paths() {
+        let root = std::env::temp_dir().join(format!("lightrs-skill-xp-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let skill_dir = root.join("xtra");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: xtra\ndescription: from extra\n---\n\nbody\n",
+        )
+        .unwrap();
+        let cat = load(&SkillsSettings {
+            enabled: true,
+            extra_paths: vec![root.clone()],
+        });
+        let _ = fs::remove_dir_all(&root);
+        assert!(cat.skills.iter().any(|s| s.id == "xtra"));
+    }
+
+    #[test]
+    fn system_appendix_lists_skills_and_rules() {
+        let mut cat = catalog(&["alpha"]);
+        cat.rules = "do the thing".into();
+        let out = system_appendix(&cat);
+        assert!(out.contains("$id"));
+        assert!(out.contains("- alpha — alpha desc"));
+        assert!(out.contains("Project rules"));
+        assert!(out.contains("do the thing"));
+    }
+
+    #[test]
+    fn system_appendix_truncates_oversized_rules() {
+        let mut cat = catalog(&[]);
+        cat.rules = "x".repeat(RULES_MAX_CHARS + 100);
+        assert!(system_appendix(&cat).contains("[rules truncated]"));
+    }
+
+    #[test]
+    fn skill_hint_lists_matches_then_ellipsis() {
+        let cat = catalog(&["aa", "ab", "ac", "ad"]);
+        let hint = skill_hint("use $a", &cat).unwrap();
+        assert!(hint.contains("$aa"), "hint = {hint}");
+        assert!(hint.contains('…'), "hint = {hint}");
+        let exact = skill_hint("$aa", &cat).unwrap();
+        assert_eq!(exact, "$aa");
+    }
+
+    #[test]
+    fn skill_hint_no_match_is_named() {
+        let cat = catalog(&["aa"]);
+        let hint = skill_hint("$zz", &cat).unwrap();
+        assert!(hint.contains("no match"), "hint = {hint}");
+        assert!(skill_hint("no dollar", &cat).is_none());
+    }
+
+    #[test]
+    fn active_skill_token_only_at_tail() {
+        assert_eq!(active_skill_token("use $fo"), Some(("fo", 4)));
+        assert_eq!(active_skill_token("$fo and $"), Some(("", 8)));
+        assert!(active_skill_token("a $x y").is_none());
+        assert!(active_skill_token("plain").is_none());
+    }
+
+    #[test]
+    fn tab_complete_skill_unique_and_common() {
+        let cat = catalog(&["alpha", "alpine", "beta"]);
+        assert_eq!(
+            tab_complete_skill("run $bet", &cat).as_deref(),
+            Some("run $beta")
+        );
+        // $alp already equals the common prefix of alpha/alpine — nothing to add.
+        assert!(tab_complete_skill("run $alp", &cat).is_none());
+        assert!(tab_complete_skill("$z", &cat).is_none());
+        assert!(tab_complete_skill("plain", &cat).is_none());
+    }
+
+    #[test]
+    fn attach_unknown_skill_leaves_composer_unchanged() {
+        let cat = catalog(&["foo"]);
+        assert_eq!(api_user_content(Path::new("."), "use $zzz", &cat), "use $zzz");
+    }
+
+    #[test]
+    fn slug_id_normalizes_names() {
+        assert_eq!(slug_id("My Cool/Skill"), "my-cool-skill");
+        // Trailing dashes trimmed; leading dashes pass through literally.
+        assert_eq!(slug_id("  --x--  "), "--x");
+        assert_eq!(slug_id("keep_underscore-ok"), "keep_underscore-ok");
+        assert!(slug_id("!!!").is_empty());
+    }
+
+    #[test]
+    fn truncate_bytes_stops_at_char_boundary() {
+        assert_eq!(truncate_bytes("héllo", 2), "h");
+        assert_eq!(truncate_bytes("héllo", 3), "hé");
+        assert_eq!(truncate_bytes("abc", 9), "abc");
+    }
+
+    #[test]
+    fn load_rules_sorts_and_skips_index() {
+        let dir = std::env::temp_dir().join(format!("lightrs-rules-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("b.md"), "bee").unwrap();
+        fs::write(dir.join("a.md"), "aye").unwrap();
+        fs::write(dir.join("INDEX.md"), "skip me").unwrap();
+        fs::write(dir.join("note.txt"), "skip me too").unwrap();
+        let out = load_rules(&dir);
+        let _ = fs::remove_dir_all(&dir);
+        let a = out.find("### a.md").unwrap();
+        let b = out.find("### b.md").unwrap();
+        assert!(a < b, "sorted order: {out}");
+        assert!(!out.contains("skip me"), "out = {out}");
+        assert!(load_rules(&dir.join("absent")).is_empty());
+    }
+
+    #[test]
+    fn parse_skill_md_without_frontmatter_returns_body() {
+        let (_n, _d, _t, body) = parse_skill_md("just text\nmore");
+        assert_eq!(body, "just text\nmore");
+        // Unterminated frontmatter — whole text is body, no metadata.
+        let (n, d, t, body) = parse_skill_md("---\nname: x\nno end marker");
+        assert!(n.is_empty() && d.is_empty() && t.is_none());
+        assert_eq!(body, "---\nname: x\nno end marker");
+    }
+
+    #[test]
+    fn first_nonempty_line_skips_blanks_and_headings() {
+        assert_eq!(
+            first_nonempty_line("\n# heading\n  real line \n").as_deref(),
+            Some("real line")
+        );
+        assert!(first_nonempty_line("\n\n# only\n").is_none());
     }
 }

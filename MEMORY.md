@@ -318,6 +318,13 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Fixture pattern for TUI tests: `App::new(AppConfig{...})` + `Agent::new(LlmClient::new("http://127.0.0.1",...))` + `run_slash`/`draw` directly — no network ever contacted.
 - Temp dirs: `std::env::temp_dir() + pid`, `create_dir_all` first, `remove_dir_all` at end (no tempfile dep, by convention).
 
+## Latent bugs found by coverage tests (2026-11-16)
+
+- **Cross-canonicalization**: any `canonicalize()` on one side of a `starts_with`/strip comparison while the other stays literal breaks on macOS (`/var`→`/private/var`) — grep scanned 0 files under `path=` when workdir was non-canonical. Rule: canonicalize once at the API boundary (`grep()`), same as `validate_work_path` does internally.
+- **Token misalignment after peeling**: `shell_readonly` peeled `KEY=val` env prefixes into `s` but classified git/cargo/find on the original `segment` — `tokens[1]` was the env pair, so `FOO=bar git status` was rejected while `FOO=bar ls` passed. When a parser produces a normalized remainder, downstream classification must use *it*.
+- **Cap-eviction ordering**: `skills::load` scanned ambient roots first, so a machine with ≥64 skills silently dropped `extra_paths`. Declared/configured sources should be scanned before ambient discovery — order *is* precedence here (`or_insert` keeps the first).
+- Test-writing uncovered these precisely because the paths had never executed — good tests assert behavior, then investigate surprises rather than fitting expectations.
+
 ## Patterns to harvest next
 
 - Tool-call JSON differences between GLM / Kimi / MiniMax

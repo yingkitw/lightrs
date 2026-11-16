@@ -68,9 +68,9 @@ fn segment_is_read_only(segment: &str) -> bool {
         | "whereis" | "whoami" | "id" | "echo" | "printf" | "true" | "false" | "env"
         | "printenv" | "date" | "uname" | "hostname" | "uptime" | "ps" | "top" | "du" | "df"
         | "file" | "stat" | "diff" | "rg" | "grep" | "ag" | "fd" => true,
-        "find" => !segment_contains_write_find(segment),
-        "git" => git_segment_read_only(segment),
-        "cargo" => cargo_segment_read_only(segment),
+        "find" => !segment_contains_write_find(s),
+        "git" => git_segment_read_only(s),
+        "cargo" => cargo_segment_read_only(s),
         "npm" | "pnpm" | "yarn" | "bun" => false,
         "rm" | "mv" | "cp" | "chmod" | "chown" | "touch" | "mkdir" | "rmdir" | "truncate"
         | "tee" | "sed" | "vi" | "vim" | "nano" | "emacs" | "curl" | "wget" | "python"
@@ -173,5 +173,83 @@ mod tests {
     #[test]
     fn pipe_all_read_only() {
         assert!(auto_approve_read_only("git status | head"));
+    }
+
+    #[test]
+    fn env_assignment_prefix_still_read_only() {
+        assert!(auto_approve_read_only("FOO=bar ls -la"));
+        assert!(auto_approve_read_only("A=1 B=2 git status"));
+        assert!(auto_approve_read_only("FOO=1"));
+    }
+
+    #[test]
+    fn env_prefix_does_not_launder_writes() {
+        assert!(!auto_approve_read_only("FOO=bar rm x"));
+        assert!(!auto_approve_read_only("PATH=/x sh -c id"));
+    }
+
+    #[test]
+    fn and_chain_must_be_all_read_only() {
+        assert!(auto_approve_read_only("ls && pwd"));
+        assert!(!auto_approve_read_only("ls && rm x"));
+        assert!(!auto_approve_read_only("ls; sh -c 'id'"));
+    }
+
+    #[test]
+    fn find_is_read_only_without_write_actions() {
+        assert!(auto_approve_read_only("find . -name '*.rs'"));
+        assert!(!auto_approve_read_only("find . -name x -delete"));
+        assert!(!auto_approve_read_only("find . -exec rm {} +"));
+    }
+
+    #[test]
+    fn git_subcommand_table() {
+        for ok in [
+            "git",
+            "git status",
+            "git log --oneline",
+            "git diff HEAD",
+            "git show",
+            "git branch -a",
+            "git blame f.rs",
+            "git stash list",
+            "git fetch origin",
+        ] {
+            assert!(auto_approve_read_only(ok), "expected approve: {ok}");
+        }
+        for no in [
+            "git push",
+            "git commit -m x",
+            "git stash pop",
+            "git checkout main",
+            "git rebase -i HEAD~2",
+            "git clean -fd",
+        ] {
+            assert!(!auto_approve_read_only(no), "expected reject: {no}");
+        }
+    }
+
+    #[test]
+    fn cargo_subcommand_table() {
+        for ok in ["cargo", "cargo check", "cargo test", "cargo fmt", "cargo tree"] {
+            assert!(auto_approve_read_only(ok), "expected approve: {ok}");
+        }
+        for no in ["cargo publish", "cargo install x", "cargo run"] {
+            assert!(!auto_approve_read_only(no), "expected reject: {no}");
+        }
+    }
+
+    #[test]
+    fn interpreters_and_package_managers_rejected() {
+        for cmd in ["npm run build", "pnpm i", "python3 x.py", "node a.js", "sh -c ls", "bash s.sh"] {
+            assert!(!auto_approve_read_only(cmd), "expected reject: {cmd}");
+        }
+    }
+
+    #[test]
+    fn append_and_here_doc_rejected() {
+        assert!(!auto_approve_read_only("echo x >> f"));
+        assert!(!auto_approve_read_only("cat << EOF"));
+        assert!(!auto_approve_read_only("cmd 2>&1"));
     }
 }

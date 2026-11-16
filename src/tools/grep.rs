@@ -25,6 +25,12 @@ pub struct GrepArgs {
 }
 
 pub fn grep(workdir: &Path, args: GrepArgs) -> Result<String> {
+    // `root` below is canonical (validate_work_path); the walk filters on
+    // `path.starts_with(workdir)`, so keep both sides canonical or every file
+    // is silently dropped (e.g. /var → /private/var on macOS).
+    let workdir = &workdir
+        .canonicalize()
+        .unwrap_or_else(|_| workdir.to_path_buf());
     let pattern = args.pattern.trim();
     if pattern.is_empty() {
         bail!("pattern must not be empty");
@@ -233,6 +239,92 @@ mod tests {
         )
         .unwrap();
         assert!(out.contains("src/lib.rs:1:") || out.contains("unique_needle_abc"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn tmp(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("lightrs-grep-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn args(pat: &str) -> GrepArgs {
+        GrepArgs {
+            pattern: pat.into(),
+            path: None,
+            case_insensitive: false,
+            max_matches: None,
+        }
+    }
+
+    #[test]
+    fn empty_pattern_bails() {
+        let dir = tmp("empty");
+        let err = grep(&dir, args("   ")).unwrap_err();
+        assert!(format!("{err:#}").contains("pattern"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn case_insensitive_matches_mixed_case() {
+        let dir = tmp("ci");
+        fs::write(dir.join("a.rs"), "Hello World\nbye\n").unwrap();
+        let out = grep(
+            &dir,
+            GrepArgs {
+                case_insensitive: true,
+                ..args("hello")
+            },
+        )
+        .unwrap();
+        assert!(out.contains("Hello World"), "out = {out}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn max_matches_marks_truncation() {
+        let dir = tmp("cap");
+        let body = (0..50).map(|i| format!("hit {i}")).collect::<Vec<_>>().join("\n");
+        fs::write(dir.join("big.txt"), body).unwrap();
+        let out = grep(
+            &dir,
+            GrepArgs {
+                max_matches: Some(3),
+                ..args("hit")
+            },
+        )
+        .unwrap();
+        assert!(out.contains("[truncated at 3 matches]"), "out = {out}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_matches_reports_scanned_files() {
+        let dir = tmp("nomatch");
+        fs::write(dir.join("a.txt"), "nothing here\n").unwrap();
+        let out = grep(&dir, args("zzz-absent")).unwrap();
+        assert!(out.contains("no matches for `zzz-absent`"), "out = {out}");
+        assert!(out.contains("files scanned") || out.contains("ripgrep"), "out = {out}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn path_arg_scopes_search_to_subdir() {
+        let dir = tmp("scope");
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("top.txt"), "needle\n").unwrap();
+        fs::write(dir.join("sub/inner.txt"), "needle\n").unwrap();
+        let out = grep(
+            &dir,
+            GrepArgs {
+                path: Some("sub".into()),
+                ..args("needle")
+            },
+        )
+        .unwrap();
+        assert!(out.contains("inner.txt"), "out = {out}");
+        assert!(!out.contains("top.txt"), "out = {out}");
         let _ = fs::remove_dir_all(&dir);
     }
 

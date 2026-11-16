@@ -64,6 +64,7 @@
 - [x] `ModelClient` trait seam — `provider::ModelClient` (object-safe, hand-rolled `BoxFuture`, no `async-trait` dep); `Agent` holds `Arc<dyn ModelClient>` via generic `new`/`set_fallback_client`; stream→non-stream fallback moved inside `LlmClient::send`; `MockModel` serves canned replies + records requests → in-memory turn tests (fallback retry, interrupt propagation, weak-model pick); interrupt sentinel moved to `provider::INTERRUPTED`
 - [x] Weak-model routing — `weak_model`/`--weak-model` serves read-only steps on a cheaper model; first write/exec tool call (`write_file`/`patch_file`/`multi_edit`/`run_command`) escalates to `model` for the rest of the turn (`agent/turn.rs::escalate_from_weak`); e2e `tests/weak_model.rs` asserts the `model` field on captured requests
 - [x] Ponytail audit — single turn loop: deleted `&mut self` path (`drive_turn_loop`, `handle_model_message`, sync `execute_one_tool`); exec/ACP use `run_user_turn_headless` over the shared loop; ACP sessions hold `Arc<Mutex<Agent>>` (sessions lock no longer spans turns); fixed dead `not(acp-v2)` match arm that broke `--features acp` build
+- [x] Coverage pass 2 (73.9%→76.1%): skills 67→95% (load/hints/attach/slug/rules/parse edges), shell_readonly 70→98% (env-prefix, chains, git/cargo/find tables), grep 63→80% (caps/scope/ci/no-match). Fixed 3 latent bugs: `extra_paths` scanned after ambient roots + `MAX_SKILLS` cap eviction (now first = precedence); `FOO=bar git status` misrejected (classify on env-stripped remainder); grep `path=` silently scanned 0 files under non-canonical workdir (canonicalize at entry)
 - [x] Coverage pass (llvm-cov 68.6%→73.9%): backup.rs 33→92% (snapshot/restore/escape-guard tests), slash `run_slash` 27→55% (quit/unknown/diff/rewind/undo/cd handlers), TestBackend draw tests → transcript 19→79%, chrome 0→58%, ui/mod 100%; **found+fixed**: 2-line header's `path:`/ctx row clipped by the bottom border (`Length(header_rows)` → `header_rows + 1`) — `path:branch` was invisible at h≥22
 - [x] `/diff` — session change review (aider-style): `session::collect_file_diffs` replays stored `FileDiffUi`s as collapsed `diff` tool rows (expand with `o`/click); `[sys]` summary totals unique files + `+N −M` across writes — zero filesystem reads
 - [x] Terminal title — OSC 2 `lightrs · dir[:branch]` + `· ●` while Busy, set on change each loop pass, cleared on exit (`tui::title_escape`, control chars stripped)
@@ -77,7 +78,7 @@
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 231 tests; request-capture e2e (approval, wire budget, weak-model) on the shared mock |
+| Correctness & coverage | 5 | 258 tests; request-capture e2e (approval, wire budget, weak-model) on the shared mock |
 | Agent reliability | 5 | Step cap, interrupt, heal loop, fallback + weak-model routing, single turn loop |
 | UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, native copy + scroll; OpenCode signals (ctx %, `path:branch`, jump-to-latest); mermaid ASCII layout panel |
 | Maintainability | 5 | `agent/context/` domain module; duplicated turn loop deleted (net -108) |
