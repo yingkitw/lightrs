@@ -806,4 +806,204 @@ mod tests {
         assert!(ui.iter().any(|m| m.content.contains("cd:")));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn help_lists_builtin_commands() {
+        for line in ["/help", "/?"] {
+            let (dir, mut app, mut agent) = fixture::build("help");
+            assert_eq!(run_slash(line, &mut agent, &mut app), SlashAction::Handled);
+            let msg = last_ui_content(&agent);
+            for cmd in ["/clear", "/model", "/diff", "/undo", "/quit"] {
+                assert!(msg.contains(cmd), "help missing {cmd}");
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn cwd_prints_workdir() {
+        let (dir, mut app, mut agent) = fixture::build("cwd");
+        run_slash("/cwd", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("cwd: "));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cd_success_updates_workdir_and_agent() {
+        let (dir, mut app, mut agent) = fixture::build("cdok");
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        run_slash(&format!("/cd {}", sub.display()), &mut agent, &mut app);
+        assert_eq!(
+            app.config.workdir,
+            sub.canonicalize().unwrap()
+        );
+        assert!(last_ui_content(&agent).contains("cwd →"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn todo_empty_and_rendered() {
+        let (dir, mut app, mut agent) = fixture::build("todo");
+        run_slash("/todo", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("no todos"));
+
+        std::fs::create_dir_all(dir.join(".lightrs")).unwrap();
+        std::fs::write(
+            dir.join(".lightrs/todos.json"),
+            r#"[{"content":"ship it","status":"in_progress"}]"#,
+        )
+        .unwrap();
+        run_slash("/todo", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("ship it"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn status_and_context_print_details() {
+        let (dir, mut app, mut agent) = fixture::build("stat");
+        run_slash("/status", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("provider: kimi"));
+        run_slash("/context", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("limits:"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quiet_toggles_and_reports() {
+        let (dir, mut app, mut agent) = fixture::build("quiet");
+        run_slash("/quiet", &mut agent, &mut app);
+        assert!(agent.quiet_token_sys());
+        assert!(last_ui_content(&agent).contains("hidden"));
+        run_slash("/quiet", &mut agent, &mut app);
+        assert!(!agent.quiet_token_sys());
+        assert!(last_ui_content(&agent).contains("shown"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clear_resets_conversation() {
+        let (dir, mut app, mut agent) = fixture::build("clear");
+        agent.push_ui_message(crate::chat::UiMessage::with_role(
+            crate::chat::UiRole::User,
+            "hi",
+        ));
+        agent.push_ui_message(crate::chat::UiMessage::with_role(
+            crate::chat::UiRole::Assistant,
+            "hello",
+        ));
+        run_slash("/clear", &mut agent, &mut app);
+        let ui = agent.ui_messages();
+        assert!(ui.iter().all(|m| m.role == crate::chat::UiRole::System));
+        assert!(ui.iter().any(|m| m.content.contains("Conversation cleared")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compact_reports_count_or_nothing() {
+        use crate::chat::ApiMessage;
+
+        let (dir, mut app, mut agent) = fixture::build("compact");
+        run_slash("/compact", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("nothing to compact"));
+
+        for i in 0..8 {
+            agent
+                .api_history
+                .push(ApiMessage::tool_result(format!("id{i}"), "read_file", "x".repeat(400)));
+        }
+        run_slash("/compact", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("compacted"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rewind_drops_last_user_turn() {
+        use crate::chat::ApiMessage;
+
+        let (dir, mut app, mut agent) = fixture::build("rew2");
+        agent.api_history.push(ApiMessage::user("turn one"));
+        agent.api_history.push(ApiMessage::user("turn two"));
+        run_slash("/rewind", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("rewound"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_restores_file_from_backup() {
+        use crate::chat::{FileDiffUi, UiMessage};
+
+        let (dir, mut app, mut agent) = fixture::build("undo2");
+        std::fs::create_dir_all(dir.join(".lightrs/backups")).unwrap();
+        std::fs::write(dir.join(".lightrs/backups/a.rs.1700000000.bak"), "old body").unwrap();
+        std::fs::write(dir.join("a.rs"), "new body").unwrap();
+        agent.push_ui_message(UiMessage::with_role(crate::chat::UiRole::User, "go"));
+        agent.push_ui_message(UiMessage::tool_result(
+            "write_file",
+            "a.rs",
+            "ok",
+            Some(FileDiffUi {
+                path: "a.rs".into(),
+                unified: "@@ x".into(),
+                lines_added: 1,
+                lines_removed: 1,
+                is_new_file: false,
+            }),
+        ));
+        run_slash("/undo", &mut agent, &mut app);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.rs")).unwrap(),
+            "old body"
+        );
+        assert!(last_ui_content(&agent).contains("restored"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_writes_markdown_under_workdir() {
+        use crate::chat::{UiMessage, UiRole};
+
+        let (dir, mut app, mut agent) = fixture::build("export");
+        agent.push_ui_message(UiMessage::with_role(UiRole::User, "question"));
+        agent.push_ui_message(UiMessage::with_role(UiRole::Assistant, "answer"));
+        run_slash("/export", &mut agent, &mut app);
+        let msg = last_ui_content(&agent);
+        assert!(msg.contains("exported"), "{msg}");
+        let out = dir.join("lightrs-transcript.md");
+        assert!(out.is_file(), "export path from {msg}");
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(text.contains("question") && text.contains("answer"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn theme_lists_and_rejects_unknown() {
+        let (dir, mut app, mut agent) = fixture::build("theme");
+        run_slash("/theme", &mut agent, &mut app);
+        let msg = last_ui_content(&agent);
+        assert!(msg.contains("mocha") && msg.contains("hc"), "{msg}");
+
+        run_slash("/theme bogus", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("unknown theme"));
+        // `/theme <id>` writes config.toml — deliberately not exercised here.
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copy_without_reply_reports_nothing() {
+        let (dir, mut app, mut agent) = fixture::build("copy");
+        run_slash("/copy", &mut agent, &mut app);
+        assert!(last_ui_content(&agent).contains("nothing to copy"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn skills_reports_catalog_or_empty() {
+        let (dir, mut app, mut agent) = fixture::build("skills");
+        run_slash("/skills", &mut agent, &mut app);
+        let msg = last_ui_content(&agent);
+        // Ambient skill dirs differ per machine — both branches are valid.
+        assert!(msg.contains("skill"), "{msg}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

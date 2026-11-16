@@ -338,3 +338,18 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Path-seam for HOME-bound code**: `session::load/save/remove` hardcode `session_path()`; splitting each into a pub wrapper + private `load_file(path, workdir)` / `save_to(agent, workdir, path)` / `remove_file(path)` made every reject branch (version, workdir mismatch, empty history, malformed) unit-testable in temp dirs — 6-line cost, 41%→90% coverage.
 - **Spawned-binary tests cover what unit tests can't**: anything touching `config_path()`/`HOME` (opencode import orchestrator, migrate, exec) goes in `tests/cli.rs` with isolated `HOME` + cleared key env vars (`run_isolated`). `env!("CARGO_BIN_EXE_lightrs")` gives the built binary; support mock serves SSE.
 - llvm-cov after pass 3: 79.4% total. Still thin: `tui/run/mod` (pty event loop, ~25%), `migrate/` (mostly spawnable paths), `acp/` (feature-gated, needs protocol frames).
+
+## Coverage pass 4 findings (2026-11-16)
+
+- **Substring `replace` without segment awareness**: `base.replace("/anthropic", "/api/paas/v4")` on `https://api.z.ai/api/anthropic` produced `…/api/api/paas/v4` — the anchor matched mid-path. Handle the longer segment first (`/api/anthropic` → `/api/paas/v4`) or use `strip_suffix`. Latent until `migrate/profile.rs` got tests.
+- **`app.scroll` is distance-from-bottom**: `scroll_up` *adds*, `scroll_down` subtracts, `scroll_to_top` = `u16::MAX` (draw clamps), `scroll_to_bottom` = 0 + `pin_bottom`. Don't assume top=0 when writing tests.
+- **Synthetic `crossterm::event::Event`s make the whole keymap testable** without a pty: `Event::Key(KeyEvent::new(code, mods))`, `Event::Paste`, `Event::Mouse(MouseEvent{kind,column,row,modifiers})` → `handle_key`/`handle_crossterm_event` + channel assertions (`oneshot` for approvals, `watch` for interrupt, `mpsc` for kicks).
+- **`Agent::from_config(cfg, workdir)`** is the shared client bootstrap (primary + fallback + weak). TUI `run` and ACP `make_agent` both call it — don't re-add inline `LlmClient` wiring in a third caller.
+- Env-dependent assertions (real API keys may exist on a dev box): assert the *contract*, not the branch — `Ok(key)` nonempty OR `Err` names the env var; never `env::remove_var` in parallel tests (races).
+- llvm-cov note: `--summary-only` prints three `(total missed %)` triplets — lines coverage is the *third* ($8/$9/$10 when awk-split).
+
+## Coverage pass 5 findings (2026-11-16)
+
+- **`run_slash` rescans `.claude/commands/` on every unknown `/name`** (`other` arm reloads `app.commands` from disk) — injecting `app.commands` in a test is silently overwritten. Write a real `.claude/commands/<name>.md` into the fixture workdir instead. `expand` = body + "\n\n" + args; `SlashAction::Prompt` flows to `submit_line` → `kick_turn` (composer commits the *typed* line, model gets the *expanded* body).
+- `tui/slash.rs` 61%→86% via the `fixture::build` pattern for every handler; remaining misses are `/editor` ($EDITOR-bound) and error paths needing real session files.
+- `git diff` after big batches still the cheapest sanity: 333 tests, **84.99%** lines total.

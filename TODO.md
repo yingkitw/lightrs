@@ -2,6 +2,8 @@
 
 ## Done
 
+- [x] `/model` mid-session switch (`/model`, `/model <name>`, `/model <provider> [name]`); `Agent::set_client` swap + `resolve_runtime_api_key`; coverage passes: `tui/slash.rs` 61→86%, `tui/run/input.rs` →94% (synthetic key events + project-command kick), total 84.99%
+
 - [x] Mermaid renderer: layered box layout for `flowchart TD`/`LR` (Kahn ranks, barycenter ordering, `Canvas` junction merging, edge labels on wide spans); flat edge list for cycles / `BT`/`RL` / over-width; sequence rows unchanged; panel bg (`code_bg` + `inline_code_bg` node fill) via `Canvas.kind` → `segment_row`
 
 - [x] OpenCode-style UX signals: `path:branch` in header (`.git/HEAD`, worktree-safe, refreshed on `/cd`), context `%` of model window (`model_context_window` table; glm-4.6/M2.1 204.8k, kimi-k2 256k), `↑N scrolled · End latest` hint
@@ -71,6 +73,7 @@
 - [x] Native copy without losing scroll — mouse reporting narrowed to `?1000h`+`?1006h` (`tui::MOUSE_ON/OFF`); `?1002` drag tracking off → terminal drag-select + Cmd/Ctrl+C work while wheel scroll and tool-row clicks are unaffected
 - [x] `/model` — mid-session switch: `/model <name>` (same provider, keeps base URL + key), `/model <provider> [name]` (provider default endpoint + model; key re-resolved via `AppConfig::resolve_runtime_api_key`, fails fast); `Agent::set_client` swaps `Arc<dyn ModelClient>` — header + context % recompute from `client.model()`
 - [x] Coverage pass 3 (76.8%→79.4%): `session/mod` 41→90% (`load_file`/`save_to`/`remove_file` path-seam refactor + all reject branches), `opencode/assets` 0→90% (mcp/skills/rules/hooks import + tilde), `tui/info` 66→98% (header/session builders, host label, row-count threshold); `tests/cli.rs` + import e2e → `opencode/mod` orchestrator covered
+- [x] Coverage pass 4 (81.5%→84.4%): `run/input` 63→94% (synthetic crossterm keymap: approval y/n/Esc, ctrl-q/q quit-vs-interrupt, history recall, scroll keys, paste/mouse), `agent/context/mod` 50→97% (report/quiet/pressure/compact policy), `config/file` 69→83% (resolve_api_key layers, mtime, skills/tui parse), `tui/mentions` 57→91% (skip-dirs, common prefix, hints), `migrate/` write 98% + profile 90% — **found+fixed**: `anthropic_base_to_profile` doubled `/api/api/paas/v4` on `/api/anthropic` bases. Extracted `Agent::from_config` (shared TUI/ACP client bootstrap dedup)
 
 ## Backlog
 
@@ -80,7 +83,7 @@
 
 | Dimension | Score | Note |
 |-----------|-------|------|
-| Correctness & coverage | 5 | 286 tests, 79.4% lines (llvm-cov); spawned-binary e2e + request-capture on the shared mock |
+| Correctness & coverage | 5 | 333 tests, 84.99% lines (llvm-cov); spawned-binary e2e + request-capture on the shared mock |
 | Agent reliability | 5 | Step cap, interrupt, heal loop, fallback + weak-model routing, single turn loop |
 | UX (TUI) | 5 | Queued busy input, `/editor`, `/cd`, `/todo`, native copy + scroll; OpenCode signals (ctx %, `path:branch`, jump-to-latest); mermaid ASCII layout panel |
 | Maintainability | 5 | `agent/context/` domain module; duplicated turn loop deleted (net -108) |

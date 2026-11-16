@@ -261,4 +261,82 @@ mod tests {
                 .is_none()
         );
     }
+
+    #[test]
+    fn resolve_key_prefers_flags_then_file() {
+        let flags = ModelFlags {
+            kimi_api_key: Some("from-flag".into()),
+            ..Default::default()
+        };
+        let file = FileConfig {
+            keys: Some(FileKeys {
+                kimi: Some("from-file".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Flag beats file.
+        assert_eq!(
+            resolve_api_key(&flags, Some(&file), Provider::Kimi).unwrap(),
+            "from-flag"
+        );
+        // File wins when no flag.
+        assert_eq!(
+            resolve_api_key(&ModelFlags::default(), Some(&file), Provider::Kimi).unwrap(),
+            "from-file"
+        );
+    }
+
+    #[test]
+    fn resolve_key_missing_names_env_var() {
+        // Env may genuinely hold a key on a dev box — accept either branch but
+        // pin the contract: success returns a nonempty key, failure names the
+        // primary env var.
+        match resolve_api_key(&ModelFlags::default(), None, Provider::Minimax) {
+            Ok(k) => assert!(!k.is_empty()),
+            Err(e) => assert!(e.to_string().contains("MINIMAX_API_KEY"), "{e}"),
+        }
+    }
+
+    #[test]
+    fn shell_heal_steps_honored() {
+        let mut f = file_with_shell(&[], false, None);
+        f.shell.as_mut().unwrap().heal_steps = Some(7);
+        let (_, _, _, steps) = shell_from_files(Some(&f), None);
+        assert_eq!(steps, 7);
+    }
+
+    #[test]
+    fn project_mtime_and_malformed_toml() {
+        let dir = std::env::temp_dir().join(format!("lightrs-mtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(project_config_mtime(&dir).is_none());
+        std::fs::create_dir_all(dir.join(".lightrs")).unwrap();
+        std::fs::write(project_config_path(&dir), "ok = 1").unwrap();
+        assert!(project_config_mtime(&dir).is_some());
+        assert_eq!(
+            project_config_path(&dir),
+            dir.join(".lightrs/config.toml")
+        );
+
+        std::fs::write(project_config_path(&dir), "not [ valid").unwrap();
+        assert!(load_project_config_file(&dir).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parses_skills_and_tui_sections() {
+        let cfg: FileConfig = toml::from_str(
+            "[skills]\nenabled = false\npaths = [\"/a\", \"~/b\"]\n[tui]\ntheme = \"hc\"\n",
+        )
+        .unwrap();
+        let skills = cfg.skills.unwrap();
+        assert!(!skills.enabled);
+        assert_eq!(skills.paths.len(), 2);
+        assert_eq!(cfg.tui.unwrap().theme.as_deref(), Some("hc"));
+
+        // `[skills]` defaults: enabled = true.
+        let cfg: FileConfig = toml::from_str("[skills]\n").unwrap();
+        assert!(cfg.skills.unwrap().enabled);
+    }
 }

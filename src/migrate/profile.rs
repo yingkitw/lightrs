@@ -60,6 +60,8 @@ pub fn anthropic_base_to_profile(base_url: &str, token: &str) -> ModelProfile {
             model: None,
             base_url: Some(if base.contains("/api/paas") {
                 base
+            } else if base.contains("/api/anthropic") {
+                base.replace("/api/anthropic", "/api/paas/v4")
             } else if base.contains("anthropic") {
                 base.replace("/anthropic", "/api/paas/v4")
             } else {
@@ -77,5 +79,55 @@ pub fn anthropic_base_to_profile(base_url: &str, token: &str) -> ModelProfile {
         }
     } else {
         ModelProfile::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opencode_ids_map_by_substring() {
+        for (id, want) in [
+            ("zai/glm-4.6", Provider::Glm),
+            ("Zhipu GLM", Provider::Glm),
+            ("moonshot/kimi-k2", Provider::Kimi),
+            ("KIMI", Provider::Kimi),
+            ("minimax-m2", Provider::Minimax),
+        ] {
+            assert_eq!(map_opencode_provider_id(id), Some(want), "{id}");
+        }
+        assert_eq!(map_opencode_provider_id("openai/gpt-5"), None);
+    }
+
+    #[test]
+    fn anthropic_base_glm_variants() {
+        // Direct paas URL is kept as-is.
+        let p = anthropic_base_to_profile("https://api.z.ai/api/paas/v4/", "tok");
+        assert_eq!(p.provider, Some(Provider::Glm));
+        assert_eq!(p.base_url.as_deref(), Some("https://api.z.ai/api/paas/v4"));
+        assert_eq!(p.keys.glm.as_deref(), Some("tok"));
+
+        // `/anthropic` suffix rewrites to the paas path.
+        let p = anthropic_base_to_profile("https://api.z.ai/api/anthropic", "tok");
+        assert_eq!(p.provider, Some(Provider::Glm));
+        assert_eq!(
+            p.base_url.as_deref(),
+            Some("https://api.z.ai/api/paas/v4")
+        );
+    }
+
+    #[test]
+    fn anthropic_base_moonshot_and_unknown() {
+        let p = anthropic_base_to_profile("https://api.moonshot.ai/anthropic/", "k");
+        assert_eq!(p.provider, Some(Provider::Kimi));
+        assert_eq!(
+            p.base_url.as_deref(),
+            Some("https://api.moonshot.ai/anthropic")
+        );
+        assert_eq!(p.keys.kimi.as_deref(), Some("k"));
+
+        let p = anthropic_base_to_profile("https://api.openai.com", "k");
+        assert!(p.provider.is_none() && p.keys.kimi.is_none());
     }
 }

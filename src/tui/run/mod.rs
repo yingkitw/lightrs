@@ -20,7 +20,6 @@ use tokio::sync::{mpsc, watch};
 
 use crate::agent::Agent;
 use crate::config::AppConfig;
-use crate::provider::LlmClient;
 use crate::session;
 use crate::tui::info::{session_resume_message, session_start_message};
 use crate::tui::{AgentEvent, App, RunState, draw};
@@ -48,17 +47,8 @@ fn pump_queued(
 pub fn run(cfg: AppConfig) -> Result<()> {
     let rt = Runtime::new()?;
 
-    let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
     let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
-    let mut agent_inner = Agent::new(client, Arc::clone(&workdir), cfg.shell_policy.clone());
-    if let Some(fm) = &cfg.fallback_model {
-        agent_inner.set_fallback_client(Some(LlmClient::new(
-            cfg.base_url.clone(),
-            cfg.api_key.clone(),
-            fm.clone(),
-        )));
-    }
-    agent_inner.set_weak_model(cfg.weak_model.clone());
+    let mut agent_inner = Agent::from_config(&cfg, Arc::clone(&workdir));
     if let Some(cmd) = &cfg.test_command {
         agent_inner.set_heal(Some(crate::agent::HealSetting {
             command: cmd.clone(),
@@ -226,6 +216,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::config::Provider;
+    use crate::provider::LlmClient;
     use crate::tools::ShellPolicy;
 
     fn test_agent() -> Arc<tokio::sync::Mutex<Agent>> {

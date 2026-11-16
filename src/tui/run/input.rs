@@ -370,4 +370,244 @@ mod tests {
         assert_eq!(kick_rx.try_recv().unwrap(), "do the thing");
         assert_eq!(app.state, crate::tui::RunState::Busy);
     }
+
+    fn harness() -> (
+        Arc<tokio::sync::Mutex<Agent>>,
+        App,
+        watch::Sender<bool>,
+        mpsc::UnboundedSender<String>,
+    ) {
+        let (cancel_tx, _rx) = watch::channel(false);
+        let (kick_tx, _kr) = mpsc::unbounded_channel();
+        (test_agent(), test_app(), cancel_tx, kick_tx)
+    }
+
+    fn press(
+        app: &mut App,
+        agent: &Arc<tokio::sync::Mutex<Agent>>,
+        cancel_tx: &watch::Sender<bool>,
+        kick_tx: &mpsc::UnboundedSender<String>,
+        code: KeyCode,
+        mods: KeyModifiers,
+    ) -> InputAction {
+        handle_key(
+            KeyEvent::new(code, mods),
+            agent,
+            app,
+            cancel_tx,
+            kick_tx,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn approval_yes_no_and_esc_resolve() {
+        for (code, want) in [
+            (KeyCode::Char('y'), true),
+            (KeyCode::Char('n'), false),
+            (KeyCode::Esc, false),
+        ] {
+            let (agent, mut app, cancel_tx, kick_tx) = harness();
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            app.pending_approval = Some(crate::tui::CommandApproval {
+                commands: vec!["rm x".into()],
+                reply: tx,
+            });
+            app.input = "ignored".into();
+
+            press(&mut app, &agent, &cancel_tx, &kick_tx, code, KeyModifiers::NONE);
+
+            assert_eq!(rx.blocking_recv().unwrap(), want);
+            assert!(app.pending_approval.is_none());
+            // Keys are swallowed while the prompt is up — no text typed.
+            assert_eq!(app.input, "ignored");
+        }
+    }
+
+    #[test]
+    fn ctrl_quit_and_plain_q() {
+        let (agent, mut app, cancel_tx, kick_tx) = harness();
+        // Ready: Ctrl+Q exits.
+        assert_eq!(
+            press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('q'), KeyModifiers::CONTROL),
+            InputAction::Quit
+        );
+        // Ready + empty input: bare `q` exits.
+        assert_eq!(
+            press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('q'), KeyModifiers::NONE),
+            InputAction::Quit
+        );
+        // Busy: Ctrl+Q interrupts instead of quitting.
+        app.set_busy();
+        let (cancel_tx2, cancel_rx2) = watch::channel(false);
+        assert_eq!(
+            press(&mut app, &agent, &cancel_tx2, &kick_tx, KeyCode::Char('c'), KeyModifiers::CONTROL),
+            InputAction::Continue
+        );
+        assert!(*cancel_rx2.borrow());
+    }
+
+    #[test]
+    fn q_types_into_nonempty_input() {
+        let (agent, mut app, cancel_tx, kick_tx) = harness();
+        app.input = "a".into();
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('q'), KeyModifiers::NONE);
+        assert_eq!(app.input, "aq");
+    }
+
+    #[test]
+    fn edit_keys_and_newline_variants() {
+        let (agent, mut app, cancel_tx, kick_tx) = harness();
+        app.input = "abc".into();
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert!(app.input.is_empty());
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Enter, KeyModifiers::SHIFT);
+        assert_eq!(app.input, "\n");
+        app.clear_input();
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert_eq!(app.input, "\n");
+    }
+
+    #[test]
+    fn ctrl_p_n_recall_history() {
+        let (agent, mut app, cancel_tx, kick_tx) = harness();
+        app.composer.commit("first".into());
+        app.composer.commit("second".into());
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert_eq!(app.input, "second");
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert_eq!(app.input, "first");
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('n'), KeyModifiers::CONTROL);
+        assert_eq!(app.input, "second");
+    }
+
+    #[test]
+    fn o_toggles_focused_tool_expand() {
+        let (agent, mut app, cancel_tx, kick_tx) = harness();
+        app.focus_tool_msg_idx = Some(3);
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('o'), KeyModifiers::NONE);
+        assert!(app.expanded_tools.contains(&3));
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('o'), KeyModifiers::NONE);
+        assert!(!app.expanded_tools.contains(&3));
+        // 'o' types normally once input has text.
+        app.input = "d".into();
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Char('o'), KeyModifiers::NONE);
+        assert_eq!(app.input, "do");
+    }
+
+    #[test]
+    fn esc_interrupts_busy_and_clears_when_ready() {
+        let (agent, mut app, _cancel_tx, kick_tx) = harness();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        app.set_busy();
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(*cancel_rx.borrow());
+
+        let mut app2 = test_app();
+        app2.input = "draft".into();
+        press(&mut app2, &agent, &cancel_tx, &kick_tx, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app2.input.is_empty());
+    }
+
+    #[test]
+    fn scroll_keys_move_viewport() {
+        // `scroll` is distance-from-bottom: Up grows it, Down shrinks it,
+        // Home pins top (u16::MAX, clamped at draw), End pins bottom (0).
+        let (agent, mut app, cancel_tx, kick_tx) = harness();
+        app.scroll = 10;
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(app.scroll, 11);
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(app.scroll, 10);
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Home, KeyModifiers::NONE);
+        assert_eq!(app.scroll, u16::MAX);
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::End, KeyModifiers::NONE);
+        assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn paste_inserts_and_mouse_scrolls() {
+        let (agent, mut app, cancel_tx, kick_tx) = harness();
+        handle_crossterm_event(
+            Event::Paste("pasted".into()),
+            &agent,
+            &mut app,
+            &cancel_tx,
+            &kick_tx,
+        )
+        .unwrap();
+        assert_eq!(app.input, "pasted");
+
+        app.scroll = 5;
+        let mouse = |kind| crossterm::event::MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_crossterm_event(
+            Event::Mouse(mouse(MouseEventKind::ScrollUp)),
+            &agent,
+            &mut app,
+            &cancel_tx,
+            &kick_tx,
+        )
+        .unwrap();
+        assert_eq!(app.scroll, 8);
+    }
+
+    #[test]
+    fn submit_line_empty_slash_and_quit() {
+        let (agent, mut app, cancel_tx, kick_tx) = harness();
+        let _ = cancel_tx;
+        assert_eq!(
+            submit_line("   ".into(), &agent, &mut app, &kick_tx).unwrap(),
+            InputAction::Continue
+        );
+        assert_eq!(
+            submit_line("/quit".into(), &agent, &mut app, &kick_tx).unwrap(),
+            InputAction::Quit
+        );
+        assert_eq!(
+            submit_line("/editor".into(), &agent, &mut app, &kick_tx).unwrap(),
+            InputAction::Editor
+        );
+    }
+
+    #[test]
+    fn tab_completes_slash_prefix() {
+        let (agent, mut app, cancel_tx, kick_tx) = harness();
+        app.input = "/sta".into();
+        press(&mut app, &agent, &cancel_tx, &kick_tx, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(app.input, "/status");
+    }
+
+    #[test]
+    fn project_command_kicks_expanded_prompt() {
+        // run_slash rescans `.claude/commands/` from the workdir on each
+        // unknown `/name` — the command file must exist on disk.
+        let dir = std::env::temp_dir().join(format!("lightrs-pcmd-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".claude/commands")).unwrap();
+        std::fs::write(
+            dir.join(".claude/commands/review.md"),
+            "Review the diff.",
+        )
+        .unwrap();
+
+        let agent = test_agent();
+        let mut app = test_app();
+        app.config.workdir = dir.clone();
+        let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
+
+        let action = submit_line("/review src/lib.rs".into(), &agent, &mut app, &kick_tx).unwrap();
+
+        assert_eq!(action, InputAction::Continue);
+        // Model gets the expanded body; composer history keeps the typed line.
+        assert_eq!(
+            kick_rx.try_recv().unwrap(),
+            "Review the diff.\n\nsrc/lib.rs"
+        );
+        assert_eq!(app.state, RunState::Busy);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

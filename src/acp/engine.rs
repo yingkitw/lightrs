@@ -10,7 +10,6 @@ use anyhow::{Result, anyhow};
 
 use crate::agent::{Agent, ObserveEvent};
 use crate::config::AppConfig;
-use crate::provider::LlmClient;
 
 pub fn prompt_text(blocks: &[ContentBlock]) -> Result<String> {
     let mut parts = Vec::new();
@@ -39,21 +38,7 @@ pub fn make_agent(cfg: &AppConfig, cwd: PathBuf) -> Result<Agent> {
         .canonicalize()
         .or_else(|_| cwd.canonicalize())
         .unwrap_or(cwd);
-    let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
-    let mut agent = Agent::new(
-        client,
-        Arc::from(workdir.as_path()),
-        cfg.shell_policy.clone(),
-    );
-    if let Some(fm) = &cfg.fallback_model {
-        agent.set_fallback_client(Some(LlmClient::new(
-            cfg.base_url.clone(),
-            cfg.api_key.clone(),
-            fm.clone(),
-        )));
-    }
-    agent.set_weak_model(cfg.weak_model.clone());
-    Ok(agent)
+    Ok(Agent::from_config(cfg, Arc::from(workdir.as_path())))
 }
 
 pub async fn run_turn_v1(
@@ -143,5 +128,32 @@ mod tests {
             ContentBlock::Text(TextContent::new("world")),
         ];
         assert_eq!(prompt_text(&blocks).unwrap(), "hello\nworld");
+    }
+
+    #[test]
+    fn empty_prompt_errors() {
+        assert!(prompt_text(&[]).is_err());
+    }
+
+    #[test]
+    fn resource_link_renders_uri() {
+        let link = agent_client_protocol::v1::schema::ResourceLink::new(
+            "r",
+            "file:///x.rs",
+        );
+        let blocks = vec![ContentBlock::ResourceLink(link)];
+        assert_eq!(prompt_text(&blocks).unwrap(), "[resource] file:///x.rs");
+    }
+
+    #[test]
+    fn truncate_bounds_chars() {
+        assert_eq!(truncate("short", 10), "short");
+        assert_eq!(truncate("abcdefghij", 4), "abcd…");
+    }
+
+    #[test]
+    fn workdir_from_cwd_empty_uses_current_dir() {
+        assert_eq!(workdir_from_cwd(""), std::env::current_dir().unwrap());
+        assert_eq!(workdir_from_cwd("/tmp"), PathBuf::from("/tmp"));
     }
 }

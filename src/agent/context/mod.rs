@@ -163,3 +163,121 @@ impl Agent {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::CONTEXT_WARN_TOKENS;
+    use std::sync::Arc;
+
+    use crate::agent::Agent;
+    use crate::chat::ApiMessage;
+    use crate::provider::LlmClient;
+    use crate::tools::ShellPolicy;
+
+    fn agent() -> Agent {
+        Agent::new(
+            LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),
+            Arc::from(std::path::Path::new(".")),
+            ShellPolicy::default(),
+        )
+    }
+
+    fn last_sys(agent: &Agent) -> String {
+        agent
+            .ui_messages()
+            .last()
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn report_lists_limits_wire_and_breakdown() {
+        let a = agent();
+        let report = a.context_report();
+        assert!(report.contains("limits:") && report.contains("wire ≤12 turns / ~48k est"));
+        assert!(report.contains("wire: 0 of 0 turns"));
+        assert!(report.contains("breakdown:"));
+    }
+
+    #[test]
+    fn quiet_gates_all_routine_sys_lines() {
+        let mut a = agent();
+        a.set_quiet_token_sys(true);
+        let before = a.ui_messages().len();
+        a.record_send_estimate("hello");
+        a.record_model_usage(Some(&crate::chat::TokenUsage {
+            prompt_tokens: Some(5),
+            completion_tokens: Some(2),
+            total_tokens: None,
+        }));
+        a.maybe_context_pressure_sys();
+        assert_eq!(a.ui_messages().len(), before);
+        assert!(a.quiet_token_sys());
+    }
+
+    #[test]
+    fn send_estimate_and_usage_push_sys_when_loud() {
+        let mut a = agent();
+        a.record_send_estimate("hello world");
+        assert!(last_sys(&a).starts_with("send · ~"));
+        a.record_model_usage(Some(&crate::chat::TokenUsage {
+            prompt_tokens: Some(10),
+            completion_tokens: Some(4),
+            total_tokens: None,
+        }));
+        assert!(last_sys(&a).contains("in") && last_sys(&a).contains("out"));
+    }
+
+    #[test]
+    fn pressure_warns_once_then_rewarns_on_growth() {
+        let mut a = agent();
+        // Fake a large wire estimate so the pressure check trips.
+        a.estimated_context_tokens = CONTEXT_WARN_TOKENS + 1;
+        a.maybe_context_pressure_sys();
+        let warned = last_sys(&a);
+        assert!(warned.contains("context") || warned.contains("~"));
+
+        let n = a.ui_messages().len();
+        // Same level → no rewarn.
+        a.maybe_context_pressure_sys();
+        assert_eq!(a.ui_messages().len(), n);
+        // +4k growth → rewarn.
+        a.estimated_context_tokens += 4_001;
+        a.maybe_context_pressure_sys();
+        assert!(a.ui_messages().len() > n);
+    }
+
+    #[test]
+    fn manual_compact_stubs_and_resets_warn() {
+        let mut a = agent();
+        for i in 0..8 {
+            a.api_history.push(ApiMessage::tool_result(
+                format!("id{i}"),
+                "read_file",
+                "x".repeat(400),
+            ));
+        }
+        a.context_warned_above = 50_000;
+        let n = a.compact_history();
+        assert!(n >= 1, "expected stubs, got {n}");
+        assert_eq!(a.context_warned_above, 0);
+        // Older tool bodies stubbed; the keep-window tail stays intact.
+        let texts: Vec<String> = a
+            .api_history
+            .iter()
+            .filter_map(|m| m.text_content())
+            .collect();
+        assert!(texts.iter().any(|t| t.contains("compacted tool result")));
+        assert!(texts.iter().any(|t| t.len() == 400));
+    }
+
+    #[test]
+    fn api_context_len_counts_stored_history() {
+        let mut a = agent();
+        let base = a.api_context_len();
+        a.api_history.push(ApiMessage::user("hi"));
+        assert_eq!(a.api_context_len(), base + 1);
+        let s = a.token_summary();
+        assert_eq!(s.stats, a.token_stats);
+    }
+}

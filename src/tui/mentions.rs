@@ -137,4 +137,58 @@ mod tests {
         assert!(out.contains("src/lib.rs"));
         let _ = fs::remove_dir_all(&dir);
     }
+
+    fn fixture(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("lightrs-mention-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::create_dir_all(dir.join(".git/objects")).unwrap();
+        fs::create_dir_all(dir.join("target/debug")).unwrap();
+        fs::write(dir.join("src/lib.rs"), "").unwrap();
+        fs::write(dir.join("src/main.rs"), "").unwrap();
+        fs::write(dir.join("README.md"), "").unwrap();
+        fs::write(dir.join(".git/HEAD"), "").unwrap();
+        fs::write(dir.join("target/debug/x"), "").unwrap();
+        dir
+    }
+
+    #[test]
+    fn list_skips_vcs_and_build_dirs() {
+        let dir = fixture("skip");
+        let paths = list_workdir_paths(&dir);
+        assert!(paths.iter().any(|p| p == "src/lib.rs"));
+        assert!(paths.iter().any(|p| p == "src/"));
+        assert!(!paths.iter().any(|p| p.contains(".git") || p.contains("target")));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn common_prefix_extends_partial_match() {
+        let dir = fixture("common");
+        // "src/" alone matches src/ dir + both files → common prefix stays "src/".
+        assert_eq!(tab_complete_mention("@src/", &dir), None);
+        // "@src/ma" uniquely narrows to main.rs.
+        assert_eq!(
+            tab_complete_mention("@src/ma", &dir).as_deref(),
+            Some("@src/main.rs")
+        );
+        // No match at all → None.
+        assert!(tab_complete_mention("@zzz", &dir).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hint_lists_matches_or_reports_none() {
+        let dir = fixture("hint");
+        let hint = mention_hint("@src/", &dir).unwrap();
+        // src/ + 2 files = 3 matches → all listed.
+        assert!(hint.contains("@src/lib.rs") && hint.contains("@src/main.rs"));
+
+        let hint = mention_hint("@nope", &dir).unwrap();
+        assert!(hint.contains("no matching files"));
+
+        // Not a mention → None.
+        assert!(mention_hint("hello world", &dir).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

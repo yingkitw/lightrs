@@ -12,7 +12,7 @@ pub use context::tokens::{ContextBreakdown, TokenStats, TokenSummary, context_us
 
 use crate::chat::{ApiMessage, ApiRole, UiMessage, UiRole};
 use crate::session::SessionFile;
-use crate::provider::ModelClient;
+use crate::provider::{LlmClient, ModelClient};
 use crate::skills::SkillCatalog;
 use crate::tools::ShellPolicy;
 use prompt::system_prompt;
@@ -107,6 +107,26 @@ impl Agent {
             wire_window_noted: false,
         };
         agent.refresh_context_estimate();
+        agent
+    }
+
+    /// Build from config: primary `LlmClient` + fallback client + weak-model
+    /// routing. Callers add session restore, heal, and skills as needed
+    /// (TUI `run`, ACP `make_agent`).
+    pub fn from_config(cfg: &crate::config::AppConfig, workdir: Arc<Path>) -> Self {
+        let mut agent = Self::new(
+            LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone()),
+            workdir,
+            cfg.shell_policy.clone(),
+        );
+        if let Some(fm) = &cfg.fallback_model {
+            agent.set_fallback_client(Some(LlmClient::new(
+                cfg.base_url.clone(),
+                cfg.api_key.clone(),
+                fm.clone(),
+            )));
+        }
+        agent.set_weak_model(cfg.weak_model.clone());
         agent
     }
 
@@ -385,6 +405,33 @@ mod streaming_tests {
     use crate::tools::ShellPolicy;
 
     use super::Agent;
+
+    #[test]
+    fn from_config_wires_fallback_and_weak() {
+        let cfg = crate::config::AppConfig {
+            provider: crate::config::Provider::Kimi,
+            model: "main".into(),
+            fallback_model: Some("fb".into()),
+            weak_model: Some("weak".into()),
+            base_url: "http://x".into(),
+            api_key: "k".into(),
+            workdir: std::path::PathBuf::from("."),
+            shell_policy: ShellPolicy::default(),
+            test_command: None,
+            heal_steps: 3,
+        };
+        let agent = Agent::from_config(&cfg, Arc::from(Path::new(".")));
+        assert_eq!(agent.client.model(), "main");
+        assert!(agent.fallback_client.is_some());
+        assert_eq!(agent.fallback_client.as_ref().unwrap().model(), "fb");
+        assert_eq!(agent.weak_model.as_deref(), Some("weak"));
+
+        let mut slim = cfg.clone();
+        slim.fallback_model = None;
+        slim.weak_model = None;
+        let agent = Agent::from_config(&slim, Arc::from(Path::new(".")));
+        assert!(agent.fallback_client.is_none() && agent.weak_model.is_none());
+    }
 
     #[test]
     fn streaming_assistant_chars_counts_unicode_scalars() {
