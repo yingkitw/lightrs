@@ -63,6 +63,8 @@ pub(crate) fn handle_agent_event(
                 guard.push_error(msg.clone());
                 let _ = session::save(&guard, app.workdir());
             }
+            app.pending_approval = None;
+            app.pending_ask = None;
             app.set_error_status(msg);
             if app.pin_bottom {
                 app.scroll_to_bottom();
@@ -75,6 +77,10 @@ pub(crate) fn handle_agent_event(
         }
         AgentEvent::Progress(status) => apply_stream_progress(app, status),
         AgentEvent::Interrupted => {
+            // A pending approval/ask outliving its turn would swallow every
+            // key forever — the pending handlers return early for all input.
+            app.pending_approval = None;
+            app.pending_ask = None;
             app.set_ready(&app.config.clone());
             if app.pin_bottom {
                 app.scroll_to_bottom();
@@ -118,7 +124,7 @@ mod tests {
     use crate::config::{AppConfig, Provider};
     use crate::provider::LlmClient;
     use crate::tools::ShellPolicy;
-    use crate::tui::{AgentEvent, App, RunState};
+    use crate::tui::{AgentEvent, App, AskUserRequest, CommandApproval, RunState};
 
     use super::{apply_stream_progress, apply_stream_refresh, handle_agent_event};
 
@@ -308,6 +314,32 @@ mod tests {
                 let _ = handle_agent_event(&agent, &mut app, ev);
             }
             assert_eq!(app.status, want_status);
+        }
+    }
+    #[test]
+    fn terminal_events_clear_pending_prompts() {
+        // A pending approval/ask outliving its turn swallows every key —
+        // the pending handlers return early for all input (UI lock).
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let agent = Arc::new(Mutex::new(crate::agent::Agent::new(
+            client,
+            Arc::from(std::path::Path::new(".")),
+            ShellPolicy::default(),
+        )));
+        for ev in [AgentEvent::Interrupted, AgentEvent::Failed("x".into())] {
+            let (tx1, _rx1) = tokio::sync::oneshot::channel();
+            let (tx2, _rx2) = tokio::sync::oneshot::channel();
+            let mut app = test_app("busy");
+            app.pending_approval = Some(CommandApproval {
+                commands: vec!["rm x".into()],
+                reply: tx1,
+            });
+            app.pending_ask = Some(AskUserRequest {
+                question: "q".into(),
+                reply: tx2,
+            });
+            handle_agent_event(&agent, &mut app, ev);
+            assert!(app.pending_approval.is_none() && app.pending_ask.is_none());
         }
     }
 }

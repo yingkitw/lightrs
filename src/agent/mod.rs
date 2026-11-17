@@ -149,6 +149,10 @@ impl Agent {
             )));
         }
         agent.set_weak_model(cfg.weak_model.clone());
+        agent.set_format_command(cfg.format_command.clone());
+        if cfg.read_only {
+            agent.set_read_only(true);
+        }
         agent
     }
 

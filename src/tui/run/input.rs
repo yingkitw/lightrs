@@ -140,9 +140,13 @@ fn handle_key(
     }
 
     // `ask_user` pending — the composer is the answer field; Enter sends the
-    // reply to the model, Esc declines. Other keys edit normally.
+    // reply to the model, Esc declines, Ctrl+C still interrupts the turn.
+    // Other keys edit normally.
     if app.pending_ask.is_some() {
         match key.code {
+            KeyCode::Char('c') | KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                request_interrupt(cancel_tx);
+            }
             KeyCode::Enter => {
                 let line = app.take_input();
                 app.composer.cancel_browse();

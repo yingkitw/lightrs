@@ -49,10 +49,6 @@ pub fn run(cfg: AppConfig) -> Result<()> {
 
     let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
     let mut agent_inner = Agent::from_config(&cfg, Arc::clone(&workdir));
-    agent_inner.set_format_command(cfg.format_command.clone());
-    if cfg.read_only {
-        agent_inner.set_read_only(true);
-    }
     if let Some(cmd) = &cfg.test_command {
         agent_inner.set_heal(Some(crate::agent::HealSetting {
             command: cmd.clone(),
