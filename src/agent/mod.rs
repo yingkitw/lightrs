@@ -369,6 +369,8 @@ impl Agent {
     /// `/cd` — switch workdir mid-session; rebuilds the system prompt for the new root.
     pub fn set_workdir(&mut self, workdir: Arc<Path>) {
         self.workdir = workdir;
+        // `/cd` is a new root — a stale session cwd would leak the old tree.
+        self.shell_policy.reset_session_cwd();
         self.ensure_system_prompt();
     }
 

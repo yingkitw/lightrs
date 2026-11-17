@@ -153,7 +153,7 @@ fn execute_tool_raw(
         },
         "run_command" => {
             match parse::<shell::RunCommandArgs>(arguments).and_then(|a| {
-                shell::run_command(workdir, a, shell_policy, bypass_shell_allowlist, cancel)
+                shell::run_command_session(workdir, a, shell_policy, bypass_shell_allowlist, cancel)
             }) {
                 Ok(s) => ToolOutcome::ok(s),
                 Err(e) => ToolOutcome::ok(format!("error: {e:#}")),

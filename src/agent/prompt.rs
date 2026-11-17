@@ -12,7 +12,7 @@ pub(crate) fn system_prompt(
     mcp_names: &[String],
 ) -> String {
     let mut text = format!(
-        "lightrs agent. Workdir: {}. Use tools for filesystem facts; grep/glob to find paths; patch_file or multi_edit for edits; concise replies.",
+        "lightrs agent. Workdir: {}. Use tools for filesystem facts; grep/glob to find paths; patch_file or multi_edit for edits; concise replies. run_command cwd persists across calls (`cd` is remembered).",
         workdir.display()
     );
     if shell.is_restrictive() {

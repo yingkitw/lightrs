@@ -107,6 +107,82 @@ pub fn run_command(
     Ok(body)
 }
 
+/// Like `run_command`, plus **session cwd persistence**: the command starts in
+/// the last captured `$PWD` (or workdir on first call) and its final `$PWD`
+/// becomes the next call's start — a `cd` survives across `run_command` calls.
+/// Fmt/heal hooks deliberately use `run_command` (no persistence): a `cd` in a
+/// hook must not move the model's session.
+///
+/// Capture goes through a file under `.lightrs/` — not an stdout marker: the
+/// 64 KiB stream cap keeps the *first* bytes, so a trailing marker would be
+/// silently dropped on big output. `.lightrs/` is writable under both sandbox
+/// backends (workdir root).
+pub fn run_command_session(
+    workdir: &Path,
+    args: RunCommandArgs,
+    policy: &ShellPolicy,
+    bypass_allowlist: bool,
+    cancel: Option<&tokio::sync::watch::Receiver<bool>>,
+) -> Result<String> {
+    // Validate the ORIGINAL command text — deny/allowlist on the wrapped
+    // command would see `cd '/x' && <cmd>` and fail every prefix check.
+    if let Some(reason) = shell_deny::deny_reason(&args.command) {
+        bail!("command denied ({reason}): {}", args.command.trim());
+    }
+    if !bypass_allowlist && !policy.is_allowed(&args.command) {
+        bail!(
+            "command blocked by shell allowlist (configure [shell].allowlist in ~/.config/lightrs/config.toml): {}",
+            args.command.trim()
+        );
+    }
+    let cell = policy.session_cwd();
+    let saved = cell.lock().unwrap().clone();
+    let capture = workdir.join(format!(
+        ".lightrs/.run-cwd-{}-{}",
+        std::process::id(),
+        CWD_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_file(&capture);
+    let cmd = match &saved {
+        Some(dir) => format!(
+            "cd {} && {} ; __rc=$?; printf %s \"$PWD\" > {} ; exit $__rc",
+            shell_quote(&dir.to_string_lossy()),
+            args.command,
+            shell_quote(&capture.to_string_lossy())
+        ),
+        None => format!(
+            "{} ; __rc=$?; printf %s \"$PWD\" > {} ; exit $__rc",
+            args.command,
+            shell_quote(&capture.to_string_lossy())
+        ),
+    };
+    let _ = std::fs::create_dir_all(capture.parent().unwrap_or(workdir));
+    let out = run_command(
+        workdir,
+        RunCommandArgs {
+            command: cmd,
+            timeout_secs: args.timeout_secs,
+        },
+        policy,
+        true, // validation ran on the original text above; the spawn is wrapped
+        cancel,
+    );
+    if let Ok(cwd) = std::fs::read_to_string(&capture) {
+        let cwd = std::path::PathBuf::from(cwd.trim());
+        if cwd.is_dir() {
+            *cell.lock().unwrap() = Some(cwd);
+        }
+    }
+    let _ = std::fs::remove_file(&capture);
+    out
+}
+
+static CWD_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Drain a child pipe on a reader thread, retaining at most `max` bytes —
 /// data past the cap is **still consumed** so the child never blocks on a
 /// full pipe (it would otherwise stall until the timeout).
@@ -283,6 +359,70 @@ mod tests {
         // Group-killed grandchild never writes the marker.
         std::thread::sleep(Duration::from_millis(1500));
         assert!(!marker.exists(), "sleep grandchild survived group kill");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `cd` in one `run_command_session` call must land the *next* call in
+    /// that directory — the model expects shell state to persist.
+    #[test]
+    fn session_cwd_persists_across_calls() {
+        let dir = std::env::temp_dir().join(format!("lightrs-cwd-{}", std::process::id()));
+        let sub = dir.join("sub");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&sub).unwrap();
+        let policy = ShellPolicy::default();
+        let mk = |command: &str| RunCommandArgs {
+            command: command.into(),
+            timeout_secs: Some(10),
+        };
+        run_command_session(&dir, mk("cd sub"), &policy, true, None).unwrap();
+        let out = run_command_session(&dir, mk("pwd"), &policy, true, None).unwrap();
+        assert!(out.contains("sub"), "next call did not inherit cwd: {out}");
+        // reset detaches the shared cell — back to workdir
+        let mut p2 = policy.clone();
+        p2.reset_session_cwd();
+        let out = run_command_session(&dir, mk("pwd"), &p2, true, None).unwrap();
+        assert!(!out.contains("/sub"), "reset cwd still in subdir: {out}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Policy clones share the cwd cell — `Agent`'s clone of
+    /// `cfg.shell_policy` sees the same session state.
+    #[test]
+    fn session_cwd_shared_across_clones() {
+        let dir = std::env::temp_dir().join(format!("lightrs-cwd2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let policy = ShellPolicy::default();
+        let args = RunCommandArgs {
+            command: "pwd".into(),
+            timeout_secs: Some(10),
+        };
+        run_command_session(&dir, args, &policy, true, None).unwrap();
+        let clone = policy.clone();
+        assert_eq!(
+            *clone.session_cwd().lock().unwrap(),
+            Some(dir.canonicalize().unwrap()),
+            "clone must share the session cwd cell"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A failing `cd` must not corrupt the session — next call still works.
+    #[test]
+    fn session_cwd_survives_failed_cd() {
+        let dir = std::env::temp_dir().join(format!("lightrs-cwd3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let policy = ShellPolicy::default();
+        let mk = |command: &str| RunCommandArgs {
+            command: command.into(),
+            timeout_secs: Some(10),
+        };
+        // `cd missing && true` fails → printf still writes the pre-cd dir
+        let _ = run_command_session(&dir, mk("cd /nonexistent-x && pwd"), &policy, true, None);
+        let out = run_command_session(&dir, mk("pwd"), &policy, true, None).unwrap();
+        assert!(out.contains("exit=0"), "recovery call failed: {out}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

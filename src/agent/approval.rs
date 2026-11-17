@@ -174,6 +174,9 @@ pub(crate) async fn spawn_agent_outcome(
             g.read_only,
         )
     };
+    let mut policy = policy;
+    // Fresh session cwd — a child's `cd` must not move the parent's session.
+    policy.reset_session_cwd();
     if depth >= 1 {
         return ToolOutcome::ok(
             "error: spawn_agent depth limit — sub-agents cannot spawn agents".to_string(),

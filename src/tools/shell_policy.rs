@@ -1,4 +1,4 @@
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct ShellPolicy {
     prefixes: Vec<String>,
     require_approval: bool,
@@ -6,6 +6,21 @@ pub struct ShellPolicy {
     sandbox: super::sandbox::SandboxCfg,
     /// Extra **read-only** roots beyond workdir (`extra_read_dirs`/`--add-dir`).
     read_roots: Vec<std::path::PathBuf>,
+    /// Session cwd for `run_command` — `cd` persists across calls (shared
+    /// cell; policy clones see the same state). `reset_session_cwd` on workdir
+    /// change / sub-agent spawn.
+    session_cwd: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
+}
+
+impl PartialEq for ShellPolicy {
+    /// Policy identity = configuration; `session_cwd` is ephemeral runtime
+    /// state and is deliberately excluded.
+    fn eq(&self, other: &Self) -> bool {
+        self.prefixes == other.prefixes
+            && self.require_approval == other.require_approval
+            && self.sandbox == other.sandbox
+            && self.read_roots == other.read_roots
+    }
 }
 
 impl ShellPolicy {
@@ -19,6 +34,7 @@ impl ShellPolicy {
             require_approval,
             sandbox: super::sandbox::SandboxCfg::default(),
             read_roots: Vec::new(),
+            session_cwd: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -67,6 +83,17 @@ impl ShellPolicy {
 
     pub fn set_read_roots(&mut self, roots: Vec<std::path::PathBuf>) {
         self.read_roots = roots;
+    }
+
+    /// Shared session-cwd cell — `run_command_session` reads/writes it.
+    pub fn session_cwd(&self) -> std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>> {
+        self.session_cwd.clone()
+    }
+
+    /// Detach a fresh (unset) cwd cell — for `/cd` workdir changes and
+    /// `spawn_agent` children (a child's `cd` must not move the parent).
+    pub fn reset_session_cwd(&mut self) {
+        self.session_cwd = std::sync::Arc::new(std::sync::Mutex::new(None));
     }
 }
 

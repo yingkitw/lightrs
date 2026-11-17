@@ -88,7 +88,7 @@ fn bang_command(
     app.composer.commit(format!("!{cmd}"));
     let cmd = cmd.to_string();
     let run = move || {
-        crate::tools::shell::run_command(
+        crate::tools::shell::run_command_session(
             &workdir,
             crate::tools::shell::RunCommandArgs {
                 command: cmd,
