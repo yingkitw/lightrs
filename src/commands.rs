@@ -33,7 +33,9 @@ pub fn load(workdir: &Path) -> Vec<SlashDef> {
 }
 
 fn parse(path: &Path) -> std::io::Result<SlashDef> {
-    let text = std::fs::read_to_string(path)?;
+    let text = crate::tools::read_to_string_capped(path, 64 * 1024).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, path.display().to_string())
+    })?;
     let name = path
         .file_stem()
         .and_then(|s| s.to_str())

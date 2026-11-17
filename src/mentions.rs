@@ -53,17 +53,25 @@ pub fn api_user_content(workdir: &Path, composer: &str) -> String {
         if !full.is_file() {
             continue;
         }
-        let Ok(data) = fs::read(&full) else {
+        let Ok(file) = fs::File::open(&full) else {
             continue;
         };
         let cap = MENTION_ATTACH_FILE_MAX.min(MENTION_ATTACH_TOTAL_MAX - used);
-        let take = data.len().min(cap);
-        let body = String::from_utf8_lossy(&data[..take]);
-        extra.push_str(&format!("\n--- @{rel} ({take}B) ---\n{body}"));
-        if data.len() > take {
-            extra.push_str(&format!("\n[truncated; file {} bytes]", data.len()));
+        // Bound at the source — metadata gives the real size for the
+        // truncation note without loading the whole file.
+        let size = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+        use std::io::Read;
+        let mut data = Vec::new();
+        if file.take(cap as u64).read_to_end(&mut data).is_err()
+        {
+            continue;
         }
-        used += take;
+        let body = String::from_utf8_lossy(&data);
+        extra.push_str(&format!("\n--- @{rel} ({}B) ---\n{body}", data.len()));
+        if size > data.len() {
+            extra.push_str(&format!("\n[truncated; file {size} bytes]"));
+        }
+        used += data.len();
     }
 
     if extra.is_empty() {

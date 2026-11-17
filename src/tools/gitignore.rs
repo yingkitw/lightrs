@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 
 /// Parsed `.gitignore` rules (minimal; no nested includes).
@@ -10,7 +9,7 @@ pub struct Gitignore {
 impl Gitignore {
     pub fn load(workdir: &Path) -> Self {
         let path = workdir.join(".gitignore");
-        let Ok(body) = fs::read_to_string(&path) else {
+        let Some(body) = super::read_to_string_capped(&path, 64 * 1024) else {
             return Self::default();
         };
         let patterns = body

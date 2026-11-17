@@ -144,6 +144,25 @@ pub(crate) async fn error_body_capped(mut resp: reqwest::Response) -> String {
     String::from_utf8_lossy(&buf[..buf.len().min(MAX_ERROR_BODY)]).into_owned()
 }
 
+/// Success bodies need the whole payload but still a bound — a misbehaving
+/// endpoint/proxy can stream GBs inside the HTTP timeout.
+const MAX_RESPONSE_BODY: usize = 16 * 1024 * 1024;
+
+pub(crate) async fn response_body(resp: reqwest::Response) -> Result<String> {
+    body_capped(resp, MAX_RESPONSE_BODY).await
+}
+
+async fn body_capped(mut resp: reqwest::Response, max: usize) -> Result<String> {
+    let mut buf = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        if buf.len() + chunk.len() > max {
+            anyhow::bail!("response body exceeds {max} bytes");
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 /// Short message from common API error shapes: `{"error":{"message":…}}`,
 /// `{"error":{"msg"/"detail":…}}`, `{"error":"…"}`, or `{"message":"…"}`.
 /// Falls back to `None` so callers show the (capped) raw body.
@@ -200,14 +219,17 @@ mod tests {
         assert!(api_error_message(r#"{"error":{}}"#).is_none());
     }
 
-    #[tokio::test]
-    async fn error_body_is_capped() {
-        // The cap is exercised end-to-end via a real response: reqwest's
-        // Response::from needs the `http` crate, so serve bytes on a local
-        // listener instead of adding a dependency.
+    /// Serve one raw response on a local listener. `reqwest::Response::from`
+    /// needs the `http` crate, so tests exercise real responses instead of
+    /// adding a dependency.
+    fn serve_once(status: &str, body: &[u8]) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let big = "x".repeat(MAX_ERROR_BODY * 3);
+        let body = body.to_vec();
+        let head = format!(
+            "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        );
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             use std::io::{Read, Write};
@@ -222,17 +244,31 @@ mod tests {
                 }
                 req.extend_from_slice(&chunk[..n]);
             }
-            let head = format!(
-                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                big.len()
-            );
             let _ = stream.write_all(head.as_bytes());
-            let _ = stream.write_all(big.as_bytes());
+            let _ = stream.write_all(&body);
         });
-        let resp = reqwest::get(format!("http://127.0.0.1:{port}/err"))
-            .await
-            .unwrap();
+        format!("http://127.0.0.1:{port}")
+    }
+
+    #[tokio::test]
+    async fn error_body_is_capped() {
+        let big = "x".repeat(MAX_ERROR_BODY * 3);
+        let url = serve_once("500 Internal Server Error", big.as_bytes());
+        let resp = reqwest::get(format!("{url}/err")).await.unwrap();
         let body = error_body_capped(resp).await;
         assert_eq!(body.len(), MAX_ERROR_BODY);
+    }
+
+    #[tokio::test]
+    async fn response_body_bails_past_cap() {
+        let body = "x".repeat(1024);
+        let url = serve_once("200 OK", body.as_bytes());
+        let resp = reqwest::get(format!("{url}/big")).await.unwrap();
+        let err = body_capped(resp, 512).await.unwrap_err();
+        assert!(err.to_string().contains("exceeds"), "got {err}");
+
+        let url = serve_once("200 OK", body.as_bytes());
+        let resp = reqwest::get(format!("{url}/ok")).await.unwrap();
+        assert_eq!(body_capped(resp, 2048).await.unwrap().len(), 1024);
     }
 }

@@ -204,9 +204,16 @@ fn scan_file(
     hits: &mut Vec<String>,
     max: usize,
 ) {
-    let data = match fs::read(path) {
-        Ok(d) => d,
-        Err(_) => return,
+    // Bound the read at the source (+1 byte detects "exceeds" without a
+    // second stat) — a multi-GB binary shouldn't load fully just to learn
+    // it has a NUL in it.
+    let data = match fs::File::open(path).map(|f| {
+        use std::io::Read;
+        let mut b = Vec::new();
+        f.take(MAX_READ_BYTES as u64 + 1).read_to_end(&mut b).map(|_| b)
+    }) {
+        Ok(Ok(d)) => d,
+        _ => return,
     };
     if data.contains(&0) {
         return;

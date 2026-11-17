@@ -13,7 +13,10 @@ pub use stream::{StreamApply, StreamAccumulator, post_chat_stream, replay_sse_bo
 
 use crate::chat::{ApiMessage, ChatRequest, ChatResponse, TokenUsage};
 use dialect::ModelDialect;
-use http::{HttpRetryOptions, api_error_message, auth_headers, error_body_capped, post_json_with_retry};
+use http::{
+    HttpRetryOptions, api_error_message, auth_headers, error_body_capped,
+    post_json_with_retry, response_body,
+};
 
 /// Pinned boxed future — keeps `ModelClient` object-safe without `async-trait`.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -89,7 +92,7 @@ impl LlmClient {
         let status = response.status();
         // Errors read a bounded body — success needs the whole payload.
         let body = if status.is_success() {
-            response.text().await.context("read response body")?
+            response_body(response).await?
         } else {
             error_body_capped(response).await
         };
@@ -131,7 +134,7 @@ impl LlmClient {
 
         let status = response.status();
         let body = if status.is_success() {
-            response.text().await.context("read response body")?
+            response_body(response).await?
         } else {
             error_body_capped(response).await
         };
