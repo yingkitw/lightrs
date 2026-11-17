@@ -950,4 +950,44 @@ mod tests {
         let text = flat_text(&v);
         assert!(text.contains("ok"), "{text}");
     }
+
+    /// Doc mermaid fences must render through our own grammar — a fence that
+    /// falls back to flat edges or echo means the syntax drifted past what
+    /// the TUI can lay out.
+    #[test]
+    fn docs_mermaid_fences_all_render() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = vec![root.join("ARCHITECTURE.md")];
+        if let Ok(rd) = std::fs::read_dir(root.join("docs")) {
+            files.extend(
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "md")),
+            );
+        }
+        let mut fences = 0;
+        for f in files {
+            let text = std::fs::read_to_string(&f).unwrap();
+            for block in text.split("```mermaid").skip(1) {
+                fences += 1;
+                let src = block.split("```").next().unwrap().trim();
+                let v = interpret(src, 100);
+                assert!(!v.body.is_empty(), "{}: empty render\n{src}", f.display());
+                assert_ne!(
+                    v.kind,
+                    "diagram",
+                    "{}: unrecognized diagram kind\n{src}",
+                    f.display()
+                );
+                if v.kind == "flowchart" {
+                    assert!(
+                        v.pre_wrapped,
+                        "{}: flowchart fell back to flat edges\n{src}",
+                        f.display()
+                    );
+                }
+            }
+        }
+        assert!(fences >= 2, "ARCHITECTURE.md mermaid fences should exist");
+    }
 }

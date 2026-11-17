@@ -7,10 +7,10 @@ A minimal terminal coding agent inspired by pi / opencode. Single Rust binary, O
 ```bash
 cargo install --path .
 # or
-cargo build --release          # default: TUI + syntect (no ACP) — ~7 MB binary
+cargo build --release          # default: TUI + syntect (no ACP) — ~4.2 MB binary
 
 # ACP server (Zed, JetBrains): `cargo build --release --features full`
-# Smallest TUI (~5.6 MB, plain code fences): `cargo build --release --no-default-features`
+# Smallest TUI (~3.0 MB, plain code fences): `cargo build --release --no-default-features`
 ```
 
 ## API keys
@@ -76,7 +76,8 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Home` / `End` — oldest / newest messages
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
-- `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/undo`, `/diff`, `/export`, `/status`, `/model`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/cwd`, `/todo`, `/editor`, `/quit`, …)
+- `!cmd` — run a shell command locally (no model turn); output shows as a `[sys]` row. Allowlist bypassed (you typed it), deny list + `[sandbox]` still apply
+- `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/undo`, `/diff`, `/export`, `/status`, `/model`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/cwd`, `/todo`, `/editor`, `/doctor`, `/init`, `/quit`, …)
 - `/cd <path>` — switch working directory mid-session (keeps the conversation); `/editor` — draft the prompt in `$EDITOR`; `/todo` — show the agent's task list
 - `.claude/commands/*.md` — project slash commands (`/name` sends the file body to the model, args appended)
 - Session header shows **version, provider, model, path:git-branch, context size (+ % of the model's window), API host**; `/status` prints full details and `/context` shows where the tokens sit (per-role breakdown, heaviest messages, current-turn real usage). A `turn · N calls · X in + Y out · Ns` line closes each turn (`/quiet` silences routine token lines)
@@ -87,7 +88,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - **Terminal title** — window/tab shows `lightrs · dir[:branch]` and a `●` while the agent is working
 - **Click** a tool row or **`o`** — expand/collapse tool detail; **`/copy`** for clean clipboard text
 
-The agent can **read/write/patch files** (patch tolerates minor whitespace drift), **`grep`** (literal search in tree), **list directories**, **run shell commands** (64 KiB output cap per stream), and maintain a **`todo_write`** task list (`.lightrs/todos.json`) under the configured working directory (same privilege as your user).
+The agent can **read/write/patch files** (patch tolerates minor whitespace drift), **`grep`** (literal search in tree), **list directories**, **run shell commands** (64 KiB output cap per stream), and maintain a **`todo_write`** task list (`.lightrs/todos.json`) under the configured working directory (same privilege as your user). Reads may extend to extra directories via `--add-dir <path>` (repeatable) or `extra_read_dirs` in the global `config.toml` — **read-only**; writes stay confined to the workdir.
 
 **Optional reliability helpers:** `fallback_model` (top of `config.toml`, or `--fallback-model`) retries a failed model call once on a secondary model. `weak_model` (`--weak-model`) serves read-only steps on a cheaper model and escalates to `model` the moment a write/exec tool appears. `[shell].test_command` (e.g. `cargo test`) runs after every successful file edit — failures are handed back to the model to fix (`[shell].heal_steps`, default 3 per turn).
 
@@ -136,7 +137,7 @@ Compared 2026-11-16 against Claude Code, Codex CLI, OpenCode, and pi — ✅ shi
 
 | Area | lightrs | CC | Codex | OpenCode | pi |
 |---|---|---|---|---|---|
-| Stack / footprint | Rust, ~7.4M bin, 13 deps | Node/TS | Rust | TS/Bun + Go TUI | TS |
+| Stack / footprint | Rust, ~4.2M bin, 13 deps | Node/TS | Rust | TS/Bun + Go TUI | TS |
 | Providers | GLM/Kimi/MiniMax + any OpenAI-compat | Anthropic | OpenAI | 75+ | multi |
 | Tools | 14, all bounded | ~15 | shell+patch | ~12 + LSP | 8 + ext |
 | Web fetch | ✅ | ✅ | ✅ | ✅ | ext |

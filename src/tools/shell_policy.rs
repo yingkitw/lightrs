@@ -4,6 +4,8 @@ pub struct ShellPolicy {
     require_approval: bool,
     /// `[sandbox]` — OS confinement for spawned children (seatbelt/bwrap).
     sandbox: super::sandbox::SandboxCfg,
+    /// Extra **read-only** roots beyond workdir (`extra_read_dirs`/`--add-dir`).
+    read_roots: Vec<std::path::PathBuf>,
 }
 
 impl ShellPolicy {
@@ -16,6 +18,7 @@ impl ShellPolicy {
                 .collect(),
             require_approval,
             sandbox: super::sandbox::SandboxCfg::default(),
+            read_roots: Vec::new(),
         }
     }
 
@@ -56,6 +59,14 @@ impl ShellPolicy {
 
     pub fn set_sandbox(&mut self, sandbox: super::sandbox::SandboxCfg) {
         self.sandbox = sandbox;
+    }
+
+    pub fn read_roots(&self) -> &[std::path::PathBuf] {
+        &self.read_roots
+    }
+
+    pub fn set_read_roots(&mut self, roots: Vec<std::path::PathBuf>) {
+        self.read_roots = roots;
     }
 }
 

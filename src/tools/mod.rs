@@ -106,7 +106,9 @@ fn execute_tool_raw(
     cancel: Option<&tokio::sync::watch::Receiver<bool>>,
 ) -> ToolOutcome {
     match name {
-        "read_file" => match parse::<fs::ReadFileArgs>(arguments).and_then(|a| fs::read_file(workdir, a)) {
+        "read_file" => match parse::<fs::ReadFileArgs>(arguments)
+            .and_then(|a| fs::read_file(workdir, a, shell_policy.read_roots()))
+        {
             Ok(s) => ToolOutcome::ok(s),
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },
@@ -131,16 +133,20 @@ fn execute_tool_raw(
             }
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },
-        "list_dir" => match parse::<fs::ListDirArgs>(arguments).and_then(|a| fs::list_dir(workdir, a)) {
+        "list_dir" => match parse::<fs::ListDirArgs>(arguments)
+            .and_then(|a| fs::list_dir(workdir, a, shell_policy.read_roots()))
+        {
             Ok(s) => ToolOutcome::ok(s),
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },
-        "grep" => match parse::<grep::GrepArgs>(arguments).and_then(|a| grep::grep(workdir, a)) {
+        "grep" => match parse::<grep::GrepArgs>(arguments)
+            .and_then(|a| grep::grep(workdir, a, shell_policy.read_roots()))
+        {
             Ok(s) => ToolOutcome::ok(s),
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
         },
         "glob_file_search" => match parse::<glob_search::GlobSearchArgs>(arguments)
-            .and_then(|a| glob_search::glob_file_search(workdir, a))
+            .and_then(|a| glob_search::glob_file_search(workdir, a, shell_policy.read_roots()))
         {
             Ok(s) => ToolOutcome::ok(s),
             Err(e) => ToolOutcome::ok(format!("error: {e:#}")),

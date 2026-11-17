@@ -30,6 +30,36 @@ tui/
   ui/                   chrome (header/input/status), transcript (tools + diff + markdown)
 ```
 
+## Module graph
+
+Component view (UML `flowchart` — also renders inside the lightrs transcript's ASCII mermaid layout):
+
+```mermaid
+flowchart TD
+    TUI[tui/]
+    ACP[acp/]
+    EXEC[exec/]
+    AGENT[agent/ — turn loop]
+    MODEL[ModelClient]
+    LLM[provider/ — LlmClient]
+    TOOLS[tools/ mcp/ lsp/ — spawn]
+    SAND[sandbox — seatbelt bwrap]
+    SUP[config session skills audit]
+    API[(provider APIs)]
+    PROC[(child processes)]
+
+    TUI --> AGENT
+    ACP --> AGENT
+    EXEC --> AGENT
+    AGENT --> MODEL
+    LLM -.->|implements| MODEL
+    AGENT --> TOOLS
+    AGENT --> SUP
+    LLM --> API
+    TOOLS --> SAND
+    SAND --> PROC
+```
+
 ## Provider layer
 
 All backends use the same JSON schema (`ChatRequest` / `ChatResponse`). Defaults:
@@ -57,6 +87,22 @@ URLs omit trailing slashes; paths are joined as `{base}/chat/completions`. Strea
 - `ui_history` is capped at 500 messages (`helpers::trim_ui_history`, applied at turn end and session restore) — bounds session JSON and per-frame render cost
 - Two context layers: `context::messages_for_api` bounds the **wire** payload (last 12 user turns, ≤48k est) without touching `api_history`; `auto_compact_context` bounds the **stored** history (stub 32k / drop 64k, raw estimate) — `/rewind` and session save keep the full record
 
+One turn's message flow (UML sequence):
+
+```mermaid
+sequenceDiagram
+    TUI->>Agent: kick_tx prompt
+    Agent->>Model: send SSE stream
+    Model-->>Agent: deltas + tool_calls
+    Agent->>TUI: CommandApproval / AskUser (ui_tx)
+    TUI-->>Agent: oneshot answer
+    Agent->>Tools: execute_one_tool (spawn_blocking)
+    Tools-->>Agent: ToolOutcome
+    Agent->>Model: tool results next step
+    Model-->>Agent: final text
+    Agent->>TUI: Done + bell
+```
+
 ## TUI (Codex-aligned patterns)
 
 Reference: [Codex `codex-rs/tui`](https://github.com/openai/codex/tree/main/codex-rs/tui). lightrs uses **ratatui + crossterm** only.
@@ -68,7 +114,7 @@ Reference: [Codex `codex-rs/tui`](https://github.com/openai/codex/tree/main/code
 | Theme | Shared palette `tui/theme.rs` (roles, diff +/-, code blocks) |
 | Composer | Multi-line input, **Ctrl+P/N** history (`tui/composer.rs`) |
 | Lifecycle | Busy spinner; **Esc / Ctrl+C** interrupt |
-| Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/compact`, `/context`, `/copy`, `/cwd`, `/cd`, `/diff`, `/editor`, `/export`, `/fork`, `/model`, `/plan`, `/quiet`, `/quit`, `/reload`, `/resume`, `/rewind`, `/skills`, `/status`, `/theme`, `/todo`, `/undo` |
+| Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/compact`, `/context`, `/copy`, `/cwd`, `/cd`, `/diff`, `/doctor`, `/editor`, `/export`, `/fork`, `/init`, `/model`, `/plan`, `/quiet`, `/quit`, `/reload`, `/resume`, `/rewind`, `/skills`, `/status`, `/theme`, `/todo`, `/undo` |
 
 Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses input-pane **y/n** approval when configured (`[shell].require_approval` or allowlist block); one prompt covers all `run_command` calls in a model step (`approval::resolve_shell_approvals`).
 
@@ -76,7 +122,7 @@ Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses i
 
 `ratatui`, `crossterm`, `pulldown-cmark` (no default features), `syntect` (optional, `regex-fancy`), `similar`, `reqwest` (rustls + stream), `tokio`. ACP adds optional `agent-client-protocol`. `glob_file_search` uses in-tree `glob_pattern` (no `glob` crate).
 
-Build profiles: default is TUI + syntect only (~407 crates in the resolve graph, ~7.4 MB release). `[profile.release]` uses `lto` + `codegen-units = 1` + `strip` (~32% smaller than untuned). `--no-default-features` ≈ 5.6 MB, `--features full` ≈ 9.0 MB. `--features full` adds ACP (`acp`, `acp-v2`). `cargo build --release --no-default-features` is the smallest TUI (~381 crates, ~5.6 MB; plain code fences).
+Build profiles: default is TUI + syntect only (~408 crates in the resolve graph, ~4.2 MB release). `[profile.release]` uses `opt-level = "z"` + `panic = "abort"` + `lto` + `codegen-units = 1` + `strip` — size-for-speed is free here (network-bound agent, no `catch_unwind`, TUI panic hook still runs before abort). `--no-default-features` ≈ 3.0 MB, `--features full` ≈ 4.9 MB. `--features full` adds ACP (`acp`, `acp-v2`). `cargo build --release --no-default-features` is the smallest TUI (~382 crates, ~3.0 MB; plain code fences).
 
 Tests: `tests/docs_sync.rs` (doc drift — tools, slash lists in SPEC+ARCH, context budget constants vs source, tests/ inventory in AGENTS); `tests/provider_fixtures.rs` + `tests/fixtures/` (chat JSON + SSE, including Kimi/GLM/MiniMax tool streams); `tests/support/` (shared mock that records request bodies) backs `tests/approval_turn.rs` (mutex/approval regression), `tests/context_budget.rs` (wire-window + compaction on real requests), `tests/weak_model.rs` (weak→primary escalation), `tests/tui_busy_spec.rs`, `tests/cli.rs` (spawned-binary e2e — isolated HOME, `exec`/`doctor`/`migrate`/`import` vs the support mock). Run locally: `cargo test`, `cargo test --no-default-features --lib`, `cargo build --release`.
 

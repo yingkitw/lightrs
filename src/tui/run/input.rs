@@ -38,6 +38,9 @@ pub(crate) fn submit_line(
     if line.trim().is_empty() {
         return Ok(InputAction::Continue);
     }
+    if let Some(cmd) = line.trim_start().strip_prefix('!') {
+        return bang_command(cmd.trim(), agent, app);
+    }
     if is_slash_input(&line) {
         let mut guard = agent.blocking_lock();
         let was_clear = line.trim() == "/clear";
@@ -61,6 +64,55 @@ pub(crate) fn submit_line(
         });
     }
     kick_turn(line.clone(), &line, agent, app, kick_tx)
+}
+
+/// `!cmd` — run a shell command locally without spending a model turn. The
+/// user typed the command, so the allowlist is bypassed (`bypass_allowlist`);
+/// the deny list and `[sandbox]` wrap still apply inside `run_command`. Runs
+/// on a blocking thread so the TUI stays responsive; output lands as a
+/// `[sys]` row via `AgentEvent::ShellDone`.
+fn bang_command(
+    cmd: &str,
+    agent: &Arc<tokio::sync::Mutex<Agent>>,
+    app: &mut App,
+) -> Result<InputAction> {
+    let (policy, workdir) = {
+        let mut guard = agent.blocking_lock();
+        if cmd.is_empty() {
+            guard.push_system("usage: !<command> — run a shell command locally");
+            return Ok(InputAction::Continue);
+        }
+        guard.push_system(format!("$ {cmd}"));
+        (guard.shell_policy.clone(), guard.workdir.clone())
+    };
+    app.composer.commit(format!("!{cmd}"));
+    let cmd = cmd.to_string();
+    let run = move || {
+        crate::tools::shell::run_command(
+            &workdir,
+            crate::tools::shell::RunCommandArgs {
+                command: cmd,
+                timeout_secs: None,
+            },
+            &policy,
+            true,
+            None,
+        )
+        .unwrap_or_else(|e| e.to_string())
+    };
+    if let (Some(rt), Some(tx)) = (&app.rt, &app.ev_tx) {
+        let tx = tx.clone();
+        rt.spawn(async move {
+            let out = tokio::task::spawn_blocking(run)
+                .await
+                .unwrap_or_else(|e| e.to_string());
+            let _ = tx.send(crate::tui::app::AgentEvent::ShellDone(out));
+        });
+    } else {
+        let out = run();
+        agent.blocking_lock().push_system(out);
+    }
+    Ok(InputAction::Continue)
 }
 
 /// Shared send path: config reload, skill/trigger refresh, busy state, kick.
@@ -639,5 +691,72 @@ mod tests {
         );
         assert_eq!(app.state, RunState::Busy);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bang_runs_locally_without_kicking_turn() {
+        // Test harness has no rt/ev_tx → bang_command runs inline.
+        let agent = test_agent();
+        let mut app = test_app();
+        let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
+
+        let action = submit_line("!echo hi".into(), &agent, &mut app, &kick_tx).unwrap();
+
+        assert_eq!(action, InputAction::Continue);
+        assert!(
+            kick_rx.try_recv().is_err(),
+            "bang must not start a model turn"
+        );
+        let guard = agent.blocking_lock();
+        let text = guard
+            .ui_messages()
+            .iter()
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("$ echo hi"), "{text}");
+        assert!(text.contains("hi") && text.contains("exit=0"), "{text}");
+        drop(guard);
+        assert_eq!(app.state, RunState::Ready, "bang never sets Busy");
+    }
+
+    #[test]
+    fn bang_still_applies_deny_list() {
+        // User-typed commands bypass the allowlist but NOT the deny list —
+        // a typo'd `rm -rf ~` is just as destructive from a `!`.
+        let agent = test_agent();
+        let mut app = test_app();
+        let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
+
+        submit_line("!rm -rf ~".into(), &agent, &mut app, &kick_tx).unwrap();
+
+        assert!(kick_rx.try_recv().is_err());
+        let guard = agent.blocking_lock();
+        let text = guard
+            .ui_messages()
+            .iter()
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("denied"), "{text}");
+    }
+
+    #[test]
+    fn bare_bang_shows_usage() {
+        let agent = test_agent();
+        let mut app = test_app();
+        let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
+
+        submit_line("!".into(), &agent, &mut app, &kick_tx).unwrap();
+
+        assert!(kick_rx.try_recv().is_err());
+        let guard = agent.blocking_lock();
+        let text = guard
+            .ui_messages()
+            .iter()
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("usage: !"), "{text}");
     }
 }

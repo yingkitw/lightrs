@@ -30,6 +30,10 @@ pub(crate) struct FileConfig {
     pub lsp: Option<std::collections::BTreeMap<String, FileLsp>>,
     /// `[sandbox]` — OS confinement for spawned children.
     pub sandbox: Option<FileSandbox>,
+    /// Extra **read-only** roots beyond workdir. Global file only — a project
+    /// overlay granting itself `~/.ssh` read access is a consent violation.
+    #[serde(default)]
+    pub extra_read_dirs: Vec<String>,
 }
 
 /// `[sandbox]` — `on`/`network` apply from the GLOBAL file only; a project
@@ -165,11 +169,15 @@ pub(crate) struct ExternalConfig {
     pub mcp: crate::mcp::McpSpecs,
     pub lsp: crate::lsp::LspSpecs,
     pub sandbox: crate::tools::sandbox::SandboxCfg,
+    /// Read-only roots beyond workdir (global file only).
+    pub read_roots: Vec<PathBuf>,
 }
 
 /// `[mcp]`/`[lsp]` entries merge (same-name project wins). `[sandbox]` is
 /// asymmetric on purpose: `on`/`network` come from the GLOBAL file only — a
 /// project file may add `writable` roots but never weaken confinement.
+/// `extra_read_dirs` is also global-only: a repo file must not widen its own
+/// read scope (e.g. into `~/.ssh`).
 pub(crate) fn external_from_files(
     project: Option<&FileConfig>,
     global: Option<&FileConfig>,
@@ -178,6 +186,7 @@ pub(crate) fn external_from_files(
         mcp: crate::mcp::McpSpecs::new(),
         lsp: crate::lsp::LspSpecs::new(),
         sandbox: crate::tools::sandbox::SandboxCfg::default(),
+        read_roots: Vec::new(),
     };
     for (src, is_global) in [(global, true), (project, false)] {
         let Some(src) = src else { continue };
@@ -198,6 +207,13 @@ pub(crate) fn external_from_files(
                 cfg.sandbox.network = s.network.unwrap_or(true);
             }
             cfg.sandbox.writable.extend(s.writable.iter().cloned());
+        }
+        if is_global {
+            cfg.read_roots.extend(
+                src.extra_read_dirs
+                    .iter()
+                    .map(|s| crate::tools::sandbox::expand_tilde(s)),
+            );
         }
     }
     cfg
@@ -375,6 +391,27 @@ writable = ["~/.npm"]
         assert!(!cfg.sandbox.network, "project cannot re-enable network");
         assert!(cfg.sandbox.writable.contains(&"~/.cargo".to_string()));
         assert!(cfg.sandbox.writable.contains(&"~/.npm".to_string()));
+    }
+
+    #[test]
+    fn project_cannot_add_read_roots() {
+        // `extra_read_dirs` is global-only: a repo file must not widen its own
+        // read scope into e.g. ~/.ssh (consent violation).
+        let global: FileConfig = toml::from_str(
+            r#"
+extra_read_dirs = ["~/libs"]
+"#,
+        )
+        .unwrap();
+        let project: FileConfig = toml::from_str(
+            r#"
+extra_read_dirs = ["~/.ssh", "../sneaky"]
+"#,
+        )
+        .unwrap();
+        let cfg = external_from_files(Some(&project), Some(&global));
+        assert_eq!(cfg.read_roots.len(), 1, "project dirs must be ignored");
+        assert!(cfg.read_roots[0].ends_with("libs"), "{:?}", cfg.read_roots);
     }
 
     #[test]

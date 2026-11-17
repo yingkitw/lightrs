@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use serde::Deserialize;
 
-use crate::config::validate_work_path;
+
 
 use super::glob_pattern;
 use super::walk;
@@ -16,7 +16,11 @@ pub struct GlobSearchArgs {
     pub path: Option<String>,
 }
 
-pub fn glob_file_search(workdir: &Path, args: GlobSearchArgs) -> Result<String> {
+pub fn glob_file_search(
+    workdir: &Path,
+    args: GlobSearchArgs,
+    roots: &[std::path::PathBuf],
+) -> Result<String> {
     let pattern = args.pattern.trim();
     if pattern.is_empty() {
         bail!("pattern must not be empty");
@@ -26,10 +30,12 @@ pub fn glob_file_search(workdir: &Path, args: GlobSearchArgs) -> Result<String> 
     }
     let root = match args.path.as_deref() {
         None | Some(".") | Some("") => workdir.to_path_buf(),
-        Some(p) => validate_work_path(workdir, Path::new(p))?,
+        Some(p) => crate::config::validate_read_path(workdir, roots, Path::new(p))?,
     };
     let mut files = Vec::new();
-    walk::collect_files(&root, workdir, &mut files)?;
+    // Filter by the validated root, not workdir — extra read roots (--add-dir)
+    // must not drop their own children.
+    walk::collect_files(&root, &root, &mut files)?;
     let mut matches: Vec<String> = Vec::new();
     for path in files {
         let rel = path
@@ -88,6 +94,7 @@ mod tests {
                 pattern: "**/*.rs".into(),
                 path: None,
             },
+            &[],
         )
         .unwrap();
         assert!(out.contains("src/lib.rs"));

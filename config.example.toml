@@ -46,6 +46,12 @@ workdir = "."               # agent file/shell scope
 # writable = ["~/.cargo", "~/.rustup", "~/.npm"]  # toolchain caches that need writes
 # network = true                                # false = no outbound net for spawned commands
 
+# Optional: extra directories the agent may READ (never write) beyond the
+# workdir — read_file/list_dir/grep/glob/lsp paths resolve against these too.
+# Global file only (a project overlay can't widen its own read scope);
+# `--add-dir <path>` does the same per launch.
+# extra_read_dirs = ["~/libs", "/opt/reference"]
+
 # Optional: stdio MCP servers — spawned lazily on first `mcp_call` (newline
 # JSON-RPC; omit `tool` in mcp_call args to list a server's tools first).
 # [mcp.filesystem]

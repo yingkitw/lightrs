@@ -48,6 +48,8 @@ pub enum AgentEvent {
     AskUser(AskUserRequest),
     /// Background `/model` fetch finished: per-provider models or error text.
     ModelsListed(Vec<(crate::config::Provider, Result<Vec<String>, String>)>),
+    /// User `!cmd` finished; body is the exit/stdout/stderr block.
+    ShellDone(String),
 }
 
 pub struct App {

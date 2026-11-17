@@ -5,7 +5,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use crate::config::validate_work_path;
+
 
 use super::shell::MAX_SHELL_STREAM_BYTES;
 use super::walk;
@@ -24,9 +24,9 @@ pub struct GrepArgs {
     pub max_matches: Option<usize>,
 }
 
-pub fn grep(workdir: &Path, args: GrepArgs) -> Result<String> {
-    // `root` below is canonical (validate_work_path); the walk filters on
-    // `path.starts_with(workdir)`, so keep both sides canonical or every file
+pub fn grep(workdir: &Path, args: GrepArgs, roots: &[std::path::PathBuf]) -> Result<String> {
+    // `root` below is canonical (validate_read_path); the walk filters on
+    // `path.starts_with(root)`, so keep both sides canonical or every file
     // is silently dropped (e.g. /var → /private/var on macOS).
     let workdir = &workdir
         .canonicalize()
@@ -37,7 +37,7 @@ pub fn grep(workdir: &Path, args: GrepArgs) -> Result<String> {
     }
     let root = match args.path.as_deref() {
         None | Some(".") | Some("") => workdir.to_path_buf(),
-        Some(p) => validate_work_path(workdir, Path::new(p))?,
+        Some(p) => crate::config::validate_read_path(workdir, roots, Path::new(p))?,
     };
     let max_matches = args
         .max_matches
@@ -55,7 +55,9 @@ pub fn grep(workdir: &Path, args: GrepArgs) -> Result<String> {
     };
 
     let mut files: Vec<PathBuf> = Vec::new();
-    walk::collect_files(&root, workdir, &mut files)?;
+    // Filter by the validated root, not workdir — extra read roots (--add-dir)
+    // must not drop their own children.
+    walk::collect_files(&root, &root, &mut files)?;
 
     let mut hits: Vec<String> = Vec::new();
     let mut files_scanned = 0usize;
@@ -272,6 +274,7 @@ mod tests {
                 case_insensitive: false,
                 max_matches: None,
             },
+            &[],
         )
         .unwrap();
         assert!(out.contains("src/lib.rs:1:") || out.contains("unique_needle_abc"));
@@ -307,7 +310,7 @@ mod tests {
         let fill = MAX_SHELL_STREAM_BYTES - prefix.len() - 1;
         fs::write(dir.join("big.txt"), format!("{}€€€", "x".repeat(fill))).unwrap();
 
-        let out = grep(&dir, args("x")).unwrap();
+        let out = grep(&dir, args("x"), &[]).unwrap();
         assert!(out.contains("[output truncated]"), "tail: {}", &out[out.len().saturating_sub(80)..]);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -315,7 +318,7 @@ mod tests {
     #[test]
     fn empty_pattern_bails() {
         let dir = tmp("empty");
-        let err = grep(&dir, args("   ")).unwrap_err();
+        let err = grep(&dir, args("   "), &[]).unwrap_err();
         assert!(format!("{err:#}").contains("pattern"));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -330,6 +333,7 @@ mod tests {
                 case_insensitive: true,
                 ..args("hello")
             },
+            &[],
         )
         .unwrap();
         assert!(out.contains("Hello World"), "out = {out}");
@@ -347,6 +351,7 @@ mod tests {
                 max_matches: Some(3),
                 ..args("hit")
             },
+            &[],
         )
         .unwrap();
         assert!(out.contains("[truncated at 3 matches]"), "out = {out}");
@@ -357,7 +362,7 @@ mod tests {
     fn no_matches_reports_scanned_files() {
         let dir = tmp("nomatch");
         fs::write(dir.join("a.txt"), "nothing here\n").unwrap();
-        let out = grep(&dir, args("zzz-absent")).unwrap();
+        let out = grep(&dir, args("zzz-absent"), &[]).unwrap();
         assert!(out.contains("no matches for `zzz-absent`"), "out = {out}");
         assert!(out.contains("files scanned") || out.contains("ripgrep"), "out = {out}");
         let _ = fs::remove_dir_all(&dir);
@@ -375,6 +380,7 @@ mod tests {
                 path: Some("sub".into()),
                 ..args("needle")
             },
+            &[],
         )
         .unwrap();
         assert!(out.contains("inner.txt"), "out = {out}");
@@ -395,6 +401,7 @@ mod tests {
                 case_insensitive: false,
                 max_matches: None,
             },
+            &[],
         );
         assert!(err.is_err());
         let _ = fs::remove_dir_all(&dir);

@@ -110,6 +110,10 @@ pub struct ModelFlags {
     #[arg(long, global = true)]
     pub read_only: bool,
 
+    /// Extra directory the agent may READ (never write) — repeat for several
+    #[arg(long = "add-dir", global = true, value_name = "PATH")]
+    pub add_dir: Vec<PathBuf>,
+
     #[arg(long, global = true)]
     pub base_url: Option<String>,
 

@@ -8,47 +8,72 @@ use crate::migrate::scan_local_tools;
 use crate::paths::lightrs_config_dir;
 
 pub fn run_check(cfg: &AppConfig) -> Result<()> {
+    println!("{}", report(cfg)?);
+    Ok(())
+}
+
+/// Doctor checks as text — `run_check` prints it, the TUI `/doctor` pushes it
+/// into the transcript.
+pub fn report(cfg: &AppConfig) -> Result<String> {
+    let mut out = String::from("lightrs doctor\n");
     let cfg_path = config::config_path();
-    println!("lightrs doctor\n");
-    println!("  config file: {}", cfg_path.display());
-    println!(
-        "  config present: {}",
+    out.push_str(&format!("  config file: {}\n", cfg_path.display()));
+    out.push_str(&format!(
+        "  config present: {}\n",
         if cfg_path.exists() { "yes" } else { "no (flags/env only)" }
-    );
-    println!("  provider: {:?}", cfg.provider);
-    println!("  model: {}", cfg.model);
-    println!("  api base: {}", cfg.base_url);
-    println!(
-        "  api key: {}",
+    ));
+    out.push_str(&format!("  provider: {:?}\n", cfg.provider));
+    out.push_str(&format!("  model: {}\n", cfg.model));
+    out.push_str(&format!("  api base: {}\n", cfg.base_url));
+    out.push_str(&format!(
+        "  api key: {}\n",
         if cfg.api_key.trim().is_empty() {
             "missing"
         } else {
             "set"
         }
-    );
-    println!(
-        "  workdir: {} ({})",
+    ));
+    out.push_str(&format!(
+        "  workdir: {} ({})\n",
         cfg.workdir.display(),
         if cfg.workdir.is_dir() { "ok" } else { "missing" }
-    );
-    println!("  config dir: {}", lightrs_config_dir().display());
-    println!(
-        "  ripgrep (`rg`): {}",
+    ));
+    out.push_str(&format!("  config dir: {}\n", lightrs_config_dir().display()));
+    out.push_str(&format!(
+        "  ripgrep (`rg`): {}\n",
         if have_bin("rg") { "found" } else { "not on PATH (grep uses in-tree walk)" }
-    );
-    println!(
-        "  rustc: {}",
+    ));
+    out.push_str(&format!(
+        "  rustc: {}\n",
         rustc_version().unwrap_or_else(|| "not found".into())
-    );
+    ));
     if cfg.shell_policy.is_restrictive() {
-        println!("  shell allowlist: active");
+        out.push_str("  shell allowlist: active\n");
     }
     if cfg.shell_policy.requires_all_commands_approved() {
-        println!("  shell require_approval: yes (use TUI or `exec --approve-shell`)");
+        out.push_str("  shell require_approval: yes (use TUI or `exec --approve-shell`)\n");
+    }
+    if cfg.shell_policy.sandbox().on {
+        let backend = if cfg!(target_os = "macos") {
+            "sandbox-exec"
+        } else {
+            "bwrap"
+        };
+        out.push_str(&format!(
+            "  sandbox: on — {backend} {}\n",
+            if have_bin(backend) {
+                "found"
+            } else {
+                "MISSING — spawns fail closed"
+            }
+        ));
     }
     let tools = scan_local_tools();
-  println!("\nAgent configs on this machine:\n{}", format_scan_report(&tools));
-    Ok(())
+    out.push_str(&format!(
+        "\nAgent configs on this machine:\n{}",
+        format_scan_report(&tools)
+    ));
+    Ok(out)
 }
 
 fn have_bin(name: &str) -> bool {

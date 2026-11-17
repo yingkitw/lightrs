@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::chat::FileDiffUi;
-use crate::config::{resolve_work_output_path, validate_work_path};
+use crate::config::resolve_work_output_path;
 use crate::tools::backup;
 use crate::tools::diff::build_file_diff;
 use crate::tools::edit_match;
@@ -35,8 +35,8 @@ pub struct ListDirArgs {
     pub path: Option<String>,
 }
 
-pub fn read_file(workdir: &Path, args: ReadFileArgs) -> Result<String> {
-    let path = validate_work_path(workdir, Path::new(&args.path))?;
+pub fn read_file(workdir: &Path, args: ReadFileArgs, roots: &[std::path::PathBuf]) -> Result<String> {
+    let path = crate::config::validate_read_path(workdir, roots, Path::new(&args.path))?;
     let max = args.max_bytes.unwrap_or(65_536).min(512_000);
     // Bound the read at the source: the model picks the path, so `fs::read`
     // of a multi-GB file would OOM before the output cap ever applies.
@@ -168,9 +168,9 @@ fn commit_write(
     })
 }
 
-pub fn list_dir(workdir: &Path, args: ListDirArgs) -> Result<String> {
+pub fn list_dir(workdir: &Path, args: ListDirArgs, roots: &[std::path::PathBuf]) -> Result<String> {
     let rel = args.path.as_deref().unwrap_or(".");
-    let path = validate_work_path(workdir, Path::new(rel))?;
+    let path = crate::config::validate_read_path(workdir, roots, Path::new(rel))?;
     let mut names: Vec<String> = std::fs::read_dir(&path)?
         .filter_map(|e| e.ok())
         .map(|e| {
@@ -208,10 +208,48 @@ mod tests {
                 path: "big.txt".into(),
                 max_bytes: Some(100),
             },
+            &[],
         )
         .unwrap();
         assert!(out.contains("[truncated at 100 bytes; file size 2048]"), "{out}");
         assert!(out.len() < 300);
+    }
+
+    #[test]
+    fn read_file_through_extra_root() {
+        let dir = testdir("rr");
+        // Extra root must sit OUTSIDE the workdir or the test proves nothing.
+        let extra = std::env::temp_dir().join(format!("lightrs-fs-rrx-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&extra);
+        std::fs::create_dir_all(&extra).unwrap();
+        std::fs::write(extra.join("lib.rs"), "pub fn x() {}\n").unwrap();
+        let abs = extra.join("lib.rs").to_string_lossy().to_string();
+        let roots = vec![extra.canonicalize().unwrap()];
+
+        let out = read_file(
+            &dir,
+            ReadFileArgs {
+                path: abs.clone(),
+                max_bytes: None,
+            },
+            &roots,
+        )
+        .unwrap();
+        assert!(out.contains("pub fn x"), "{out}");
+
+        // Same path without the root configured → still escapes.
+        let err = read_file(
+            &dir,
+            ReadFileArgs {
+                path: abs,
+                max_bytes: None,
+            },
+            &[],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("escapes workdir"), "{err}");
+        let _ = std::fs::remove_dir_all(&extra);
     }
 
     #[test]

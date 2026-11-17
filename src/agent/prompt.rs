@@ -21,6 +21,17 @@ pub(crate) fn system_prompt(
     if shell.requires_all_commands_approved() {
         text.push_str(" User approves shell commands in TUI.");
     }
+    if !shell.read_roots().is_empty() {
+        text.push_str(&format!(
+            " Extra read-only roots beyond the workdir: {} — reads allowed, writes are not.",
+            shell
+                .read_roots()
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     if read_only {
         text.push_str(
             " Plan/read-only mode: file edits and shell commands are disabled — explore, analyze, and propose a plan instead.",

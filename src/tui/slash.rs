@@ -40,7 +40,13 @@ const COMMANDS: &[(&str, &str)] = &[
     ("plan", "toggle plan mode — read-only tools only (no writes/shell)"),
     ("fork", "checkpoint this session as a named fork (/fork [name])"),
     ("resume", "list sessions or restore one (/resume <n|name>)"),
+    ("doctor", "run local environment checks"),
+    ("init", "draft AGENTS.md for this project"),
 ];
+
+/// `/init` — canned prompt; the model explores the workdir and writes
+/// AGENTS.md with its normal write tools (approval/deny rules apply).
+const INIT_PROMPT: &str = "Analyze this project — read the manifest and README, skim the module layout — then write a concise AGENTS.md in the repo root. Include: project overview, structure map, build/test/lint commands, code conventions, and known pitfalls. If AGENTS.md already exists, read it first and improve it rather than overwriting blindly.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashAction {
@@ -506,6 +512,14 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             }
             SlashAction::Handled
         }
+        "doctor" => {
+            match crate::doctor::report(&app.config) {
+                Ok(text) => agent.push_system(text),
+                Err(e) => agent.push_error(format!("doctor failed: {e:#}")),
+            }
+            SlashAction::Handled
+        }
+        "init" => SlashAction::Prompt(INIT_PROMPT.into()),
         "diff" => {
             let diffs = crate::session::collect_file_diffs(&agent.ui_messages());
             if diffs.is_empty() {
@@ -1352,6 +1366,26 @@ mod tests {
         assert!(last_ui_content(&agent).contains("Plan mode ON"));
         run_slash("/plan", &mut agent, &mut app);
         assert!(!agent.read_only(), "second /plan disables it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn init_returns_canned_prompt() {
+        let (dir, mut app, mut agent) = fixture::build("init");
+        let action = run_slash("/init", &mut agent, &mut app);
+        let SlashAction::Prompt(p) = action else {
+            panic!("/init should return a prompt, got {action:?}")
+        };
+        assert!(p.contains("AGENTS.md"), "{p}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn doctor_pushes_report() {
+        let (dir, mut app, mut agent) = fixture::build("doctor");
+        let action = run_slash("/doctor", &mut agent, &mut app);
+        assert_eq!(action, SlashAction::Handled);
+        assert!(last_ui_content(&agent).contains("provider:"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -79,9 +79,11 @@
 | `/plan` | Toggle plan/read-only mode — write/exec tools denied; system prompt + status bar reflect it |
 | `/fork` [`name`] | Checkpoint the session to `<hash>-<name>.json` (untouched by later auto-saves) |
 | `/resume` [`n`\|`name`] | List all session files newest-first, or restore one by number/name — cross-workdir resumes also `/cd` |
+| `/doctor` | Run local environment checks (config, tools, sandbox backend) into the transcript |
+| `/init` | Send a canned prompt — model explores the workdir and writes `AGENTS.md` |
 | `/quit` | Exit (same as `q` when idle) |
 
-`Tab` completes unique slash prefix.
+`Tab` completes unique slash prefix. **`!cmd`** runs a shell command locally on a blocking thread — no model turn, no Busy state; output lands as a `[sys]` row (`$ cmd` echo + `exit=`/stdout/stderr). The user typed the command, so the shell **allowlist is bypassed**; the **deny list** (`rm -rf ~`, `curl | sh`, …) and `[sandbox]` wrap still apply.
 
 **Project commands** (`src/commands.rs`): `.claude/commands/*.md` under the workdir **and `~/.claude/commands/*.md` (user-global, Claude Code layout)** are discovered as `/name` (filename stem); `description:` frontmatter shows in hints, and the body is sent to the model with any args appended. Built-ins win on name collisions, and project commands shadow user-global ones. Rescanned on `/cd`, `/reload`, sends, and unknown-slash dispatch.
 
@@ -132,7 +134,9 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 
 Priority: **CLI/env > project overlay > config file > defaults** (`config/file.rs`, `config.example.toml`). API-key env vars feed the CLI tier via clap `env=` args.
 
-**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, `weak_model`, `[shell]`, `[mcp.*]`, and `[lsp.*]` are applied — a project `[shell]` section replaces the global one entirely; `[mcp]`/`[lsp]` entries merge (same-name project wins). `provider`, `base_url`, `keys`, `endpoints`, and `workdir` are parsed but ignored, so a repo file cannot redirect API calls or inject credentials.
+**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, `weak_model`, `[shell]`, `[mcp.*]`, and `[lsp.*]` are applied — a project `[shell]` section replaces the global one entirely; `[mcp]`/`[lsp]` entries merge (same-name project wins). `provider`, `base_url`, `keys`, `endpoints`, `workdir`, and `extra_read_dirs` are parsed but ignored, so a repo file cannot redirect API calls, inject credentials, or widen its own read scope.
+
+**`extra_read_dirs` / `--add-dir <path>`** — extra directories the agent may **read** (never write) beyond the workdir. `read_file`/`list_dir`/`grep`/`glob_file_search`/`lsp` paths resolve via `validate_read_path` (workdir → then each root, canonicalized). Global file + CLI flag only; writes stay confined to the workdir (use `/cd` to move write scope).
 
 **Secret-bearing files** are written owner-only: `config.toml` (`save_tui_theme`, `migrate`, `import opencode` incl. the `opencode-import.toml` alt) and OpenCode `mcp.json` go through `write_private_file` — `mode(0o600)` at create plus `set_permissions` to normalize a pre-existing permissive file.
 

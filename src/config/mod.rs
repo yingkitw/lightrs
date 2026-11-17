@@ -192,6 +192,11 @@ impl AppConfig {
         let external = file::external_from_files(project.as_ref(), file.as_ref());
         let mut shell_policy = shell_policy_from_parts(allowlist, require_approval);
         shell_policy.set_sandbox(external.sandbox.clone());
+        // Extra read roots: global file + explicit `--add-dir` flags only —
+        // project overlays can't widen their own read scope.
+        let mut read_roots = external.read_roots.clone();
+        read_roots.extend(flags.add_dir.iter().cloned());
+        shell_policy.set_read_roots(read_roots);
 
         Ok(Self {
             provider,
@@ -247,6 +252,9 @@ impl AppConfig {
         let external = file::external_from_files(project.as_ref(), file.as_ref());
         let mut policy = shell_policy_from_parts(allowlist, require_approval);
         policy.set_sandbox(external.sandbox);
+        // `[shell]`-only reload — CLI `--add-dir` roots (and file
+        // `extra_read_dirs` edits) keep their startup value, same as `model`.
+        policy.set_read_roots(self.shell_policy.read_roots().to_vec());
         self.shell_policy = policy;
         self.test_command = test_command;
         self.format_command = format_command;
@@ -304,6 +312,36 @@ pub fn skills_settings() -> (bool, Vec<PathBuf>) {
         sec.map(|s| s.enabled).unwrap_or(true),
         sec.map(|s| s.paths.clone()).unwrap_or_default(),
     )
+}
+
+/// Resolve a read path against the workdir OR any configured extra read root
+/// (`extra_read_dirs` / `--add-dir` — read-only widening; writes stay workdir).
+pub fn validate_read_path(
+    workdir: &Path,
+    extra_roots: &[PathBuf],
+    user_path: &Path,
+) -> Result<PathBuf> {
+    let joined = if user_path.is_absolute() {
+        user_path.to_path_buf()
+    } else {
+        workdir.join(user_path)
+    };
+    let canonical = joined
+        .canonicalize()
+        .with_context(|| format!("path not found: {}", user_path.display()))?;
+    let work = workdir
+        .canonicalize()
+        .unwrap_or_else(|_| workdir.to_path_buf());
+    if canonical.starts_with(&work) {
+        return Ok(canonical);
+    }
+    for root in extra_roots {
+        let root = root.canonicalize().unwrap_or_else(|_| root.clone());
+        if canonical.starts_with(&root) {
+            return Ok(canonical);
+        }
+    }
+    bail!("path escapes workdir: {}", user_path.display());
 }
 
 /// Resolve a path for reading or listing (target must exist on disk).
@@ -423,6 +461,44 @@ mod path_tests {
         let path = resolve_work_output_path(&dir, &target).unwrap();
         assert_eq!(path, target);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_path_accepts_extra_root_rejects_outsiders() {
+        let base = std::env::temp_dir().join(format!("lightrs-rr-{}", std::process::id()));
+        let work = base.join("work");
+        let extra = base.join("extra");
+        let outside = base.join("outside");
+        for d in [&work, &extra, &outside] {
+            let _ = fs::remove_dir_all(d);
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(work.join("in.txt"), "w").unwrap();
+        fs::write(extra.join("lib.rs"), "e").unwrap();
+        fs::write(outside.join("secret.txt"), "s").unwrap();
+        let roots = vec![extra.clone()];
+
+        // workdir path still resolves
+        assert_eq!(
+            validate_read_path(&work, &roots, Path::new("in.txt")).unwrap(),
+            work.join("in.txt").canonicalize().unwrap()
+        );
+        // extra root resolves (absolute + relative-looking abs path)
+        assert_eq!(
+            validate_read_path(&work, &roots, &extra.join("lib.rs")).unwrap(),
+            extra.join("lib.rs").canonicalize().unwrap()
+        );
+        // outside both roots → reject
+        let err = validate_read_path(&work, &roots, &outside.join("secret.txt"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("escapes workdir"), "{err}");
+        // `..` climbing out of the extra root → reject
+        let err = validate_read_path(&work, &roots, &extra.join("../outside/secret.txt"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("escapes workdir"), "{err}");
+        let _ = fs::remove_dir_all(&base);
     }
 }
 #[cfg(test)]

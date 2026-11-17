@@ -442,7 +442,10 @@ pub async fn call_outcome(
     args: &str,
     cancel: &tokio::sync::watch::Receiver<bool>,
 ) -> ToolOutcome {
-    let lsp = agent.lock().await.lsp.clone();
+    let (lsp, roots) = {
+        let g = agent.lock().await;
+        (g.lsp.clone(), g.shell_policy.read_roots().to_vec())
+    };
     let Some(lsp) = lsp else {
         return ToolOutcome::ok(
             "error: no [lsp.<lang>] servers configured (see config.example.toml)",
@@ -454,7 +457,7 @@ pub async fn call_outcome(
         match parsed {
             Err(e) => format!("error: {e:#}"),
             Ok(a) => {
-                let path = match crate::config::validate_work_path(&workdir, Path::new(&a.path)) {
+                let path = match crate::config::validate_read_path(&workdir, &roots, Path::new(&a.path)) {
                     Ok(p) => p,
                     Err(e) => return format!("error: {e:#}"),
                 };

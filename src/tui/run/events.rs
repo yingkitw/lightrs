@@ -103,6 +103,10 @@ pub(crate) fn handle_agent_event(
             agent.blocking_lock().push_system(text);
             true
         }
+        AgentEvent::ShellDone(text) => {
+            agent.blocking_lock().push_system(text);
+            true
+        }
     }
 }
 

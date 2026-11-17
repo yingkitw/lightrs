@@ -506,3 +506,22 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Seatbelt minimum-viable profile** (verified on Darwin 27): `file-read*` + `file-write-data /dev` + `file-ioctl` + `process-exec/fork/signal` + `file-write* (subpath writable…)` + `network*` + `sysctl-read` + `mach-lookup` + `ipc-posix-shm` + `system-socket`. Miss any of the last four and toolchains/DNS die mysteriously; miss `/dev` write-data and every `>/dev/null` redirect fails. Writable paths need **realpaths** (canonicalize workdir — `/tmp` is a symlink on macOS).
 - **Config safety asymmetry**: `on`/`network` global-only, `writable` merges project ∪ global — a project file can never weaken confinement (same rule class as `endpoints`). Fail-closed when enabled without a backend.
 - **`SandboxCfg` rides inside `ShellPolicy`** — the policy already reaches every gate (`resolve_shell_gate`, `run_command`, managers) so zero new plumbing.
+
+## Release footprint (2026-11-17)
+
+- **`opt-level = "z"` + `panic = "abort"` cut the release binary ~46%** (7.8→4.2 MB default, 6.1→3.0 minimal, 9.5→4.9 full). Size-for-speed is free here — the binary is network-bound (API latency dominates), CPU is never the bottleneck. Verified safe: no `catch_unwind`/`should_panic` in the tree, and the TUI panic *hook* still runs before abort so terminal restore is preserved. Dev/test profiles are unaffected (unwind stays on).
+- **Measure the resolve graph with `cargo tree` line count**, not `Cargo.lock` `[[package]]` count — the docs' "~407 crates" is tree lines (408 measured); lockfile was 309. Two different metrics, easy to confuse.
+- **New tokio features don't imply new crates**: `process`/`io-util`/`time` added zero lockfile packages — their transitive deps (libc, mio, signal-hook-registry) were already in the graph via reqwest/hyper. Check `git diff Cargo.lock` before assuming feature additions cost footprint.
+- **`cargo build --release --config 'profile.release.opt-level="z"'`** — one-off profile experiments without editing Cargo.toml.
+
+## `!cmd` escape + doc mermaid (2026-11-17)
+
+- **User-typed commands bypass the allowlist, never the deny list**: `run_command(bypass_allowlist=true)` still runs `shell_deny::deny_reason` first — a `!rm -rf ~` typo is as destructive as a model-suggested one. Sandbox wraps either way.
+- **Receiver evaluates before arguments**: `agent.blocking_lock().push_system(run())` holds the agent lock through `run()`'s whole blocking command — bind `let out = run()` first. Same trap class as mutex-across-await, one line subtler.
+- **Background local work idiom**: spawn on `app.rt` + `spawn_blocking` → `AgentEvent::X(String)` → handler `blocking_lock().push_system()` — the `/model` fetch and `!cmd` share it. No Busy state, runs during a turn.
+- **Doc mermaid must fit our own grammar**: ASCII layout bails (`pre_wrapped=false`) when the widest rank exceeds width (~100 cols) or syntax leaves `flowchart TD/LR` + sequence — no `subgraph`, `A --> B & C`, `classDiagram`. Keep nodes ≤ ~12 and labels terse. `docs_mermaid_fences_all_render` enforces it on every ```` ```mermaid ```` fence in ARCHITECTURE.md + docs/.
+- **New slash commands touch 4 lists**: `COMMANDS` const + `run_slash` match arm + SPEC table + ARCHITECTURE slash line (README `/help` parenthetical too) — `docs_sync` fails on drift for SPEC/ARCH. `SlashAction::Prompt(body)` is the lean path for "send a canned/expanded prompt" (`/init`, project commands) — no new machinery.
+- **`doctor::report(cfg) -> String`, not println**: CLI `run_check` prints it, TUI `/doctor` pushes it — one source of truth for check output. Same pattern for any future CLI-output-in-TUI reuse.
+- **Widening read scope is a TWO-gate problem**: validating the search *root* against extra roots isn't enough — `grep`/`glob` then filter walked files by `starts_with(workdir)`, which silently emptied every extra-root result. Filter by the validated root instead. When widening any confinement, audit the *filter* sites, not just the *validation* site.
+- **Global-only for scope-widening keys**: `extra_read_dirs` (like `sandbox.on`, `endpoints`) must be global file + CLI only — a project overlay granting itself `~/.ssh` read access is a consent violation. Merge inside `external_from_files` under `is_global`.
+- **Advertise widened scope in `system_prompt`** (mcp_names rule): the model can't guess `--add-dir` roots exist — `system_prompt` prints them when non-empty.

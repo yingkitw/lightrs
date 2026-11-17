@@ -100,7 +100,7 @@ fn writable_roots(workdir: &Path, cfg: &SandboxCfg) -> Vec<PathBuf> {
     roots
 }
 
-fn expand_tilde(s: &str) -> PathBuf {
+pub(crate) fn expand_tilde(s: &str) -> PathBuf {
     match s.strip_prefix("~/") {
         Some(rest) => crate::paths::home_dir().join(rest),
         _ => PathBuf::from(s),

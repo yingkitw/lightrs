@@ -24,6 +24,8 @@ acp-v2 = ["acp", "agent-client-protocol?/unstable_protocol_v2"]
 syntect = ["dep:syntect"]
 
 [profile.release]
+opt-level = "z"
+panic = "abort"
 lto = true
 codegen-units = 1
 strip = "symbols"
