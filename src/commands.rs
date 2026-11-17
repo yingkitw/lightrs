@@ -15,21 +15,37 @@ pub struct SlashDef {
     pub body: String,
 }
 
-/// Scan `workdir/.claude/commands/*.md`; sorted by name, empty when absent.
+/// Scan `~/.claude/commands/*.md` (user-global) plus
+/// `workdir/.claude/commands/*.md` (project) — Claude Code semantics, where
+/// a project command shadows a user command of the same name.
 pub fn load(workdir: &Path) -> Vec<SlashDef> {
-    let dir = workdir.join(".claude").join("commands");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    load_from(workdir, &crate::paths::home_dir())
+}
+
+pub(crate) fn load_from(workdir: &Path, home: &Path) -> Vec<SlashDef> {
+    let mut out = scan_dir(&workdir.join(".claude").join("commands"));
+    let names: std::collections::HashSet<String> =
+        out.iter().map(|d| d.name.clone()).collect();
+    out.extend(
+        scan_dir(&home.join(".claude").join("commands"))
+            .into_iter()
+            .filter(|d| !names.contains(&d.name)),
+    );
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn scan_dir(dir: &Path) -> Vec<SlashDef> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut out: Vec<SlashDef> = entries
+    entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("md"))
         .filter_map(|p| parse(&p).ok())
         .filter(|d| !d.name.is_empty() && !d.body.is_empty())
-        .collect();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out
+        .collect()
 }
 
 fn parse(path: &Path) -> std::io::Result<SlashDef> {
@@ -109,7 +125,7 @@ mod tests {
         write(&dir, "b.md", "body b");
         write(&dir, "a.md", "---\ndescription: first\n---\nbody a");
         write(&dir, "note.txt", "ignored");
-        let defs = load(&dir);
+        let defs = load_from(&dir, &dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0].name, "a");
@@ -118,8 +134,30 @@ mod tests {
     }
 
     #[test]
+    fn user_commands_load_and_project_shadows() {
+        let dir = std::env::temp_dir().join(format!("lightrs-cmds2-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("lightrs-cmdsh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&home);
+        write(&dir, "shared.md", "project body");
+        write(&home, "shared.md", "user body");
+        write(&home, "onlyuser.md", "user only");
+        let defs = load_from(&dir, &home);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(defs.len(), 2);
+        let shared = defs.iter().find(|d| d.name == "shared").unwrap();
+        assert_eq!(shared.body, "project body", "project must shadow user");
+        assert!(defs.iter().any(|d| d.name == "onlyuser"));
+    }
+
+    #[test]
     fn load_missing_dir_is_empty() {
-        assert!(load(Path::new("/nonexistent-lightrs-dir")).is_empty());
+        assert!(load_from(
+            Path::new("/nonexistent-lightrs-dir"),
+            Path::new("/nonexistent-lightrs-home")
+        )
+        .is_empty());
     }
 
     #[test]

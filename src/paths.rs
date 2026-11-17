@@ -1,12 +1,16 @@
 use std::path::PathBuf;
 
-/// `~/.config/<app>` (or `%USERPROFILE%\.config\<app>` on Windows).
-pub fn config_dir(app: &str) -> PathBuf {
-    let base = std::env::var_os("HOME")
+/// `$HOME` (or `%USERPROFILE%`) — "." when unset.
+pub fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join(".config").join(app)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// `~/.config/<app>` (or `%USERPROFILE%\.config\<app>` on Windows).
+pub fn config_dir(app: &str) -> PathBuf {
+    home_dir().join(".config").join(app)
 }
 
 pub fn config_file(app: &str, name: &str) -> PathBuf {

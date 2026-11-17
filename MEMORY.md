@@ -205,7 +205,8 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 ## Project slash commands (2026-11-15)
 
-- `src/commands.rs` loads `.claude/commands/*.md` (Claude Code layout): filename stem = `/name`, `description:` frontmatter for hints, body → model prompt (`commands::expand` appends args).
+- `src/commands.rs` loads `.claude/commands/*.md` (Claude Code layout): filename stem = `/name`, `description:` frontmatter for hints, body → model prompt (`commands::expand` appends args). Scans project dir **plus `~/.claude/commands/`** (user-global) — project shadows user on name collision. `commands::load_from(workdir, home)` is the home-parametrized inner — tests must use it, not `load`, or they read the real `$HOME`.
+- **Claude Code carries** (2026-11-16): user-global commands (`commands::load_from`), global memory `~/.claude/CLAUDE.md` + `~/.config/lightrs/AGENTS.md` appended **after** project files in `workdir_context` (project wins the shared 12 KiB budget), and `permissions.allow` `Bash(x:*)` → `ModelProfile.shell_allowlist` → `[shell].allowlist` at migrate. `deny`/`ask`/non-Bash rules are **skipped deliberately** — lightrs has no deny-list config and carrying a partial security semantic silently is worse than none. Same parametrized-home testability pattern: `load_workdir_context_for(workdir, home)`.
 - Dispatch lives in `slash.rs` `other` arm → `SlashAction::Prompt`; `input.rs::kick_turn` is the shared send tail (reload/refresh/hint/busy/kick). Composer history stores the typed `/name args`, not the expanded body.
 - Built-ins win collisions — `COMMANDS` match runs first; dedup filter in `tab_complete`/`slash_command_hint` keeps colliding names out.
 - Rescan points: `App::refresh_skill_catalog` (each send, `/cd`, `/reload`) + `other` arm itself (so a file added mid-session works immediately).

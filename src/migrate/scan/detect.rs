@@ -125,6 +125,7 @@ fn push_claude_code(out: &mut Vec<DetectedTool>) {
                     }
                 }
             }
+            p.shell_allowlist = claude_shell_prefixes(&v);
             if p.model.is_some() || p.keys.glm.is_some() || p.keys.kimi.is_some() {
                 profile = Some(p);
             }
@@ -236,6 +237,29 @@ pub(crate) fn parse_aider_config(text: &str, ext: Option<&str>) -> Option<ModelP
     (p.model.is_some()).then_some(p)
 }
 
+/// `permissions.allow` `Bash(<prefix>:*)` entries → `[shell].allowlist`
+/// prefixes. Non-Bash rules (Edit/Write/WebFetch/…), `deny`, and `ask` are
+/// skipped — lightrs has no equivalents and silently carrying a partial deny
+/// semantic would mislead.
+fn claude_shell_prefixes(v: &Value) -> Vec<String> {
+    let mut out: Vec<String> = v
+        .pointer("/permissions/allow")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| {
+                    let inner = e.as_str()?.strip_prefix("Bash(")?.strip_suffix(')')?;
+                    let prefix = inner.strip_suffix(":*").unwrap_or(inner);
+                    (!prefix.is_empty()).then(|| prefix.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out.dedup();
+    out
+}
+
 fn normalize_claude_model(model: &str) -> String {
     model
         .trim()
@@ -254,7 +278,38 @@ fn has_binary(name: &str) -> bool {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    crate::paths::home_dir()
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claude_allow_rules_map_to_shell_prefixes() {
+        let v: Value = serde_json::json!({
+            "permissions": {
+                "allow": [
+                    "Bash(ls:*)",
+                    "Bash(cargo test:*)",
+                    "Bash(git status:*)",
+                    "Bash(pwd)",
+                    "Read(//etc/**)",
+                    "WebFetch(domain:example.com)"
+                ],
+                "deny": ["Bash(rm -rf:*)"],
+                "ask": ["Bash(git push:*)"]
+            }
+        });
+        assert_eq!(
+            claude_shell_prefixes(&v),
+            vec![
+                "cargo test".to_string(),
+                "git status".to_string(),
+                "ls".to_string(),
+                "pwd".to_string()
+            ]
+        );
+        let empty: Value = serde_json::json!({});
+        assert!(claude_shell_prefixes(&empty).is_empty());
+    }
 }

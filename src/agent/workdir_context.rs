@@ -20,8 +20,17 @@ const CANDIDATE_NAMES: &[&str] = &[
 /// name so injection order is stable.
 const CANDIDATE_RULE_DIRS: &[&str] = &[".cursor/rules", ".windsurf/rules"];
 
+/// User-global memory — Claude Code's `~/.claude/CLAUDE.md` plus lightrs' own
+/// `~/.config/lightrs/AGENTS.md`. Appended after project sections so project
+/// files win the shared `MAX_CHARS` budget.
+const GLOBAL_NAMES: &[&str] = &[".claude/CLAUDE.md", ".config/lightrs/AGENTS.md"];
+
 /// Load project-local agent hints from the workdir (Aider/Codex/Claude/Gemini-style).
 pub fn load_workdir_context(workdir: &Path) -> String {
+    load_workdir_context_for(workdir, &crate::paths::home_dir())
+}
+
+pub(crate) fn load_workdir_context_for(workdir: &Path, home: &Path) -> String {
     let mut sections = Vec::new();
     for rel in CANDIDATE_NAMES {
         push_section(&mut sections, rel, &workdir.join(rel), false);
@@ -39,6 +48,9 @@ pub fn load_workdir_context(workdir: &Path) -> String {
             }
             push_section(&mut sections, &rel, &workdir.join(&rel), true);
         }
+    }
+    for rel in GLOBAL_NAMES {
+        push_section(&mut sections, &format!("~/{rel}"), &home.join(rel), false);
     }
     if sections.is_empty() {
         return String::new();
@@ -100,7 +112,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("AGENTS.md"), "use cargo test").unwrap();
-        let ctx = load_workdir_context(&dir);
+        let ctx = load_workdir_context_for(&dir, &dir);
         assert!(ctx.contains("use cargo test"));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -112,7 +124,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("CLAUDE.md"), "claude rule").unwrap();
         fs::write(dir.join("GEMINI.md"), "gemini rule").unwrap();
-        let ctx = load_workdir_context(&dir);
+        let ctx = load_workdir_context_for(&dir, &dir);
         assert!(ctx.contains("claude rule"), "ctx: {ctx}");
         assert!(ctx.contains("gemini rule"), "ctx: {ctx}");
         let _ = fs::remove_dir_all(&dir);
@@ -126,7 +138,7 @@ mod tests {
         fs::write(dir.join(".cursorrules"), "cursor dotfile").unwrap();
         fs::write(dir.join(".windsurfrules"), "windsurf dotfile").unwrap();
         fs::write(dir.join(".github/copilot-instructions.md"), "copilot rules").unwrap();
-        let ctx = load_workdir_context(&dir);
+        let ctx = load_workdir_context_for(&dir, &dir);
         for needle in ["cursor dotfile", "windsurf dotfile", "copilot rules"] {
             assert!(ctx.contains(needle), "missing {needle} in: {ctx}");
         }
@@ -148,11 +160,34 @@ mod tests {
         // Non-md files in rule dirs are ignored.
         fs::write(dir.join(".cursor/rules/notes.txt"), "ignore me").unwrap();
 
-        let ctx = load_workdir_context(&dir);
+        let ctx = load_workdir_context_for(&dir, &dir);
         assert!(ctx.contains("prefer thiserror"), "ctx: {ctx}");
         assert!(ctx.contains("no wildcard imports"), "ctx: {ctx}");
         assert!(!ctx.contains("alwaysApply"), "ctx: {ctx}");
         assert!(!ctx.contains("ignore me"), "ctx: {ctx}");
         let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn loads_user_global_memory_after_project() {
+        let dir = std::env::temp_dir().join(format!("lightrs-wd-ctx5-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("lightrs-wd-home-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        fs::create_dir_all(home.join(".config/lightrs")).unwrap();
+        fs::write(dir.join("CLAUDE.md"), "project rules").unwrap();
+        fs::write(home.join(".claude/CLAUDE.md"), "user global rules").unwrap();
+        fs::write(home.join(".config/lightrs/AGENTS.md"), "lightrs global").unwrap();
+
+        let ctx = load_workdir_context_for(&dir, &home);
+        let proj = ctx.find("project rules").unwrap();
+        let user = ctx.find("user global rules").unwrap();
+        let light = ctx.find("lightrs global").unwrap();
+        assert!(proj < user && user < light, "project first, globals in order: {ctx}");
+        assert!(ctx.contains("--- ~/.claude/CLAUDE.md ---"), "ctx: {ctx}");
+        assert!(ctx.contains("--- ~/.config/lightrs/AGENTS.md ---"), "ctx: {ctx}");
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&home);
     }
 }

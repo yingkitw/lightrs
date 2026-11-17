@@ -9,6 +9,9 @@ pub struct ModelProfile {
     /// Per-provider endpoint overrides → written as `[endpoints]` (e.g. a
     /// coding-plan key that needs a non-default URL for its provider).
     pub endpoints: std::collections::BTreeMap<Provider, String>,
+    /// Command prefixes the source tool already auto-approves → `[shell].
+    /// allowlist` (e.g. Claude Code `permissions.allow` `Bash(x:*)` entries).
+    pub shell_allowlist: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]

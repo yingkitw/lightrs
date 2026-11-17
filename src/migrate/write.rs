@@ -23,7 +23,23 @@ pub fn config_lines(profile: &ModelProfile, header: &str) -> Vec<String> {
     }
     append_keys(&mut lines, &profile.keys);
     append_endpoints(&mut lines, profile);
+    append_shell(&mut lines, profile);
     lines
+}
+
+/// `[shell]` carries approval prefixes the source tool already trusts (e.g.
+/// Claude Code `permissions.allow` `Bash(x:*)` → prefix `x`).
+pub fn append_shell(lines: &mut Vec<String>, profile: &ModelProfile) {
+    if profile.shell_allowlist.is_empty() {
+        return;
+    }
+    lines.push("[shell]".into());
+    let items: Vec<String> = profile
+        .shell_allowlist
+        .iter()
+        .map(|s| format!("{s:?}"))
+        .collect();
+    lines.push(format!("allowlist = [{}]", items.join(", ")));
 }
 
 /// `[endpoints]` for non-active providers — the chosen provider's URL is
@@ -151,5 +167,16 @@ mod tests {
         // appends (`key = value` merges) from gluing onto the last line.
         assert!(text.ends_with('\n'));
         let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn shell_allowlist_emits_section() {
+        let mut p = profile(Provider::Kimi);
+        p.shell_allowlist = vec!["ls".into(), "cargo test".into()];
+        let text = config_lines(&p, "# h").join("\n");
+        assert!(text.contains("[shell]"));
+        assert!(text.contains("allowlist = [\"ls\", \"cargo test\"]"), "{text}");
+
+        let text = config_lines(&profile(Provider::Kimi), "# h").join("\n");
+        assert!(!text.contains("[shell]"), "empty allowlist must not emit");
     }
 }
