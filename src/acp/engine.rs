@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::v1::schema::{
     ContentBlock, SessionId, SessionNotification, SessionUpdate, TextContent, ToolCall,
-    ToolCallUpdate,
+    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 use agent_client_protocol::{Client, v1::ConnectionTo};
 use anyhow::{Result, anyhow};
@@ -46,20 +46,26 @@ pub async fn run_turn_v1(
     user_text: String,
     connection: &ConnectionTo<Client>,
     session_id: &SessionId,
+    cancel: tokio::sync::watch::Receiver<bool>,
 ) -> Result<String> {
     let mut tool_index = 0u64;
-    let reply = Agent::run_user_turn_headless(agent, user_text, |ev| {
+    let reply = Agent::run_user_turn_shared(agent, user_text, |ev| {
             if let Err(error) = (|| -> Result<()> {
                 match ev {
                     ObserveEvent::ModelWait => {}
                     ObserveEvent::AssistantDelta { text } => {
-                        send_assistant_chunk(connection, session_id, text)?;
+                        send_chunk(connection, session_id, text, false)?;
+                    }
+                    ObserveEvent::ThinkingDelta { text } => {
+                        send_chunk(connection, session_id, text, true)?;
                     }
                     ObserveEvent::ToolStart { name, arguments } => {
                         tool_index += 1;
                         let id = format!("lightrs-tool-{tool_index}");
                         let title = format!("{name} {}", truncate(arguments, 96));
-                        let call = ToolCall::new(id.clone(), title).name(name);
+                        let call = ToolCall::new(id.clone(), title)
+                            .name(name)
+                            .status(ToolCallStatus::InProgress);
                         connection.send_notification(SessionNotification::new(
                             session_id.clone(),
                             SessionUpdate::ToolCall(call),
@@ -68,8 +74,18 @@ pub async fn run_turn_v1(
                     ObserveEvent::ToolEnd { body } => {
                         let id = format!("lightrs-tool-{tool_index}");
                         let preview = truncate(body, 2000);
-                        let update = ToolCallUpdate::from(
-                            ToolCall::new(id.clone(), preview).name("tool_result"),
+                        // Tool errors reach the UI as `error:`-prefixed bodies;
+                        // surface the same failure status over the wire.
+                        let status = if body.starts_with("error") {
+                            ToolCallStatus::Failed
+                        } else {
+                            ToolCallStatus::Completed
+                        };
+                        let update = ToolCallUpdate::new(
+                            id,
+                            ToolCallUpdateFields::new()
+                                .status(status)
+                                .title(format!("tool result: {preview}")),
                         );
                         connection.send_notification(SessionNotification::new(
                             session_id.clone(),
@@ -81,24 +97,31 @@ pub async fn run_turn_v1(
             })() {
                 eprintln!("lightrs: session/update failed: {error:#}");
             }
-        })
+        }, cancel, None)
         .await?;
 
     Ok(reply)
 }
 
-pub fn send_assistant_chunk(
+/// `thought = true` emits `AgentThoughtChunk` (reasoning), false emits
+/// `AgentMessageChunk` (assistant text) — distinct channels in the schema.
+pub fn send_chunk(
     connection: &ConnectionTo<Client>,
     session_id: &SessionId,
     text: &str,
+    thought: bool,
 ) -> agent_client_protocol::Result<()> {
-    connection.send_notification(SessionNotification::new(
-        session_id.clone(),
-        SessionUpdate::AgentMessageChunk(agent_client_protocol::v1::schema::ContentChunk::new(
-            ContentBlock::Text(TextContent::new(text)),
-        )),
-    ))
+    let chunk = agent_client_protocol::v1::schema::ContentChunk::new(ContentBlock::Text(
+        TextContent::new(text),
+    ));
+    let update = if thought {
+        SessionUpdate::AgentThoughtChunk(chunk)
+    } else {
+        SessionUpdate::AgentMessageChunk(chunk)
+    };
+    connection.send_notification(SessionNotification::new(session_id.clone(), update))
 }
+
 
 pub fn workdir_from_cwd(cwd: impl AsRef<Path>) -> PathBuf {
     let cwd = cwd.as_ref();
@@ -109,7 +132,25 @@ pub fn workdir_from_cwd(cwd: impl AsRef<Path>) -> PathBuf {
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
+/// `/name args` → the command's expanded body (project or user-global
+/// command); anything else passes through unchanged. Built-ins stay
+/// TUI-local — only prompt-expansion commands are exposed over ACP.
+pub fn expand_slash(text: &str, workdir: &Path) -> String {
+    let Some(rest) = text.strip_prefix('/') else {
+        return text.to_string();
+    };
+    let (name, args) = match rest.split_once(char::is_whitespace) {
+        Some((n, a)) => (n, a.trim()),
+        None => (rest, ""),
+    };
+    crate::commands::load(workdir)
+        .into_iter()
+        .find(|d| d.name == name)
+        .map(|d| crate::commands::expand(&d, args))
+        .unwrap_or_else(|| text.to_string())
+}
+
+pub(crate) fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }

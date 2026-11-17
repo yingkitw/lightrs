@@ -8,12 +8,14 @@ use agent_client_protocol::v2::{ConnectionTo, Responder, schema};
 use agent_client_protocol::{Agent, Client, Error, Result, Stdio};
 use tokio::sync::Mutex;
 
-use crate::acp::engine::{make_agent, workdir_from_cwd};
-use crate::agent::Agent as LightAgent;
+use crate::acp::engine::{expand_slash, make_agent, workdir_from_cwd};
+use crate::agent::{Agent as LightAgent, ObserveEvent};
 use crate::config::AppConfig;
 
 struct Session {
     agent: Arc<Mutex<LightAgent>>,
+    workdir: PathBuf,
+    cancel_tx: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
 struct V2State {
@@ -32,7 +34,7 @@ impl V2State {
     }
 
     async fn create(&self, cwd: PathBuf) -> Result<schema::SessionId> {
-        let agent = make_agent(&self.defaults, cwd)
+        let agent = make_agent(&self.defaults, cwd.clone())
             .map_err(|e| Error::internal_error().data(format!("{e:#}")))?;
         let mut n = self.next_id.lock().await;
         *n += 1;
@@ -41,6 +43,8 @@ impl V2State {
             id.clone(),
             Session {
                 agent: Arc::new(Mutex::new(agent)),
+                workdir: cwd,
+                cancel_tx: Mutex::new(None),
             },
         );
         Ok(id)
@@ -86,11 +90,31 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                             responder: Responder<schema::NewSessionResponse>,
                             connection: ConnectionTo<Client>| {
                     let cwd = workdir_from_cwd(&request.cwd);
-                    let session_id = match state.create(cwd).await {
+                    let session_id = match state.create(cwd.clone()).await {
                         Ok(id) => id,
                         Err(e) => return responder.respond_with_error(e),
                     };
                     responder.respond(schema::NewSessionResponse::new(session_id.clone()))?;
+                    let commands: Vec<_> = crate::commands::load(&cwd)
+                        .into_iter()
+                        .map(|d| {
+                            let desc = if d.description.is_empty() {
+                                d.name.clone()
+                            } else {
+                                d.description
+                            };
+                            schema::AvailableCommand::Command(schema::Command::new(d.name, desc))
+                        })
+                        .collect();
+                    if !commands.is_empty() {
+                        let _ = send_update(
+                            &connection,
+                            &session_id,
+                            schema::SessionUpdate::AvailableCommandsUpdate(
+                                schema::AvailableCommandsUpdate::new(commands),
+                            ),
+                        );
+                    }
                     send_update(
                         &connection,
                         &session_id,
@@ -139,42 +163,134 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                                 )),
                             );
 
-                            let agent = {
+                            let session = {
                                 let sessions = state.sessions.lock().await;
-                                sessions
-                                    .get(&session_id)
-                                    .map(|s| Arc::clone(&s.agent))
+                                sessions.get(&session_id).map(|s| {
+                                    (Arc::clone(&s.agent), s.workdir.clone())
+                                })
                             };
-                            let Some(agent) = agent else {
+                            let Some((agent, workdir)) = session else {
                                 return Ok(());
                             };
-                            let reply = LightAgent::run_user_turn_headless(agent, prompt, |_| {})
-                                .await
-                                .unwrap_or_else(|e| format!("{e:#}"));
+                            let prompt = expand_slash(&prompt, &workdir);
+                            let (cancel_tx, cancel_rx) =
+                                tokio::sync::watch::channel(false);
+                            {
+                                let sessions = state.sessions.lock().await;
+                                if let Some(s) = sessions.get(&session_id) {
+                                    *s.cancel_tx.lock().await = Some(cancel_tx);
+                                }
+                            }
 
                             let message_id = schema::MessageId::new("agent-1");
-                            let _ = send_update(
-                                &task_conn,
-                                &session_id,
-                                schema::SessionUpdate::AgentMessageChunk(schema::ContentChunk::new(
-                                    reply.clone().into(),
-                                    message_id.clone(),
-                                )),
-                            );
-                            let _ = send_update(
-                                &task_conn,
-                                &session_id,
-                                schema::SessionUpdate::AgentMessage(
-                                    schema::AgentMessage::new(message_id)
-                                        .content(vec![reply.into()]),
-                                ),
-                            );
+                            let think_id = schema::MessageId::new("think-1");
+                            let mut tool_index = 0u64;
+                            let tool_update =
+                                |u: schema::SessionUpdate| -> agent_client_protocol::Result<()> {
+                                    send_update(&task_conn, &session_id, u)
+                                };
+                            let result = LightAgent::run_user_turn_shared(
+                                agent,
+                                prompt,
+                                |ev| {
+                                    let update = match ev {
+                                        ObserveEvent::ModelWait => return,
+                                        ObserveEvent::AssistantDelta { text } => {
+                                            schema::SessionUpdate::AgentMessageChunk(
+                                                schema::ContentChunk::new(
+                                                    text.to_string().into(),
+                                                    message_id.clone(),
+                                                ),
+                                            )
+                                        }
+                                        ObserveEvent::ThinkingDelta { text } => {
+                                            schema::SessionUpdate::AgentThoughtChunk(
+                                                schema::ContentChunk::new(
+                                                    text.to_string().into(),
+                                                    think_id.clone(),
+                                                ),
+                                            )
+                                        }
+                                        ObserveEvent::ToolStart { name, arguments } => {
+                                            tool_index += 1;
+                                            let title = format!(
+                                                "{name} {}",
+                                                crate::acp::engine::truncate(arguments, 96)
+                                            );
+                                            schema::SessionUpdate::ToolCallUpdate(
+                                                schema::ToolCallUpdate::new(format!(
+                                                    "lightrs-tool-{tool_index}"
+                                                ))
+                                                .name(name)
+                                                .title(title)
+                                                .status(schema::ToolCallStatus::InProgress),
+                                            )
+                                        }
+                                        ObserveEvent::ToolEnd { body } => {
+                                            let status =
+                                                if body.starts_with("error") {
+                                                    schema::ToolCallStatus::Failed
+                                                } else {
+                                                    schema::ToolCallStatus::Completed
+                                                };
+                                            schema::SessionUpdate::ToolCallUpdate(
+                                                schema::ToolCallUpdate::new(format!(
+                                                    "lightrs-tool-{tool_index}"
+                                                ))
+                                                .status(status)
+                                                .title(format!(
+                                                    "tool result: {}",
+                                                    crate::acp::engine::truncate(body, 2000)
+                                                )),
+                                            )
+                                        }
+                                    };
+                                    let _ = tool_update(update);
+                                },
+                                cancel_rx,
+                                None,
+                            )
+                            .await;
+
+                            {
+                                let sessions = state.sessions.lock().await;
+                                if let Some(s) = sessions.get(&session_id) {
+                                    *s.cancel_tx.lock().await = None;
+                                }
+                            }
+                            // Deltas (live or the post-hoc emit on the
+                            // non-stream path) already delivered the reply —
+                            // the tail only reports how the turn ended.
+                            let stop = match result {
+                                Ok(_) => schema::StopReason::EndTurn,
+                                Err(e) if crate::provider::is_interrupted(&e) => {
+                                    schema::StopReason::Cancelled
+                                }
+                                Err(e) => {
+                                    let msg = format!("{e:#}");
+                                    let _ = send_update(
+                                        &task_conn,
+                                        &session_id,
+                                        schema::SessionUpdate::AgentMessageChunk(
+                                            schema::ContentChunk::new(
+                                                format!("error: {msg}").into(),
+                                                message_id.clone(),
+                                            ),
+                                        ),
+                                    );
+                                    schema::StopReason::Error(
+                                        schema::ErrorStopReason::new().error(
+                                            schema::Error::internal_error()
+                                                .data(serde_json::json!(msg)),
+                                        ),
+                                    )
+                                }
+                            };
                             let _ = send_update(
                                 &task_conn,
                                 &session_id,
                                 schema::SessionUpdate::StateUpdate(schema::StateUpdate::Idle(
-                                    schema::IdleStateUpdate::new()
-                                        .stop_reason(schema::StopReason::EndTurn),
+                                    schema::IdleStateUpdate::new().stop_reason(stop),
                                 )),
                             );
                             Ok(())
@@ -184,6 +300,20 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                 }
             },
             agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_notification(
+            {
+                let state = Arc::clone(&state);
+                async move |notification: schema::CancelSessionNotification, _cx| {
+                    let sessions = state.sessions.lock().await;
+                    if let Some(s) = sessions.get(&notification.session_id)
+                        && let Some(tx) = s.cancel_tx.lock().await.as_ref() {
+                            let _ = tx.send(true);
+                        }
+                    Ok(())
+                }
+            },
+            agent_client_protocol::on_receive_notification!(),
         )
         .connect_to(Stdio::new())
         .await

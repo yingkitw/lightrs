@@ -68,7 +68,7 @@ pub(crate) fn append_thinking_delta(
         last.content.push_str(chunk);
     }
     drop(ui);
-    on(ObserveEvent::AssistantDelta { text: chunk });
+    on(ObserveEvent::ThinkingDelta { text: chunk });
 }
 
 pub(crate) fn remove_trailing_empty_assistant(ui_history: &Arc<Mutex<Vec<UiMessage>>>) {
@@ -130,6 +130,22 @@ mod tests {
         assert_eq!(lock[0].content, "plan A");
         assert_eq!(lock[1].role, UiRole::Assistant);
         assert_eq!(lock[1].content, "answer");
+    }
+
+    #[test]
+    fn append_thinking_delta_emits_thinking_not_assistant() {
+        // ACP maps ThinkingDelta → AgentThoughtChunk; regressing to
+        // AssistantDelta would leak reasoning into the message stream.
+        let ui = Arc::new(Mutex::new(Vec::new()));
+        let mut thinking = Vec::new();
+        let mut assistant = 0;
+        super::append_thinking_delta(&ui, "why", &mut |ev| match ev {
+            ObserveEvent::ThinkingDelta { text } => thinking.push(text.to_string()),
+            ObserveEvent::AssistantDelta { .. } => assistant += 1,
+            _ => {}
+        });
+        assert_eq!(thinking, ["why"]);
+        assert_eq!(assistant, 0);
     }
 
     #[test]

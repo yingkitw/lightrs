@@ -183,6 +183,7 @@ impl ModelClient for LlmClient {
                           finish_reason: Option<String>,
                           usage: Option<TokenUsage>,
                           streamed_think: bool,
+                          streamed_content: bool,
                           on_apply: &mut (dyn FnMut(StreamApply) + Send)| {
                 self.dialect.adapt(&mut message);
                 message.normalize_tool_calls();
@@ -195,6 +196,15 @@ impl ModelClient for LlmClient {
                     && let Some(reasoning) = message.reasoning_content.clone()
                 {
                     on_apply(StreamApply::ReasoningDelta(reasoning));
+                }
+                // Same for reply text: the non-stream fallback never emits
+                // ContentDelta, so observers (TUI row, ACP chunks) would see
+                // nothing without this post-hoc apply.
+                if !streamed_content
+                    && let Some(text) = message.text_content()
+                    && !text.is_empty()
+                {
+                    on_apply(StreamApply::ContentDelta(text));
                 }
                 (message, finish_reason, usage)
             };
@@ -226,6 +236,7 @@ impl ModelClient for LlmClient {
                         finish_reason,
                         usage,
                         streamed_think,
+                        true,
                         on_apply,
                     ))
                 }
@@ -262,6 +273,7 @@ impl ModelClient for LlmClient {
                         choice.message,
                         choice.finish_reason,
                         response.usage,
+                        false,
                         false,
                         on_apply,
                     ))

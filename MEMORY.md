@@ -391,6 +391,15 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - `cargo llvm-cov --summary-only` uses *default* features — `acp/*` is invisible until `--features acp` (and `acp-v2` for v2). Measure feature-gated code separately or `--all-features` totals get diluted by untestable `Stdio` wiring.
 - ACP testable seam = the `Mutex<HashMap<SessionId, _>>` state machine (`AcpV1State`, `V2State`) — `#[tokio::test]` + fixture `AppConfig`; `make_agent` needs no network. The `Agent.v1().on_receive_request…connect_to(Stdio)` table is protocol-crate wiring — skip it, same class as the pty `run` loop.
 
+## ACP capability exposure (2026-11-16)
+
+- **`session/cancel` must signal, not delete** — the v1 handler originally ran `remove_session`, deleting state instead of interrupting work (protocol violation; next prompt dies "unknown session"). Right shape: per-session `Mutex<Option<watch::Sender<bool>>>` armed at prompt start, cleared on turn end; the handler sends `true` into the armed token → `run_user_turn_shared`'s cancel path interrupts HTTP/retry/shell → the prompt responds `StopReason::Cancelled`. `cancel_turn` on a missing/unarmed session is a no-op.
+- **Deltas are the single delivery channel** — the non-stream fallback never emitted `ContentDelta`, so ACP appended the whole `reply` at turn end (only delivery for fallback replies, **duplicate** for streamed ones — chunks accumulate in clients). Fix at the source: `send()`'s `finish` closure emits one post-hoc `ContentDelta` when `streamed_content=false` (mirrors the post-hoc `ReasoningDelta`); the v1 tail now just responds `EndTurn`, v2 drops its `chunk+AgentMessage` tail.
+- **Reasoning ≠ message text** — `ObserveEvent::ThinkingDelta` → `AgentThoughtChunk`, `AssistantDelta` → `AgentMessageChunk` (`engine::send_chunk(_, thought)`). `append_thinking_delta` used to emit `AssistantDelta`, leaking reasoning into the message stream; `append_thinking_delta_emits_thinking_not_assistant` guards it.
+- **Tool status**: `ToolStart` → `ToolCall`/`ToolCallUpdate(InProgress)`, `ToolEnd` → same id with `Completed`/`Failed` (`error`-prefixed bodies map to Failed). Sequential tool execution means a single `tool_index` counter stays correct.
+- **Errors**: v1 has no `error` stop reason → `responder.respond_with_error(Error::into_internal_error(&*e))`; v2 → `Idle(ErrorStopReason::new().error(schema::Error::internal_error().data(msg)))` plus a message chunk so the failure text stays visible.
+- **Commands**: `AvailableCommandsUpdate` sent on `session/new` (project + `~/.claude/commands`, project shadows); `engine::expand_slash` rewrites `/name args` prompts through `commands::load` before the turn — built-ins stay TUI-local.
+
 ## No hosted CI (owner decision, 2026-11-16)
 
 - lightrs deliberately runs **no GitHub Actions / hosted CI** — do not scaffold `.github/workflows`, CI badges, or status checks. Verification is local only: `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo build --release`. If binary-size regressions matter, check `stat -f%z target/release/lightrs` (macOS) locally.

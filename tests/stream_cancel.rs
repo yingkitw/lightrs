@@ -78,6 +78,42 @@ async fn cancel_interrupts_nonstream_fallback() {
 }
 
 #[tokio::test]
+async fn fallback_emits_post_hoc_content_delta() {
+    // Malformed SSE → non-stream retry. That reply never streams deltas, so
+    // `send` must emit one ContentDelta post-hoc — otherwise observers (ACP
+    // message chunks, the TUI bubble) show nothing for fallback replies.
+    let json = serde_json::json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "fallback reply"},
+            "finish_reason": "stop"
+        }]
+    })
+    .to_string();
+    let (url, _recorded) = serve_raw(vec![
+        http_resp(
+            "200 OK",
+            "content-type: text/event-stream\r\n",
+            "data: {not json\n\n",
+        ),
+        http_resp("200 OK", "content-type: application/json\r\n", &json),
+    ]);
+    let client = LlmClient::new(url, "k".into(), "m".into());
+    let (_tx, rx) = watch::channel(false);
+    let mut deltas = Vec::new();
+    let mut on_apply = |a: StreamApply| {
+        if let StreamApply::ContentDelta(t) = a {
+            deltas.push(t);
+        }
+    };
+    let (msg, _, _) = client
+        .send(request(), &mut on_apply, rx)
+        .await
+        .expect("fallback must succeed");
+    assert_eq!(deltas, ["fallback reply"]);
+    assert_eq!(msg.text_content().as_deref(), Some("fallback reply"));
+}
+
+#[tokio::test]
 async fn retry_after_header_is_honored() {
     // 429 + Retry-After: 1, then a good SSE reply — the retry must wait at
     // least the provider-stated second (default backoff is only 400ms).

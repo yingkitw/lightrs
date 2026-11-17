@@ -25,6 +25,11 @@ pub enum ObserveEvent<'a> {
     AssistantDelta {
         text: &'a str,
     },
+    /// Reasoning/thinking tokens — routed to the `[think]` UI row and to ACP
+    /// `AgentThoughtChunk`; never part of the assistant message.
+    ThinkingDelta {
+        text: &'a str,
+    },
     ToolStart {
         name: &'a str,
         arguments: &'a str,

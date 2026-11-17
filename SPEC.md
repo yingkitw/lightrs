@@ -9,8 +9,8 @@
 ## Modes
 
 - **TUI** — default (`lightrs` / `lightrs tui`)
-- **ACP v1** — `lightrs acp` (initialize, authenticate, session/new, session/prompt, session/cancel); requires `acp` feature (default)
-- **ACP v2** — `lightrs acp --protocol v2` (baseline session lifecycle, async prompt + `session/update`)
+- **ACP v1** — `lightrs acp` (initialize, authenticate, session/new, session/prompt, session/cancel); requires `acp` feature (default). Capability exposure: `AgentMessageChunk` streams assistant text, `AgentThoughtChunk` carries reasoning (`ObserveEvent::ThinkingDelta` — never mixed into message text), `ToolCall`/`ToolCallUpdate` reports `InProgress`→`Completed`/`Failed`, `AvailableCommandsUpdate` advertises project + user `.claude/commands` (`/name args` prompts expand through the same command table as the TUI), and `session/cancel` trips a `watch` token armed per turn — the in-flight request/tool dies, the prompt responds `StopReason::Cancelled`, and the session survives for the next prompt. Turn failures answer the request with a JSON-RPC error (v1 has no `error` stop reason)
+- **ACP v2** — `lightrs acp --protocol v2` — same exposure over the v2 update vocabulary (`AgentMessage`/`AgentThought` chunks keyed by message id, `ToolCallUpdate` status, `AvailableCommandsUpdate`, `CancelSessionNotification`); the turn tail reports `Idle` with `EndTurn` / `Cancelled` / `Error(ErrorStopReason)` — errors also emit a message chunk with the failure text. Reply deltas are the single delivery channel: the non-stream fallback emits one post-hoc `ContentDelta` in `send()`'s `finish`, so observers never need a "final reply" side-channel (prevents the double-send duplication)
 - **Import** — `lightrs import opencode` merges OpenCode JSON into `~/.config/lightrs/`; provider `options.apiKey` values (all mapped providers, `{env:VAR}` resolved) plus `~/.local/share/opencode/auth.json` `type:"api"` keys are carried into `[keys]` — explicit config keys win over auth.json
 - **Migrate** — `lightrs migrate` / `lightrs tui --auto-migrate` scans OpenCode, Claude Code, Codex, Aider
 

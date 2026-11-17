@@ -8,6 +8,7 @@ pub fn agent_events_from_observe(ev: ObserveEvent<'_>) -> Vec<AgentEvent> {
     match ev {
         ObserveEvent::ModelWait => vec![AgentEvent::Progress("calling model…".into())],
         ObserveEvent::AssistantDelta { .. } => vec![AgentEvent::Refresh],
+        ObserveEvent::ThinkingDelta { .. } => vec![AgentEvent::Refresh],
         ObserveEvent::ToolStart { name, .. } => vec![
             AgentEvent::Progress(format!("tool: {name}…")),
             AgentEvent::Refresh,
