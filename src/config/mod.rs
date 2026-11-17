@@ -189,7 +189,9 @@ impl AppConfig {
 
         let (allowlist, require_approval, test_command, format_command, heal_steps) =
             file::shell_from_files(project.as_ref(), file.as_ref());
-        let (mcp, lsp) = file::external_from_files(project.as_ref(), file.as_ref());
+        let external = file::external_from_files(project.as_ref(), file.as_ref());
+        let mut shell_policy = shell_policy_from_parts(allowlist, require_approval);
+        shell_policy.set_sandbox(external.sandbox.clone());
 
         Ok(Self {
             provider,
@@ -207,7 +209,7 @@ impl AppConfig {
             base_url,
             api_key,
             workdir,
-            shell_policy: shell_policy_from_parts(allowlist, require_approval),
+            shell_policy,
             test_command,
             format_command,
             read_only: flags.read_only,
@@ -223,8 +225,8 @@ impl AppConfig {
                         .collect()
                 })
                 .unwrap_or_default(),
-            mcp,
-            lsp,
+            mcp: external.mcp,
+            lsp: external.lsp,
         })
     }
 
@@ -242,7 +244,10 @@ impl AppConfig {
         let project = file::load_project_config_file(&self.workdir)?;
         let (allowlist, require_approval, test_command, format_command, heal_steps) =
             file::shell_from_files(project.as_ref(), file.as_ref());
-        self.shell_policy = shell_policy_from_parts(allowlist, require_approval);
+        let external = file::external_from_files(project.as_ref(), file.as_ref());
+        let mut policy = shell_policy_from_parts(allowlist, require_approval);
+        policy.set_sandbox(external.sandbox);
+        self.shell_policy = policy;
         self.test_command = test_command;
         self.format_command = format_command;
         self.heal_steps = heal_steps;

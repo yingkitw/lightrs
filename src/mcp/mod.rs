@@ -31,6 +31,8 @@ pub type McpSpecs = BTreeMap<String, String>;
 /// agent lock is never held across a server RPC (approval-class deadlock).
 pub struct McpManager {
     specs: McpSpecs,
+    sandbox: crate::tools::sandbox::SandboxCfg,
+    workdir: std::path::PathBuf,
     servers: HashMap<String, McpServer>,
 }
 
@@ -43,30 +45,29 @@ struct McpServer {
 }
 
 impl McpManager {
-    pub fn new(specs: McpSpecs) -> Self {
+    pub fn new(
+        specs: McpSpecs,
+        sandbox: crate::tools::sandbox::SandboxCfg,
+        workdir: std::path::PathBuf,
+    ) -> Self {
         Self {
             specs,
+            sandbox,
+            workdir,
             servers: HashMap::new(),
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.specs.is_empty()
-    }
-
-    /// Names for the system-prompt catalog line.
-    pub fn server_names(&self) -> Vec<String> {
-        self.specs.keys().cloned().collect()
-    }
-
     /// `tools/list` formatted for the model: `name — description` lines.
     pub async fn list_tools(&mut self, server: &str) -> Result<String> {
-        let srv = self.ensure(server).await?;
-        if srv.tools.is_empty() {
+        let tools = match self.ensure(server).await {
+            Ok(srv) => srv.tools.clone(),
+            Err(e) => return Err(e),
+        };
+        if tools.is_empty() {
             return Ok("no tools".into());
         }
-        Ok(srv
-            .tools
+        Ok(tools
             .iter()
             .map(|t| {
                 let name = t.get("name").and_then(Value::as_str).unwrap_or("?");
@@ -84,14 +85,23 @@ impl McpManager {
     }
 
     /// `tools/call` — joins text parts; `isError` results come back prefixed.
+    /// A failed RPC drops the server — next call respawns (same rule as LSP).
     pub async fn call(&mut self, server: &str, tool: &str, arguments: Value) -> Result<String> {
-        let srv = self.ensure(server).await?;
-        let result = srv
-            .rpc(
+        let result = {
+            let srv = self.ensure(server).await?;
+            srv.rpc(
                 "tools/call",
                 json!({"name": tool, "arguments": arguments}),
             )
-            .await?;
+            .await
+        };
+        let result = match result {
+            Ok(r) => r,
+            Err(e) => {
+                self.servers.remove(server);
+                return Err(e);
+            }
+        };
         let mut text = String::new();
         if let Some(content) = result.get("content").and_then(Value::as_array) {
             for part in content {
@@ -128,15 +138,25 @@ impl McpManager {
             .specs
             .get(server)
             .with_context(|| format!("unknown MCP server `{server}`"))?;
-        let srv = McpServer::spawn(command).await?;
+        let srv = McpServer::spawn(command, &self.sandbox, &self.workdir).await?;
         Ok(self.servers.entry(server.to_string()).or_insert(srv))
     }
 }
 
 impl McpServer {
-    async fn spawn(command: &str) -> Result<Self> {
-        let mut child = Command::new("sh")
-            .args(["-c", command])
+    async fn spawn(
+        command: &str,
+        sandbox: &crate::tools::sandbox::SandboxCfg,
+        workdir: &std::path::Path,
+    ) -> Result<Self> {
+        let (prog, argv) = crate::tools::sandbox::wrap_spawn(
+            sandbox,
+            workdir,
+            "sh",
+            &["-c".into(), command.to_string()],
+        )?;
+        let mut child = Command::new(prog)
+            .args(&argv)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -323,7 +343,11 @@ done
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let cmd = fake_server(&dir);
-        let mut mgr = McpManager::new(BTreeMap::from([("fake".to_string(), cmd)]));
+        let mut mgr = McpManager::new(
+            BTreeMap::from([("fake".to_string(), cmd)]),
+            crate::tools::sandbox::SandboxCfg::default(),
+            dir.clone(),
+        );
         let tools = mgr.list_tools("fake").await.unwrap();
         assert!(tools.contains("echo"), "{tools}");
         let out = mgr.call("fake", "echo", json!({})).await.unwrap();
@@ -333,8 +357,49 @@ done
 
     #[tokio::test]
     async fn unknown_server_errors() {
-        let mut mgr = McpManager::new(BTreeMap::new());
+        let mut mgr = McpManager::new(
+            BTreeMap::new(),
+            crate::tools::sandbox::SandboxCfg::default(),
+            std::path::PathBuf::new(),
+        );
         let err = mgr.call("nope", "x", json!({})).await.unwrap_err();
         assert!(format!("{err:#}").contains("unknown MCP server"));
+    }
+
+    /// Server that answers init+list then exits — the next RPC fails and the
+    /// dead entry must drop so the *following* call respawns.
+    #[tokio::test]
+    async fn dead_server_drops_and_respawns() {
+        let dir = std::env::temp_dir().join(format!("lightrs-mcp-dead-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("short-lived.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+IFS= read -r l1
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"s","version":"1"}}}'
+IFS= read -r l2
+IFS= read -r l3
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"echo"}]}}'
+exit 0
+"#,
+        )
+        .unwrap();
+        let mut mgr = McpManager::new(
+            BTreeMap::from([(
+                "s".to_string(),
+                format!("sh {}", script.display()),
+            )]),
+            crate::tools::sandbox::SandboxCfg::default(),
+            dir.clone(),
+        );
+        // tools/call hits a dead pipe → error + drop.
+        assert!(mgr.call("s", "echo", json!({})).await.is_err());
+        assert!(!mgr.servers.contains_key("s"), "dead server must drop");
+        // Next call respawns and works again.
+        let tools = mgr.list_tools("s").await.unwrap();
+        assert!(tools.contains("echo"), "{tools}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

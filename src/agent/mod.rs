@@ -189,6 +189,8 @@ impl Agent {
             agent.mcp_names = cfg.mcp.keys().cloned().collect();
             agent.mcp = Some(Arc::new(tokio::sync::Mutex::new(crate::mcp::McpManager::new(
                 cfg.mcp.clone(),
+                cfg.shell_policy.sandbox().clone(),
+                cfg.workdir.clone(),
             ))));
             agent.ensure_system_prompt();
         }
@@ -196,6 +198,7 @@ impl Agent {
             agent.lsp = Some(Arc::new(tokio::sync::Mutex::new(crate::lsp::LspManager::new(
                 cfg.lsp.clone(),
                 cfg.workdir.clone(),
+                cfg.shell_policy.sandbox().clone(),
             ))));
         }
         agent

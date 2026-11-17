@@ -38,6 +38,7 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
     ("src/tools/todo.rs", "todo"),
     ("src/mcp/mod.rs", "mcp"),
     ("src/lsp/mod.rs", "lsp"),
+    ("src/tools/sandbox.rs", "sandbox"),
     ("src/tui/highlight/markdown.rs", "markdown"),
     ("src/tui/highlight/syntect.rs", "syntect"),
     ("src/tui/highlight/diff.rs", "highlight/diff"),

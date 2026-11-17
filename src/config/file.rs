@@ -28,6 +28,19 @@ pub(crate) struct FileConfig {
     pub mcp: Option<std::collections::BTreeMap<String, FileMcp>>,
     /// `[lsp.<lang>]` — stdio language servers; same overlay policy as mcp.
     pub lsp: Option<std::collections::BTreeMap<String, FileLsp>>,
+    /// `[sandbox]` — OS confinement for spawned children.
+    pub sandbox: Option<FileSandbox>,
+}
+
+/// `[sandbox]` — `on`/`network` apply from the GLOBAL file only; a project
+/// overlay may add `writable` roots but can never weaken confinement.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct FileSandbox {
+    #[serde(default)]
+    pub on: bool,
+    pub network: Option<bool>,
+    #[serde(default)]
+    pub writable: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,27 +160,47 @@ pub(crate) fn shell_from_files<'a>(
     .unwrap_or((Vec::new(), false, None, None, 3))
 }
 
-/// Effective `[mcp]`/`[lsp]` — project entries merge over global (same-name
-/// wins), matching how `[shell]` overlays compose.
+/// Effective external-server + sandbox config, merged from both files.
+pub(crate) struct ExternalConfig {
+    pub mcp: crate::mcp::McpSpecs,
+    pub lsp: crate::lsp::LspSpecs,
+    pub sandbox: crate::tools::sandbox::SandboxCfg,
+}
+
+/// `[mcp]`/`[lsp]` entries merge (same-name project wins). `[sandbox]` is
+/// asymmetric on purpose: `on`/`network` come from the GLOBAL file only — a
+/// project file may add `writable` roots but never weaken confinement.
 pub(crate) fn external_from_files(
     project: Option<&FileConfig>,
     global: Option<&FileConfig>,
-) -> (crate::mcp::McpSpecs, crate::lsp::LspSpecs) {
-    let mut mcp = crate::mcp::McpSpecs::new();
-    let mut lsp = crate::lsp::LspSpecs::new();
-    for src in [global, project].into_iter().flatten() {
+) -> ExternalConfig {
+    let mut cfg = ExternalConfig {
+        mcp: crate::mcp::McpSpecs::new(),
+        lsp: crate::lsp::LspSpecs::new(),
+        sandbox: crate::tools::sandbox::SandboxCfg::default(),
+    };
+    for (src, is_global) in [(global, true), (project, false)] {
+        let Some(src) = src else { continue };
         if let Some(m) = &src.mcp {
             for (name, s) in m {
-                mcp.insert(name.clone(), s.command.clone());
+                cfg.mcp.insert(name.clone(), s.command.clone());
             }
         }
         if let Some(m) = &src.lsp {
             for (name, s) in m {
-                lsp.insert(name.clone(), (s.command.clone(), s.extensions.clone()));
+                cfg.lsp
+                    .insert(name.clone(), (s.command.clone(), s.extensions.clone()));
             }
         }
+        if let Some(s) = &src.sandbox {
+            if is_global {
+                cfg.sandbox.on = s.on;
+                cfg.sandbox.network = s.network.unwrap_or(true);
+            }
+            cfg.sandbox.writable.extend(s.writable.iter().cloned());
+        }
     }
-    (mcp, lsp)
+    cfg
 }
 
 pub fn load_tui_theme() -> Option<String> {
@@ -309,11 +342,39 @@ command = "local-server"
 "#,
         )
         .unwrap();
-        let (mcp, lsp) = external_from_files(Some(&project), Some(&global));
-        assert_eq!(mcp["docs"], "project-docs");
-        assert_eq!(mcp["local"], "local-server");
-        assert_eq!(lsp["rust"].0, "rust-analyzer");
-        assert_eq!(lsp["rust"].1, vec!["rs".to_string()]);
+        let cfg = external_from_files(Some(&project), Some(&global));
+        assert_eq!(cfg.mcp["docs"], "project-docs");
+        assert_eq!(cfg.mcp["local"], "local-server");
+        assert_eq!(cfg.lsp["rust"].0, "rust-analyzer");
+        assert_eq!(cfg.lsp["rust"].1, vec!["rs".to_string()]);
+    }
+
+    #[test]
+    fn project_can_add_writable_but_never_weaken_sandbox() {
+        let global: FileConfig = toml::from_str(
+            r#"
+[sandbox]
+on = true
+network = false
+writable = ["~/.cargo"]
+"#,
+        )
+        .unwrap();
+        // A project overlay trying to turn confinement OFF must lose.
+        let project: FileConfig = toml::from_str(
+            r#"
+[sandbox]
+on = false
+network = true
+writable = ["~/.npm"]
+"#,
+        )
+        .unwrap();
+        let cfg = external_from_files(Some(&project), Some(&global));
+        assert!(cfg.sandbox.on, "project cannot disable sandbox");
+        assert!(!cfg.sandbox.network, "project cannot re-enable network");
+        assert!(cfg.sandbox.writable.contains(&"~/.cargo".to_string()));
+        assert!(cfg.sandbox.writable.contains(&"~/.npm".to_string()));
     }
 
     #[test]

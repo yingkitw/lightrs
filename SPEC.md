@@ -16,10 +16,9 @@
 
 ## Non-goals (v0.1)
 
-- In-process MCP server — `lightrs import opencode` writes `~/.config/lightrs/mcp.json` only; no stdio MCP host in the agent loop yet
-- LSP, full regex/ripgrep parity, multi-agent orchestration
-- Sandboxed containers for shell execution
+- Full regex/ripgrep parity, multi-agent orchestration beyond depth-1 `spawn_agent`
 - Side-by-side or inline patched diff editor (unified diff in transcript only)
+- Windows sandbox backend, container/VM isolation, MCP transports beyond stdio, LSP features beyond navigation (no workspace edits, diagnostics pull, or rename)
 
 ## User interface
 
@@ -158,6 +157,19 @@ require_approval = true
 When `require_approval` is true, the TUI prompts **y/n** before `run_command`, except **likely read-only** commands (`ls`, `git status`, `cargo check`, …) auto-run (`tools/shell_readonly.rs`; deny list still wins; `KEY=val` env prefixes are peeled before classifying). When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command(s) and other keys are ignored.
 
 **Batched**: all `run_command` calls in one model step that need approval are collected into a **single** prompt (up to 3 command lines shown + `… +n more`); **y** approves every command in the step, **n** denies all. Read-only calls in the same step still auto-run. **ACP / headless** auto-runs the same read-only set; other commands fail closed without a TUI.
+
+### OS sandbox for spawned commands
+
+```toml
+[sandbox]
+on = true                                  # default false
+writable = ["~/.cargo", "~/.rustup", "~/.npm"]  # extra writable roots (toolchain caches)
+network = true                             # default true; false closes the exfil path
+```
+
+When `on`, every spawned child — `run_command`, `format`/`test` hooks, `[mcp.*]`/`[lsp.*]` servers — runs confined: **workspace-write** semantics (writes allowed only under the workdir + tmp + `writable` roots; read/exec everywhere; network per the flag). Backends: `sandbox-exec` (seatbelt) on macOS, `bwrap` on Linux; **fail-closed** when enabled with no backend. File tools are *not* sandboxed — they're already confined in-process by `validate_work_path` (the agent itself must write sessions/config outside workdir, so process-wide jails don't apply). Honest limit: network-on confinement stops destructive writes but not exfiltration of readable files — set `network = false` for that.
+
+**Overlay rule**: `on`/`network` are GLOBAL-only — a project `[sandbox]` may add `writable` roots but can never weaken confinement (same redirect-attack class as `endpoints`).
 
 ### MCP servers
 

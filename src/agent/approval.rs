@@ -144,10 +144,31 @@ pub(crate) async fn spawn_agent_outcome(
 ) -> ToolOutcome {
     let parsed: Result<SpawnAgentArgs> =
         serde_json::from_str(args).context("parse spawn_agent JSON");
-    let (client, policy, depth, parent_read_only) = {
+    let (
+        client,
+        fallback,
+        weak,
+        heal,
+        fmt,
+        catalog,
+        mcp,
+        lsp,
+        mcp_names,
+        policy,
+        depth,
+        parent_read_only,
+    ) = {
         let g = parent.lock().await;
         (
             g.client.clone(),
+            g.fallback_client.clone(),
+            g.weak_model.clone(),
+            g.heal.clone(),
+            g.format_cmd.clone(),
+            g.skill_catalog.clone(),
+            g.mcp.clone(),
+            g.lsp.clone(),
+            g.mcp_names.clone(),
             g.shell_policy.clone(),
             g.depth,
             g.read_only,
@@ -165,10 +186,25 @@ pub(crate) async fn spawn_agent_outcome(
     };
     let mut child =
         super::Agent::new_shared(client, std::sync::Arc::from(workdir), policy, depth + 1);
+    // Inherit the model-layer + hook settings so "same tools" is honest:
+    // without fallback the child dies where the parent recovers; without
+    // format/heal its writes skip the project's checks.
+    child.fallback_client = fallback;
+    child.weak_model = weak;
+    child.heal = heal;
+    child.format_cmd = fmt;
+    child.skill_catalog = catalog;
+    // Shared managers: the child hits the same server processes — the mutex
+    // serializes access and no second spawn is needed.
+    child.mcp = mcp;
+    child.lsp = lsp;
+    child.mcp_names = mcp_names;
     // Plan mode inherits: a writable child would bypass the parent's mode.
     if a.read_only || parent_read_only {
         child.set_read_only(true);
     }
+    // Rebuild the prompt so the inherited catalog + mode are visible.
+    child.ensure_system_prompt();
     let child = std::sync::Arc::new(tokio::sync::Mutex::new(child));
     // Boxed: spawn_agent → run_user_turn → spawn_agent is async recursion.
     let fut = Box::pin(super::Agent::run_user_turn_shared(
@@ -338,6 +374,60 @@ mod tests {
                 .unwrap_or_default()
                 .contains("child task")
         }));
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_inherits_fallback_client() {
+        use crate::provider::MockModel;
+        let tool_call_msg = crate::chat::ApiMessage {
+            role: crate::chat::ApiRole::Assistant,
+            content: None,
+            tool_calls: Some(vec![ToolCall {
+                id: "s1".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "spawn_agent".into(),
+                    arguments: r#"{"prompt":"child task"}"#.into(),
+                },
+            }]),
+            tool_call_id: None,
+            name: None,
+            reasoning_content: None,
+        };
+        // Primary serves: parent's spawn call, an ERROR for the child's first
+        // request, then the parent's final reply.
+        let primary = std::sync::Arc::new(MockModel::new(
+            "m",
+            vec![
+                Ok((tool_call_msg, Some("tool_calls".into()), None)),
+                Err(anyhow::anyhow!("primary down")),
+                Ok(text_reply("parent final")),
+            ],
+        ));
+        // Fallback serves the child's rescued request — only reachable if the
+        // child actually inherited it.
+        let fallback = std::sync::Arc::new(MockModel::text("fb", "child answer"));
+        let parent = {
+            let mut a = crate::agent::Agent::new_shared(
+                primary.clone(),
+                std::sync::Arc::from(std::path::Path::new(".")),
+                ShellPolicy::default(),
+                0,
+            );
+            a.fallback_client = Some(fallback.clone());
+            std::sync::Arc::new(tokio::sync::Mutex::new(a))
+        };
+        let (_tx, rx) = watch::channel(false);
+        let reply =
+            crate::agent::Agent::run_user_turn_shared(parent, "go".into(), |_| {}, rx, None)
+                .await
+                .unwrap();
+        assert_eq!(reply, "parent final");
+        assert_eq!(
+            fallback.requests.lock().unwrap().len(),
+            1,
+            "child turn must fall back to the inherited client"
+        );
     }
 
     #[tokio::test]

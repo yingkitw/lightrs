@@ -142,7 +142,7 @@ Compared 2026-11-16 against Claude Code, Codex CLI, OpenCode, and pi — ✅ shi
 | Web fetch | ✅ | ✅ | ✅ | ✅ | ext |
 | MCP / sub-agents / LSP | ✅ (stdio, lean) | ✅ | ◐/—/— | ✅ | ext |
 | Plan/read-only mode | ✅ `/plan` `--read-only` | ✅ | ✅ | ✅ | ext |
-| OS sandbox | — | ✅ | ✅ | — | — |
+| OS sandbox | ✅ (seatbelt/bwrap) | ✅ | ✅ | — | — |
 | Fork/branch session | ✅ `/fork` `/resume` | ✅ | — | ✅ | ✅ |
 | Context mgmt | wire window + compact + ctx % | compact | compact | ✅ | ext |
 | Fallback + weak-model routing | ✅ unique | — | — | ◐ | ext |
@@ -152,4 +152,4 @@ Compared 2026-11-16 against Claude Code, Codex CLI, OpenCode, and pi — ✅ shi
 
 **Gaps worth adopting** (ranked in TODO brainstorm): all adopted — `web_fetch`, plan mode, `/fork` + `/resume`, `[shell].format_command`, turn-end bell, `--output-schema`, `ask_user`.
 
-**Deliberate non-goals**: OS sandbox, hooks, keyring, worktrees, semantic index, tree-sitter, plugins, vim mode, image input, share links. (MCP/sub-agents/LSP graduated from this list — see the lean implementations above.)
+**Deliberate non-goals**: hooks, keyring, worktrees, semantic index, tree-sitter, plugins, vim mode, image input, share links. (MCP/sub-agents/LSP/OS-sandbox graduated from this list — see the lean implementations above.)

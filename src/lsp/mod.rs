@@ -32,6 +32,7 @@ pub type LspSpecs = BTreeMap<String, (String, Vec<String>)>;
 pub struct LspManager {
     specs: LspSpecs,
     workdir: PathBuf,
+    sandbox: crate::tools::sandbox::SandboxCfg,
     servers: HashMap<String, LspServer>,
 }
 
@@ -43,19 +44,23 @@ struct LspServer {
     language_id: String,
     /// Docs we've `didOpen`ed — later syncs go out as full-text `didChange`.
     open: HashSet<PathBuf>,
+    /// Document version for `didChange` (per-server, monotonic — servers only
+    /// require that versions increase per doc).
+    doc_version: u64,
 }
 
 impl LspManager {
-    pub fn new(specs: LspSpecs, workdir: PathBuf) -> Self {
+    pub fn new(
+        specs: LspSpecs,
+        workdir: PathBuf,
+        sandbox: crate::tools::sandbox::SandboxCfg,
+    ) -> Self {
         Self {
             specs,
             workdir,
+            sandbox,
             servers: HashMap::new(),
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.specs.is_empty()
     }
 
     /// lang name OR a file extension → language key.
@@ -78,7 +83,7 @@ impl LspManager {
             .specs
             .get(lang)
             .with_context(|| format!("no [lsp.{lang}] configured"))?;
-        let srv = LspServer::spawn(command, lang, &self.workdir).await?;
+        let srv = LspServer::spawn(command, lang, &self.workdir, &self.sandbox).await?;
         Ok(self.servers.entry(lang.to_string()).or_insert(srv))
     }
 
@@ -95,11 +100,7 @@ impl LspManager {
             let srv = self.ensure(lang).await?;
             async {
                 srv.sync_doc(path).await?;
-                srv.rpc(
-                    method,
-                    json!({"textDocument": {"uri": uri(path)}}).merge(extra),
-                )
-                .await
+                srv.rpc(method, with_doc(path, extra)).await
             }
             .await
         };
@@ -110,44 +111,37 @@ impl LspManager {
     }
 
     async fn document_symbols(&mut self, lang: &str, path: &Path) -> Result<Value> {
-        let result = {
-            let srv = self.ensure(lang).await?;
-            async {
-                srv.sync_doc(path).await?;
-                srv.rpc(
-                    "textDocument/documentSymbol",
-                    json!({"textDocument": {"uri": uri(path)}}),
-                )
-                .await
-            }
+        self.request(lang, path, "textDocument/documentSymbol", json!({}))
             .await
-        };
-        if result.is_err() {
-            self.servers.remove(lang);
-        }
-        result
     }
 }
 
-trait Merge {
-    fn merge(self, extra: Value) -> Value;
-}
-
-impl Merge for Value {
-    fn merge(mut self, extra: Value) -> Value {
-        if let (Some(a), Some(b)) = (self.as_object_mut(), extra.as_object()) {
-            for (k, v) in b {
-                a.insert(k.clone(), v.clone());
-            }
-        }
-        self
+/// Insert `textDocument.uri` into the request params.
+fn with_doc(path: &Path, mut params: Value) -> Value {
+    if let Some(obj) = params.as_object_mut() {
+        obj.insert(
+            "textDocument".into(),
+            json!({"uri": uri(path)}),
+        );
     }
+    params
 }
 
 impl LspServer {
-    async fn spawn(command: &str, language_id: &str, workdir: &Path) -> Result<Self> {
-        let mut child = Command::new("sh")
-            .args(["-c", command])
+    async fn spawn(
+        command: &str,
+        language_id: &str,
+        workdir: &Path,
+        sandbox: &crate::tools::sandbox::SandboxCfg,
+    ) -> Result<Self> {
+        let (prog, argv) = crate::tools::sandbox::wrap_spawn(
+            sandbox,
+            workdir,
+            "sh",
+            &["-c".into(), command.to_string()],
+        )?;
+        let mut child = Command::new(prog)
+            .args(&argv)
             .current_dir(workdir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -164,6 +158,7 @@ impl LspServer {
             next_id: 0,
             language_id: language_id.to_string(),
             open: HashSet::new(),
+            doc_version: 0,
         };
         srv.rpc(
             "initialize",
@@ -189,7 +184,19 @@ impl LspServer {
     /// didOpen once, then full-text didChange — keeps the server current with
     /// whatever write/edit tools did since last touch.
     async fn sync_doc(&mut self, path: &Path) -> Result<()> {
-        let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        // Bounded at the source: metadata size + `take` — a large file can
+        // never load whole before the cap applies.
+        let file = std::fs::File::open(path).with_context(|| format!("read {}", path.display()))?;
+        let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if size > DOC_MAX {
+            bail!(
+                "{} too large for LSP sync ({size} B > {DOC_MAX} B)",
+                path.display()
+            );
+        }
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::Read::take(file, DOC_MAX + 1), &mut text)
+            .with_context(|| format!("read {}", path.display()))?;
         if text.len() as u64 > DOC_MAX {
             bail!("{} too large for LSP sync (>{DOC_MAX} B)", path.display());
         }
@@ -203,10 +210,11 @@ impl LspServer {
             )
             .await
         } else {
+            self.doc_version += 1;
             self.notify(
                 "textDocument/didChange",
                 json!({
-                    "textDocument": {"uri": uri(path), "version": self.next_id + 1},
+                    "textDocument": {"uri": uri(path), "version": self.doc_version},
                     "contentChanges": [{"text": text}],
                 }),
             )
@@ -446,8 +454,10 @@ pub async fn call_outcome(
         match parsed {
             Err(e) => format!("error: {e:#}"),
             Ok(a) => {
-                let path = crate::config::validate_work_path(&workdir, Path::new(&a.path))
-                    .unwrap_or_else(|_| workdir.join(&a.path));
+                let path = match crate::config::validate_work_path(&workdir, Path::new(&a.path)) {
+                    Ok(p) => p,
+                    Err(e) => return format!("error: {e:#}"),
+                };
                 let hint = a
                     .path
                     .rsplit('.')
@@ -527,6 +537,7 @@ mod tests {
                 ("rust-analyzer".to_string(), vec!["rs".to_string()]),
             )]),
             PathBuf::from("/w"),
+            crate::tools::sandbox::SandboxCfg::default(),
         );
         assert_eq!(m.resolve_lang("rs"), Some("rust".to_string()));
         assert_eq!(m.resolve_lang("rust"), Some("rust".to_string()));
@@ -583,6 +594,55 @@ done
     }
 
     #[tokio::test]
+    async fn lsp_rejects_paths_outside_workdir() {
+        let outer = std::env::temp_dir().join(format!("lightrs-lsp-outer-{}", std::process::id()));
+        let dir = outer.join("w");
+        let _ = std::fs::remove_dir_all(&outer);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(outer.join("secret.rs"), "fn hidden() {}\n").unwrap();
+        let mgr = LspManager::new(
+            BTreeMap::from([(
+                "rust".to_string(),
+                ("true".to_string(), vec!["rs".to_string()]),
+            )]),
+            dir.clone(),
+            crate::tools::sandbox::SandboxCfg::default(),
+        );
+        // `../` escape must hit validation, never the server.
+        let agent = {
+            let mut a = crate::agent::Agent::new(
+                crate::provider::MockModel::text("m", "x"),
+                Arc::from(dir.as_path()),
+                crate::tools::ShellPolicy::default(),
+            );
+            a.lsp = Some(Arc::new(Mutex::new(mgr)));
+            Arc::new(Mutex::new(a))
+        };
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let out = call_outcome(
+            &agent,
+            &dir,
+            r#"{"op":"hover","path":"../secret.rs","line":1}"#,
+            &rx,
+        )
+        .await;
+        assert!(out.body.starts_with("error:"), "{}", out.body);
+        assert!(!out.body.contains("hidden"), "{}", out.body);
+        // And an absolute outside path must fail the same way — Path::join
+        // with an absolute arg returns it verbatim, so a naive fallback
+        // escapes the sandbox.
+        let out = call_outcome(
+            &agent,
+            &dir,
+            &format!(r#"{{"op":"hover","path":"{}","line":1}}"#, outer.join("secret.rs").display()),
+            &rx,
+        )
+        .await;
+        assert!(out.body.starts_with("error:"), "{}", out.body);
+        let _ = std::fs::remove_dir_all(&outer);
+    }
+
+    #[tokio::test]
     async fn lsp_definition_round_trips_over_stdio() {
         let dir = std::env::temp_dir().join(format!("lightrs-lsp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -595,6 +655,7 @@ done
                 (cmd, vec!["rs".to_string()]),
             )]),
             dir.clone(),
+            crate::tools::sandbox::SandboxCfg::default(),
         );
         let out = mgr
             .request(

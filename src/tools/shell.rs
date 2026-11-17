@@ -34,9 +34,16 @@ pub fn run_command(
         );
     }
     let timeout = args.timeout_secs.unwrap_or(120).min(600);
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c")
-        .arg(&args.command)
+    // OS sandbox wraps the spawn when [sandbox].on — covers run_command and
+    // the fmt/heal hooks (all funnel here). Fail-closed when backend missing.
+    let (prog, argv) = super::sandbox::wrap_spawn(
+        policy.sandbox(),
+        workdir,
+        "sh",
+        &["-c".into(), args.command.clone()],
+    )?;
+    let mut cmd = Command::new(prog);
+    cmd.args(&argv)
         .current_dir(workdir)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());

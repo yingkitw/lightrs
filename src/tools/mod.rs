@@ -7,6 +7,7 @@ mod glob_pattern;
 mod glob_search;
 mod grep;
 pub(crate) mod injection;
+pub(crate) mod sandbox;
 mod json_repair;
 mod multi_edit;
 pub(crate) mod redact;

@@ -20,6 +20,7 @@ tools/                  schemas, fs/shell/grep, diff (similar), ToolOutcome, tod
                         redact (secrets), injection (prompt-injection scan on tool output)
 mcp/                    stdio MCP client — newline JSON-RPC, lazy spawn, `mcp_call` tool
 lsp/                    stdio LSP client — Content-Length framed, didOpen/didChange sync, `lsp` tool
+tools/sandbox.rs        `[sandbox]` — seatbelt/bwrap wrap around every spawned child (workspace-write)
 opencode/, migrate/    Import + auto-migrate scanners
 acp/                    Optional ACP v1/v2 server (feature `acp`)
 tui/

@@ -2,6 +2,8 @@
 pub struct ShellPolicy {
     prefixes: Vec<String>,
     require_approval: bool,
+    /// `[sandbox]` — OS confinement for spawned children (seatbelt/bwrap).
+    sandbox: super::sandbox::SandboxCfg,
 }
 
 impl ShellPolicy {
@@ -13,6 +15,7 @@ impl ShellPolicy {
                 .filter(|s| !s.is_empty())
                 .collect(),
             require_approval,
+            sandbox: super::sandbox::SandboxCfg::default(),
         }
     }
 
@@ -45,6 +48,14 @@ impl ShellPolicy {
 
     pub fn allowlist(&self) -> &[String] {
         &self.prefixes
+    }
+
+    pub fn sandbox(&self) -> &super::sandbox::SandboxCfg {
+        &self.sandbox
+    }
+
+    pub fn set_sandbox(&mut self, sandbox: super::sandbox::SandboxCfg) {
+        self.sandbox = sandbox;
     }
 }
 

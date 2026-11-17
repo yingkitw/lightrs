@@ -38,6 +38,14 @@ workdir = "."               # agent file/shell scope
 # enabled = true
 # paths = ["/extra/skill/root"]
 
+# Optional: OS sandbox for spawned commands (run_command, format/test hooks,
+# [mcp.*]/[lsp.*] servers) — macOS seatbelt, Linux bwrap, fail-closed if no
+# backend. File tools are already workdir-scoped in-process.
+# [sandbox]
+# on = true                                     # default false
+# writable = ["~/.cargo", "~/.rustup", "~/.npm"]  # toolchain caches that need writes
+# network = true                                # false = no outbound net for spawned commands
+
 # Optional: stdio MCP servers — spawned lazily on first `mcp_call` (newline
 # JSON-RPC; omit `tool` in mcp_call args to list a server's tools first).
 # [mcp.filesystem]
