@@ -8,7 +8,9 @@ mod workdir_context;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-pub use context::tokens::{ContextBreakdown, TokenStats, TokenSummary, context_usage_text};
+pub use context::tokens::{
+    ContextBreakdown, TokenStats, TokenSummary, context_compact_text, context_usage_text,
+};
 
 use crate::chat::{ApiMessage, ApiRole, UiMessage, UiRole};
 use crate::session::SessionFile;
@@ -74,6 +76,11 @@ pub struct Agent {
     pub(crate) context_warned_above: u32,
     /// `@` / `$` expansion for the in-flight user turn only (not persisted in `api_history`).
     pub(crate) active_user_expansion: Option<String>,
+    /// `$skill` ids attached for the current/latest turn — surfaced in the
+    /// status bar and a `[sys]` transcript note.
+    pub(crate) turn_skills: Vec<String>,
+    /// Files written by write/edit tools this session (diff paths, sorted).
+    pub(crate) changed_files: std::collections::BTreeSet<String>,
     pub(crate) heal: Option<HealSetting>,
     /// Heal runs so far this user turn (reset in `begin_user_turn`).
     pub(crate) heal_ran: u32,
@@ -107,6 +114,8 @@ impl Agent {
             skill_catalog,
             context_warned_above: 0,
             active_user_expansion: None,
+            turn_skills: Vec::new(),
+            changed_files: std::collections::BTreeSet::new(),
             heal: None,
             heal_ran: 0,
             wire_window_noted: false,
@@ -185,6 +194,14 @@ impl Agent {
             }
         }
         helpers::trim_ui_history(&self.ui_history);
+        // Rebuild the changed-files indicator from persisted diff rows.
+        self.changed_files = self
+            .ui_history
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m.file_diff.as_ref().map(|d| d.path.clone()))
+            .collect();
         self.token_stats = saved.token_stats;
         self.refresh_context_estimate();
     }
@@ -257,6 +274,16 @@ impl Agent {
             .lock()
             .unwrap()
             .push(UiMessage::with_role(UiRole::System, content));
+    }
+
+    /// `$skill` ids attached for the current/latest user turn.
+    pub fn turn_skills(&self) -> &[String] {
+        &self.turn_skills
+    }
+
+    /// Sorted paths written by write/edit tools this session.
+    pub fn changed_files(&self) -> impl Iterator<Item = &String> {
+        self.changed_files.iter()
     }
 
     pub fn push_error(&mut self, content: impl Into<String>) {
@@ -363,6 +390,8 @@ impl Agent {
         ));
         drop(ui);
         self.token_stats = TokenStats::default();
+        self.turn_skills.clear();
+        self.changed_files.clear();
         self.context_warned_above = 0;
         self.wire_window_noted = false;
         self.refresh_context_estimate();
@@ -554,6 +583,33 @@ mod streaming_tests {
                 .iter()
                 .all(|m| m.role != UiRole::User)
         );
+    }
+
+    #[test]
+    fn restore_session_rebuilds_changed_files() {
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let mut agent = Agent::new(client, Arc::from(Path::new(".")), ShellPolicy::default());
+        let mut diff_row = UiMessage::tool_result("write_file", "{}", "wrote", None);
+        diff_row.file_diff = Some(crate::chat::FileDiffUi {
+            path: "src/x.rs".into(),
+            unified: String::new(),
+            lines_added: 1,
+            lines_removed: 0,
+            is_new_file: false,
+        });
+        let saved = crate::session::SessionFile {
+            version: 1,
+            workdir: std::path::PathBuf::from("."),
+            api_history: vec![ApiMessage::user("u")],
+            ui_history: vec![
+                UiMessage::with_role(UiRole::User, "u"),
+                diff_row,
+            ],
+            token_stats: Default::default(),
+        };
+        agent.restore_session(saved);
+        let files: Vec<&String> = agent.changed_files().collect();
+        assert_eq!(files, ["src/x.rs"]);
     }
 
     #[test]

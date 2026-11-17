@@ -26,7 +26,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, agent: &Agent) {
     chrome::draw_header(frame, chunks[0], app, agent, header_rows);
     transcript::draw_transcript(frame, chunks[1], agent, app);
     let input_area = chrome::draw_input(frame, chunks[2], app);
-    chrome::draw_status(frame, chunks[3], app);
+    chrome::draw_status(frame, chunks[3], app, agent);
 
     if app.state == RunState::Ready {
         chrome::place_input_cursor(frame, input_area, app);
@@ -150,5 +150,22 @@ mod tests {
         let text = draw_text(&mut app, &agent, 80, 24);
         assert!(text.contains("f.rs"), "diff path missing:\n{text}");
         assert!(text.contains("+4"), "add count missing:\n{text}");
+    }
+
+    #[test]
+    fn status_bar_shows_ctx_files_and_skills() {
+        let (mut app, mut agent) = fixture();
+        agent.changed_files.insert("src/a.rs".into());
+        agent.changed_files.insert("src/b.rs".into());
+        agent.turn_skills = vec!["lean".into()];
+        let text = draw_text(&mut app, &agent, 100, 24);
+        assert!(text.contains("ctx"), "ctx label missing:\n{text}");
+        assert!(text.contains("Δ src/a.rs, src/b.rs"), "files missing:\n{text}");
+        assert!(text.contains("$lean"), "skill missing:\n{text}");
+
+        // Busy keeps the same indicators next to the spinner label.
+        app.set_busy();
+        let busy = draw_text(&mut app, &agent, 100, 24);
+        assert!(busy.contains("ctx") && busy.contains("Δ"), "busy:\n{busy}");
     }
 }

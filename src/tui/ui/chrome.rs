@@ -141,13 +141,43 @@ fn input_cursor_at_end(input: &str) -> (usize, usize) {
     (row, col)
 }
 
-pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
+pub fn draw_status(frame: &mut Frame, area: Rect, app: &App, agent: &Agent) {
     let style = if app.state == RunState::Busy {
         theme::busy()
     } else if !app.status.is_empty() {
         theme::error()
     } else {
         theme::hint()
+    };
+    // Always-on session indicators: context estimate, files changed by
+    // write/edit tools this session, and `$skill`s attached to the latest turn.
+    let ctx = crate::agent::context_compact_text(
+        agent.token_summary(),
+        crate::config::model_context_window(&app.config.model),
+    );
+    let changed: Vec<&String> = agent.changed_files().collect();
+    let files = if changed.is_empty() {
+        String::new()
+    } else {
+        let shown: Vec<&str> = changed.iter().take(2).map(|s| s.as_str()).collect();
+        let more = changed.len().saturating_sub(2);
+        let list = if more > 0 {
+            format!("{} +{more}", shown.join(", "))
+        } else {
+            shown.join(", ")
+        };
+        format!(" · Δ {list}")
+    };
+    let skills = if agent.turn_skills().is_empty() {
+        String::new()
+    } else {
+        let ids = agent
+            .turn_skills()
+            .iter()
+            .map(|id| format!("${id}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(" · {ids}")
     };
     let hint = if app.state == RunState::Ready {
         if let Some(slash) = slash_command_hint(&app.input, &app.commands) {
@@ -166,5 +196,9 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         format!("{} · Esc or Ctrl+C stop", app.busy_label())
     };
-    frame.render_widget(Paragraph::new(hint).style(style), area);
+    let text = crate::tui::info::truncate_end(
+        &format!("{ctx}{files}{skills} · {hint}"),
+        usize::from(area.width.max(1)),
+    );
+    frame.render_widget(Paragraph::new(text).style(style), area);
 }

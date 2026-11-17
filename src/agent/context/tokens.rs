@@ -197,6 +197,20 @@ pub fn format_token_count(n: u64) -> String {
     }
 }
 
+/// Short context label for the status bar — always visible, unlike the
+/// fuller `context_usage_text` that only fits the header.
+pub fn context_compact_text(summary: TokenSummary, window: Option<u32>) -> String {
+    let TokenSummary { estimate, .. } = summary;
+    match window {
+        Some(w) if w > 0 => format!(
+            "~{} ctx ({}%)",
+            format_token_count(u64::from(estimate)),
+            u64::from(estimate) * 100 / u64::from(w)
+        ),
+        _ => format!("~{} ctx", format_token_count(u64::from(estimate))),
+    }
+}
+
 pub fn context_pressure_line(estimate: u32) -> Option<String> {
     if estimate < CONTEXT_WARN_TOKENS {
         return None;
@@ -260,6 +274,26 @@ mod tests {
             None,
         );
         assert!(!plain.contains('%'), "{plain}");
+    }
+
+    #[test]
+    fn compact_text_mirrors_estimate_and_percent() {
+        let text = super::context_compact_text(
+            super::TokenSummary {
+                stats: super::TokenStats::default(),
+                estimate: 12_288,
+            },
+            Some(204_800),
+        );
+        assert_eq!(text, "~12.3k ctx (6%)", "{text}");
+        let no_window = super::context_compact_text(
+            super::TokenSummary {
+                stats: super::TokenStats::default(),
+                estimate: 100,
+            },
+            None,
+        );
+        assert_eq!(no_window, "~100 ctx");
     }
 
     use super::*;

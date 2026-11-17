@@ -30,8 +30,23 @@ impl Agent {
             crate::skills::api_user_content(&self.workdir, &user_text, &self.skill_catalog);
         self.active_user_expansion =
             super::context::user_expansion_suffix(&api_full, &user_text);
+        // `$id` tokens that resolved to catalog skills — the attach is silent
+        // on the wire, so record it for the status bar + transcript note.
+        self.turn_skills = crate::skills::collect_skill_invocations(&user_text)
+            .into_iter()
+            .filter(|id| self.skill_catalog.skills.iter().any(|s| &s.id == id))
+            .collect();
         self.api_history.push(ApiMessage::user(user_text));
         self.record_send_estimate(&api_full);
+        if !self.turn_skills.is_empty() {
+            let names = self
+                .turn_skills
+                .iter()
+                .map(|id| format!("${id}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.push_system(format!("skills attached: {names}"));
+        }
         self.refresh_context_estimate();
         self.maybe_context_pressure_sys();
     }
@@ -315,6 +330,9 @@ impl Agent {
         body: &str,
         file_diff: Option<crate::chat::FileDiffUi>,
     ) {
+        if let Some(diff) = &file_diff {
+            self.changed_files.insert(diff.path.clone());
+        }
         self.finish_tool_ui(UiMessage::tool_result(
             name,
             args,
@@ -716,6 +734,52 @@ mod model_tests {
             assert!(ui[before].elapsed_ms.is_some());
         }
         assert!(a.pending_tool.is_none(), "pending slot consumed");
+    }
+
+    #[test]
+    fn record_tool_outcome_tracks_changed_files() {
+        let mut a = agent();
+        a.start_tool_ui("write_file", "{}");
+        a.record_tool_outcome(
+            "write_file",
+            "{}",
+            "c1",
+            "wrote",
+            Some(crate::chat::FileDiffUi {
+                path: "src/a.rs".into(),
+                unified: "+x".into(),
+                lines_added: 1,
+                lines_removed: 0,
+                is_new_file: false,
+            }),
+        );
+        a.start_tool_ui("read_file", "{}");
+        a.record_tool_outcome("read_file", "{}", "c2", "ok", None);
+        let files: Vec<&String> = a.changed_files().collect();
+        assert_eq!(files, ["src/a.rs"], "only diff-bearing tools count");
+    }
+
+    #[test]
+    fn begin_user_turn_records_attached_skills() {
+        let mut a = agent();
+        a.set_skill_catalog(crate::skills::SkillCatalog {
+            skills: vec![crate::skills::SkillEntry {
+                id: "lean".into(),
+                name: "Lean".into(),
+                description: String::new(),
+                path: std::path::PathBuf::from("."),
+                body: "keep it small".into(),
+                trigger: None,
+            }],
+            rules: String::new(),
+        });
+        a.begin_user_turn("run $lean and $ghost".into());
+        assert_eq!(a.turn_skills(), &["lean"], "unknown $ids don't count");
+        let ui = a.ui_history.lock().unwrap();
+        assert!(
+            ui.iter().any(|m| m.content.contains("skills attached: $lean")),
+            "transcript note missing"
+        );
     }
 
     #[test]

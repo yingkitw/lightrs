@@ -461,3 +461,9 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - Provider keys and provider endpoints are **independent axes** — a `Keys.kimi` entry says nothing about which host the key belongs to. Coding-plan/region auth ids pin it: `kimi-code-plan-global`→`api.kimi.ai/coding/v1`, `kimi-for-coding`→`api.kimi.com/coding/v1`, `moonshotai-cn`→`api.moonshot.cn/v1`, `minimax-cn-*`→`api.minimaxi.com/v1` (MiniMax CN host is `.com`, global is `.io` — inverted from Kimi where `.com` is CN and `.ai` is global!). Verified live: coding keys 401 on pay-as-you-go hosts and vice versa.
 - `[endpoints] <provider> = <base_url>` in global config only; `endpoint_for(p)` = active `base_url` → override → provider default. Project overlays must NOT apply it (same redirect/key-exfil surface as `[keys]` — a repo pointing kimi at an attacker host sends the key there).
 - Kimi Code `GET /coding/v1/models` works and returns `kimi-for-coding`; minimax CN `GET /v1/models` returns `MiniMax-M3*` ids.
+
+## Always-on status indicators (2026-11-16)
+
+- The bottom status bar is the only guaranteed-visible surface (header is 1-row below 22 rows, transcript scrolls) — "always show X" belongs there. `draw_status` now takes `agent` (was App-only) and composes `{ctx} · Δfiles · $skills · {hint}` truncated to width.
+- `Agent.changed_files` (`BTreeSet`) records `FileDiffUi.path` inside `record_tool_outcome` — NOT derived from ui_history at render (transcript caps at 500 and `/rewind` truncates; the set is session truth). Rebuilt on `restore_session` from persisted `file_diff` rows; cleared on `/clear`, kept across `/cd` and `/rewind` (writes happened).
+- `Agent.turn_skills` = `collect_skill_invocations(user_text)` ∩ catalog ids, set in `begin_user_turn` — `$ghost` tokens that don't resolve aren't "used" and don't show. `[sys]` `skills attached:` note lands per turn so the attach is no longer silent.
