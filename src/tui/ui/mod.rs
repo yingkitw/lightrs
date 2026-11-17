@@ -59,6 +59,8 @@ mod tests {
             workdir: PathBuf::from("/tmp/myproj"),
             shell_policy: ShellPolicy::default(),
             test_command: None,
+            format_command: None,
+            read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
         });
@@ -167,5 +169,24 @@ mod tests {
         app.set_busy();
         let busy = draw_text(&mut app, &agent, 100, 24);
         assert!(busy.contains("ctx") && busy.contains("Δ"), "busy:\n{busy}");
+    }
+
+    #[test]
+    fn status_bar_shows_error_text_over_hints() {
+        // `set_error_status` flags the bar red — the message must render too,
+        // not just recolor the hint text (previously style-only = invisible).
+        let (mut app, agent) = fixture();
+        app.set_error_status("api 500: blew up".into());
+        let text = draw_text(&mut app, &agent, 100, 24);
+        assert!(text.contains("api 500: blew up"), "error text missing:\n{text}");
+        assert!(text.contains("ctx"), "ctx indicator missing:\n{text}");
+    }
+
+    #[test]
+    fn status_bar_shows_plan_indicator() {
+        let (mut app, mut agent) = fixture();
+        agent.set_read_only(true);
+        let text = draw_text(&mut app, &agent, 100, 24);
+        assert!(text.contains("plan"), "plan indicator missing:\n{text}");
     }
 }

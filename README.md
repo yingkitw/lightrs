@@ -125,8 +125,31 @@ At runtime, lightrs **discovers skills** from that tree plus `~/.cursor/skills`,
 ## Design
 
 - One OpenAI-compatible HTTP client for all backends (optional streaming SSE)
-- Fixed tool set (9): fs read/write/patch, `grep`, `list_dir`, `glob_file_search`, `run_command`, `todo_write`; no in-process MCP/LSP
+- Fixed tool set (11): fs read/write/patch, `grep`, `list_dir`, `glob_file_search`, `run_command`, `todo_write`, `web_fetch`, `ask_user`; no in-process MCP/LSP
 - Tokio agent worker + sync TUI thread; per-project session JSON under `~/.config/lightrs/sessions/` (user/agent/tool turns; ephemeral `[sys]` omitted)
 - Main crates: `ratatui`, `reqwest`, `pulldown-cmark`, `syntect`, `similar` (write diffs)
 
 See `ARCHITECTURE.md`, `SPEC.md`, and `TODO.md`.
+## Competitive landscape
+
+Compared 2026-11-16 against Claude Code, Codex CLI, OpenCode, and pi — ✅ shipped · ◐ partial · — absent · ⛔ deliberate non-goal (SPEC.md).
+
+| Area | lightrs | CC | Codex | OpenCode | pi |
+|---|---|---|---|---|---|
+| Stack / footprint | Rust, ~7.4M bin, 13 deps | Node/TS | Rust | TS/Bun + Go TUI | TS |
+| Providers | GLM/Kimi/MiniMax + any OpenAI-compat | Anthropic | OpenAI | 75+ | multi |
+| Tools | 9, all bounded | ~15 | shell+patch | ~12 + LSP | 8 + ext |
+| Web fetch | ✅ | ✅ | ✅ | ✅ | ext |
+| MCP / sub-agents / LSP | ⛔ | ✅ | ◐/—/— | ✅ | ext |
+| Plan/read-only mode | ✅ `/plan` `--read-only` | ✅ | ✅ | ✅ | ext |
+| OS sandbox | — | ✅ | ✅ | — | — |
+| Fork/branch session | ✅ `/fork` `/resume` | ✅ | — | ✅ | ✅ |
+| Context mgmt | wire window + compact + ctx % | compact | compact | ✅ | ext |
+| Fallback + weak-model routing | ✅ unique | — | — | ◐ | ext |
+| Audit + redact + injection scan | ✅ unique combo | ◐ | ◐ | ◐ | — |
+| Bounded reads everywhere | ✅ | ◐ | ◐ | ◐ | — |
+| ACP v1+v2 | ✅ | SDK | cloud/IDE | ✅/serve | RPC/SDK |
+
+**Gaps worth adopting** (ranked in TODO brainstorm): all adopted — `web_fetch`, plan mode, `/fork` + `/resume`, `[shell].format_command`, turn-end bell, `--output-schema`, `ask_user`.
+
+**Deliberate non-goals**: MCP runtime, sub-agents, LSP/tree-sitter, OS sandbox, hooks, keyring, worktrees, semantic index, plugins, vim mode, image input, share links.

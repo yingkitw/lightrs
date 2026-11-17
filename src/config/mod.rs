@@ -109,6 +109,10 @@ pub struct AppConfig {
     pub shell_policy: ShellPolicy,
     /// Post-edit check command from `[shell].test_command` (heal loop).
     pub test_command: Option<String>,
+    /// Formatter run after each write/edit tool (`[shell].format_command`).
+    pub format_command: Option<String>,
+    /// `--read-only` — plan mode from launch; write/exec tools denied.
+    pub read_only: bool,
     /// Max heal runs per user turn (`[shell].heal_steps`, default 3).
     pub heal_steps: u32,
     /// Per-provider endpoint overrides from `[endpoints]` (e.g. a
@@ -179,7 +183,7 @@ impl AppConfig {
 
         let api_key = file::resolve_api_key(flags, file.as_ref(), provider)?;
 
-        let (allowlist, require_approval, test_command, heal_steps) =
+        let (allowlist, require_approval, test_command, format_command, heal_steps) =
             file::shell_from_files(project.as_ref(), file.as_ref());
 
         Ok(Self {
@@ -200,6 +204,8 @@ impl AppConfig {
             workdir,
             shell_policy: shell_policy_from_parts(allowlist, require_approval),
             test_command,
+            format_command,
+            read_only: flags.read_only,
             heal_steps,
             // Global file only — a project overlay `endpoints` is parsed but
             // never applied (same redirect-attack surface as base_url/keys).
@@ -227,10 +233,11 @@ impl AppConfig {
         let path = config_path();
         let file = file::load_config_file()?;
         let project = file::load_project_config_file(&self.workdir)?;
-        let (allowlist, require_approval, test_command, heal_steps) =
+        let (allowlist, require_approval, test_command, format_command, heal_steps) =
             file::shell_from_files(project.as_ref(), file.as_ref());
         self.shell_policy = shell_policy_from_parts(allowlist, require_approval);
         self.test_command = test_command;
+        self.format_command = format_command;
         self.heal_steps = heal_steps;
         let project_note = if project.is_some() {
             " + project .lightrs/config.toml"
@@ -422,6 +429,8 @@ mod endpoint_tests {
             workdir: PathBuf::from("."),
             shell_policy: ShellPolicy::default(),
             test_command: None,
+            format_command: None,
+            read_only: false,
             heal_steps: 3,
             endpoints: BTreeMap::from([(
                 Provider::Kimi,

@@ -16,6 +16,7 @@ mod shell_policy;
 mod shell_readonly;
 pub(crate) mod todo;
 mod walk;
+pub mod web;
 mod outcome;
 mod schemas;
 

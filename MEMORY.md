@@ -467,3 +467,17 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - The bottom status bar is the only guaranteed-visible surface (header is 1-row below 22 rows, transcript scrolls) — "always show X" belongs there. `draw_status` now takes `agent` (was App-only) and composes `{ctx} · Δfiles · $skills · {hint}` truncated to width.
 - `Agent.changed_files` (`BTreeSet`) records `FileDiffUi.path` inside `record_tool_outcome` — NOT derived from ui_history at render (transcript caps at 500 and `/rewind` truncates; the set is session truth). Rebuilt on `restore_session` from persisted `file_diff` rows; cleared on `/clear`, kept across `/cd` and `/rewind` (writes happened).
 - `Agent.turn_skills` = `collect_skill_invocations(user_text)` ∩ catalog ids, set in `begin_user_turn` — `$ghost` tokens that don't resolve aren't "used" and don't show. `[sys]` `skills attached:` note lands per turn so the attach is no longer silent.
+
+## Style-only status bug (2026-11-16)
+
+- `set_error_status` set `app.state = Ready` + `app.status = msg`, and `draw_status` used `!app.status.is_empty()` for the **style** but the Ready branch never rendered `app.status` as **text** — failures surfaced only via the transcript `push_error` row, leaving a red-but-generic status line. Rule: when a status field drives color, it must also drive text (or the color is a lie). Fixed in the Ready branch — non-empty `app.status` outranks the hint chain.
+
+## Competitive-gap batch (2026-11-16) — patterns worth keeping
+
+- **Async tools**: `execute_tool` is sync on `spawn_blocking` — a tool needing async (`web_fetch`) dispatches in `execute_one_tool_shared` beside the spawn branch, keeping the audit/observer/record tail shared. Don't add `reqwest::blocking` for one tool.
+- **Mode gates belong before the approval gate**: `READ_ONLY_DENY` runs before `resolve_shell_gate` — a denied tool must never reach approval or execution, and the deny body names the exit (`/plan`).
+- **Model-visible mode**: a status indicator alone doesn't reach the model — put the mode in `system_prompt` (rebuilt via `ensure_system_prompt`) so `/cd`, `/clear`, and restore all carry it for free.
+- **Hooks share the spawn path**: `format_command` reuses `run_heal_command`'s bypass+120s spawn; `hook_record(label,…)` generalizes record/feedback so `fmt` and `heal` differ only in failure framing (heal demands a fix; fmt just reports).
+- **Session forks are filename conventions**: canonical file is `<hash(workdir)>.json`; forks are `<hash>-<slug>.json` — auto-save never touches them; `/resume` restores any file by name over the canonical path. `list`/`load_named`/`fork` all take `*_in(dir)` testable inners — real `sessions_dir()` never appears in tests (same rule as `load_workdir_context_for` HOME).
+- **`ask_user` = CommandApproval's oneshot pattern with a String**: same fail-closed headless rule; the question rides the `ToolStart` row's arguments + the status line — no separate transcript row needed.
+- **Turn-end notify is one byte**: `\x07` on Done/Failed in the event handler — ratatui's alt screen doesn't corrupt on BEL.

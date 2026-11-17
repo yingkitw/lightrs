@@ -9,7 +9,7 @@ use crate::provider::{ModelClient, is_interrupted};
 use crate::tools::{ShellPolicy, execute_tool, tool_schemas};
 use crate::tui::AgentEvent;
 
-use super::approval::{ShellGate, resolve_shell_gate};
+use super::approval::{ShellGate, ask_user_outcome, resolve_shell_gate};
 use super::helpers::{
     MAX_TOOL_STEPS, append_assistant_delta, append_thinking_delta, normalize_assistant_text,
     remove_trailing_empty_assistant, truncate_tool_ui,
@@ -401,6 +401,16 @@ async fn execute_one_tool_shared(
     });
     agent.lock().await.start_tool_ui(name, args);
     let ctx = shell_ctx(name, args, shell_policy);
+    if agent.lock().await.read_only() && READ_ONLY_DENY.contains(&name) {
+        let msg = "error: plan mode is on — file edits and shell commands are disabled (/plan to exit)";
+        audit_denied(workdir, &ctx, ui_tx.is_none(), msg);
+        on(ObserveEvent::ToolEnd { body: msg });
+        agent
+            .lock()
+            .await
+            .record_tool_denial(name, args, call_id, msg);
+        return Ok(());
+    }
     let bypass =
         match resolve_shell_gate(name, args, shell_policy, shell_verdict, ui_tx.is_none())? {
             ShellGate::Denied(msg) => {
@@ -417,46 +427,63 @@ async fn execute_one_tool_shared(
                 bypass_allowlist,
             } => bypass_allowlist,
         };
-    let (wd, n, a, p) = (
-        workdir.to_path_buf(),
-        name.to_string(),
-        args.to_string(),
-        shell_policy.clone(),
-    );
-    let cancel_rx = cancel.clone();
-    let outcome =
-        tokio::task::spawn_blocking(move || execute_tool(&wd, &n, &a, &p, bypass, Some(&cancel_rx)))
+    let outcome = match name {
+        "web_fetch" => crate::tools::web::run(workdir, args, Some(&cancel)).await,
+        "ask_user" => ask_user_outcome(args, ui_tx, &cancel).await,
+        _ => {
+            let (wd, n, a, p) = (
+                workdir.to_path_buf(),
+                name.to_string(),
+                args.to_string(),
+                shell_policy.clone(),
+            );
+            let cancel_rx = cancel.clone();
+            tokio::task::spawn_blocking(move || {
+                execute_tool(&wd, &n, &a, &p, bypass, Some(&cancel_rx))
+            })
             .await
-        .unwrap_or_else(|e| crate::tools::ToolOutcome::ok(format!("error: tool join: {e}")));
+            .unwrap_or_else(|e| crate::tools::ToolOutcome::ok(format!("error: tool join: {e}")))
+        }
+    };
     audit_outcome(workdir, &ctx, bypass, &outcome.body);
     on(ObserveEvent::ToolEnd {
         body: &outcome.body,
     });
-    let heal_cmd = {
+    let (fmt_cmd, heal_cmd) = {
         let mut g = agent.lock().await;
-        g.record_tool_outcome(name, args, call_id, &outcome.body, outcome.file_diff);
-        g.heal_plan(name, &outcome.body)
+        g.record_tool_outcome(name, args, call_id, &outcome.body, outcome.file_diff.clone());
+        (
+            g.format_plan(name, &outcome.body, outcome.file_diff.as_ref()),
+            g.heal_plan(name, &outcome.body),
+        )
     };
-    if let Some(cmd) = heal_cmd {
+    for (label, cmd) in [("fmt", fmt_cmd), ("heal", heal_cmd)]
+        .into_iter()
+        .filter_map(|(l, c)| c.map(|c| (l, c)))
+    {
         on(ObserveEvent::ToolStart {
-            name: "heal",
+            name: label,
             arguments: &cmd,
         });
         let (wd, p) = (workdir.to_path_buf(), shell_policy.clone());
         let c = cmd.clone();
-        let heal_cancel = cancel.clone();
+        let hook_cancel = cancel.clone();
         let body =
-            tokio::task::spawn_blocking(move || run_heal_command(&wd, &c, &p, Some(&heal_cancel)))
+            tokio::task::spawn_blocking(move || run_heal_command(&wd, &c, &p, Some(&hook_cancel)))
                 .await
-                .unwrap_or_else(|e| format!("error: heal join: {e}"));
+                .unwrap_or_else(|e| format!("error: {label} join: {e}"));
         on(ObserveEvent::ToolEnd { body: &body });
-        agent.lock().await.heal_record(&cmd, &body);
+        agent.lock().await.hook_record(label, &cmd, &body);
     }
     Ok(())
 }
 
 /// Write/edit tools whose success triggers the configured post-edit check.
 const HEAL_TOOLS: &[&str] = &["write_file", "patch_file", "multi_edit"];
+
+/// Tools denied outright in plan/read-only mode (`/plan`, `--read-only`).
+/// `todo_write` stays — it's session scratch, not a file or shell change.
+const READ_ONLY_DENY: &[&str] = &["write_file", "patch_file", "multi_edit", "run_command"];
 
 /// Run the configured heal/test command (bypasses the shell policy, 120s cap).
 fn run_heal_command(
@@ -493,25 +520,53 @@ impl Agent {
         Some(heal.command.clone())
     }
 
-    /// Record a heal run's output: transcript entry, `[sys]`/`[heal]` feedback to the model.
-    fn heal_record(&mut self, command: &str, body: &str) {
+    /// Whether this write outcome should trigger the configured formatter
+    /// (`[shell].format_command`). `{path}` substitutes the diff path;
+    /// otherwise the path is appended, single-quoted.
+    fn format_plan(
+        &mut self,
+        tool_name: &str,
+        tool_body: &str,
+        diff: Option<&crate::chat::FileDiffUi>,
+    ) -> Option<String> {
+        if !HEAL_TOOLS.contains(&tool_name) || tool_body.starts_with("error:") {
+            return None;
+        }
+        let cmd = self.format_cmd.as_ref()?;
+        let path = diff?.path.clone();
+        if cmd.contains("{path}") {
+            Some(cmd.replace("{path}", &path))
+        } else {
+            Some(format!("{cmd} '{}'", path.replace('\'', "'\\''")))
+        }
+    }
+
+    /// Record a post-edit hook run's output (`fmt` or `heal`): transcript row
+    /// plus model feedback on failure. Heal failures ask for a fix; fmt
+    /// failures just report — the model decides whether to act.
+    fn hook_record(&mut self, label: &str, command: &str, body: &str) {
         self.ui_history.lock().unwrap().push(UiMessage::tool_result(
-            "heal",
+            label,
             command.to_string(),
             truncate_tool_ui(body),
             None,
         ));
         if body.starts_with("exit=0") {
-            self.push_system(format!("heal ok: `{command}`"));
+            self.push_system(format!("{label} ok: `{command}`"));
             return;
         }
+        let hint = if label == "heal" {
+            " — fix the errors before continuing"
+        } else {
+            ""
+        };
         let mut api = format!(
-            "[heal] `{command}` failed after your edit — fix the errors before continuing.\n{}",
+            "[{label}] `{command}` failed after your edit{hint}.\n{}",
             super::context::truncate_tool_api(body)
         );
         if let Some(pat) = crate::tools::injection::detect(body) {
             self.push_system(format!(
-                "heal output matched injection pattern {pat:?} — flagged for the model"
+                "{label} output matched injection pattern {pat:?} — flagged for the model"
             ));
             api = format!("{}{api}", crate::tools::injection::flag_prefix(pat));
         }
@@ -546,7 +601,7 @@ mod heal_tests {
     fn run_heal(agent: &mut Agent, workdir: &Path, tool: &str, body: &str) {
         if let Some(cmd) = agent.heal_plan(tool, body) {
             let out = run_heal_command(workdir, &cmd, &agent.shell_policy.clone(), None);
-            agent.heal_record(&cmd, &out);
+            agent.hook_record("heal", &cmd, &out);
         }
     }
 
@@ -597,6 +652,37 @@ mod heal_tests {
         let mut agent = make_agent(None, 3);
         run_heal(&mut agent, &dir, "write_file", "wrote");
         assert_eq!(agent.heal_ran, 0);
+    }
+
+    fn diff(path: &str) -> crate::chat::FileDiffUi {
+        crate::chat::FileDiffUi {
+            path: path.into(),
+            unified: String::new(),
+            lines_added: 1,
+            lines_removed: 0,
+            is_new_file: false,
+        }
+    }
+
+    #[test]
+    fn format_plan_substitutes_path_or_appends_quoted() {
+        let mut agent = make_agent(None, 3);
+        agent.set_format_command(Some("cargo fmt -- {path}".into()));
+        let d = diff("src/main.rs");
+        assert_eq!(
+            agent.format_plan("write_file", "wrote", Some(&d)).as_deref(),
+            Some("cargo fmt -- src/main.rs")
+        );
+        agent.set_format_command(Some("rustfmt".into()));
+        let d = diff("weird 'name.rs");
+        assert_eq!(
+            agent.format_plan("patch_file", "ok", Some(&d)).as_deref(),
+            Some("rustfmt 'weird '\\''name.rs'")
+        );
+        // Read tools, failed edits, and missing diffs never trigger the hook.
+        assert!(agent.format_plan("read_file", "x", Some(&d)).is_none());
+        assert!(agent.format_plan("write_file", "error: no", Some(&d)).is_none());
+        assert!(agent.format_plan("write_file", "wrote", None).is_none());
     }
 }
 #[cfg(test)]

@@ -28,6 +28,12 @@ pub struct CommandApproval {
     pub reply: tokio::sync::oneshot::Sender<bool>,
 }
 
+/// Model-initiated `ask_user` — the next Enter submits the answer, not a turn.
+pub struct AskUserRequest {
+    pub question: String,
+    pub reply: tokio::sync::oneshot::Sender<String>,
+}
+
 pub enum AgentEvent {
     Done,
     Failed(String),
@@ -38,6 +44,8 @@ pub enum AgentEvent {
     Progress(String),
     /// TUI must approve/deny before the agent continues this shell command.
     CommandApproval(CommandApproval),
+    /// Model asked a question; next submitted line is the answer.
+    AskUser(AskUserRequest),
     /// Background `/model` fetch finished: per-provider models or error text.
     ModelsListed(Vec<(crate::config::Provider, Result<Vec<String>, String>)>),
 }
@@ -70,6 +78,8 @@ pub struct App {
     /// `(first_line, last_line_exclusive, ui_message_index)` per tool block.
     pub tool_hit_spans: Vec<(usize, usize, usize)>,
     pub pending_approval: Option<CommandApproval>,
+    /// Pending `ask_user` — Enter sends the reply, Esc declines.
+    pub pending_ask: Option<AskUserRequest>,
     /// Detect `config.toml` changes for auto `[shell]` reload before each send.
     config_mtime: Option<SystemTime>,
     pub skill_catalog: SkillCatalog,
@@ -110,6 +120,7 @@ impl App {
             transcript_cache: None,
             tool_hit_spans: Vec::new(),
             pending_approval: None,
+            pending_ask: None,
             config_mtime: None,
             skill_catalog: SkillCatalog::default(),
             commands: Vec::new(),
@@ -167,6 +178,18 @@ impl App {
     pub fn resolve_approval(&mut self, approved: bool) {
         if let Some(req) = self.pending_approval.take() {
             let _ = req.reply.send(approved);
+        }
+    }
+
+    /// Empty answer = declined (Esc); the tool body says so.
+    pub fn resolve_ask(&mut self, answer: String) {
+        if let Some(req) = self.pending_ask.take() {
+            let body = if answer.trim().is_empty() {
+                "(user declined to answer)".to_string()
+            } else {
+                answer
+            };
+            let _ = req.reply.send(body);
         }
     }
 
@@ -363,6 +386,8 @@ mod tests {
             workdir: PathBuf::from("."),
             shell_policy: crate::tools::ShellPolicy::default(),
             test_command: None,
+            format_command: None,
+            read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
         })
@@ -403,5 +428,37 @@ mod tests {
         app.set_ready(&app.config.clone());
         assert_eq!(app.stream_chars, 0);
         assert_eq!(app.state, RunState::Ready);
+    }
+    #[test]
+    fn resolve_ask_sends_answer_or_decline() {
+        let mut app = App::new(crate::config::AppConfig {
+            provider: crate::config::Provider::Glm,
+            model: "m".into(),
+            fallback_model: None,
+            weak_model: None,
+            base_url: "http://x".into(),
+            api_key: "k".into(),
+            workdir: std::path::PathBuf::from("."),
+            shell_policy: crate::tools::ShellPolicy::default(),
+            test_command: None,
+            format_command: None,
+            read_only: false,
+            heal_steps: 3,
+            endpoints: Default::default(),
+        });
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.pending_ask = Some(AskUserRequest {
+            question: "which file?".into(),
+            reply: tx,
+        });
+        app.resolve_ask("a.rs".into());
+        assert_eq!(rx.blocking_recv().unwrap(), "a.rs");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.pending_ask = Some(AskUserRequest {
+            question: "q".into(),
+            reply: tx,
+        });
+        app.resolve_ask("  ".into());
+        assert_eq!(rx.blocking_recv().unwrap(), "(user declined to answer)");
     }
 }

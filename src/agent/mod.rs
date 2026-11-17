@@ -82,6 +82,11 @@ pub struct Agent {
     /// Files written by write/edit tools this session (diff paths, sorted).
     pub(crate) changed_files: std::collections::BTreeSet<String>,
     pub(crate) heal: Option<HealSetting>,
+    /// Formatter run after each write/edit tool (`[shell].format_command`);
+    /// `{path}` is replaced with the diff path, shell-quoted otherwise.
+    pub(crate) format_cmd: Option<String>,
+    /// Plan/read-only mode — write/exec tools denied at the tool gate.
+    pub(crate) read_only: bool,
     /// Heal runs so far this user turn (reset in `begin_user_turn`).
     pub(crate) heal_ran: u32,
     /// One-shot `[sys]` note once the wire window first sends fewer turns than history holds.
@@ -96,6 +101,7 @@ impl Agent {
             &workdir,
             &shell_policy,
             &skill_catalog,
+            false,
         )));
         let mut agent = Self {
             client: Arc::new(client),
@@ -117,6 +123,8 @@ impl Agent {
             turn_skills: Vec::new(),
             changed_files: std::collections::BTreeSet::new(),
             heal: None,
+            format_cmd: None,
+            read_only: false,
             heal_ran: 0,
             wire_window_noted: false,
         };
@@ -235,6 +243,7 @@ impl Agent {
             &self.workdir,
             &self.shell_policy,
             &self.skill_catalog,
+            self.read_only,
         ));
         match self.api_history.first_mut() {
             Some(first) if matches!(first.role, ApiRole::System) => *first = prompt,
@@ -333,6 +342,30 @@ impl Agent {
         self.heal = heal;
     }
 
+    pub fn set_format_command(&mut self, cmd: Option<String>) {
+        self.format_cmd = cmd;
+    }
+
+    /// Plan/read-only mode (`/plan`, `--read-only`): write/exec tools are
+    /// denied at the tool gate, and the rebuilt system prompt tells the
+    /// model to explore and propose instead of discovering per-call.
+    pub fn set_read_only(&mut self, on: bool) {
+        if self.read_only == on {
+            return;
+        }
+        self.read_only = on;
+        self.ensure_system_prompt();
+        self.push_system(if on {
+            "Plan mode ON — file edits and shell commands are disabled."
+        } else {
+            "Plan mode OFF — file edits and shell commands are allowed again."
+        });
+    }
+
+    pub fn read_only(&self) -> bool {
+        self.read_only
+    }
+
     pub fn set_shell_policy(&mut self, policy: ShellPolicy) {
         self.shell_policy = policy;
         self.ensure_system_prompt();
@@ -381,6 +414,7 @@ impl Agent {
             &self.workdir,
             &self.shell_policy,
             &self.skill_catalog,
+            self.read_only,
         )));
         let mut ui = self.ui_history.lock().unwrap();
         ui.clear();
@@ -452,6 +486,8 @@ mod streaming_tests {
             workdir: std::path::PathBuf::from("."),
             shell_policy: ShellPolicy::default(),
             test_command: None,
+            format_command: None,
+            read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
         };

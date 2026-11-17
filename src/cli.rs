@@ -69,6 +69,9 @@ pub enum Command {
         /// Auto-approve shell commands (no TUI); allowlist still applies
         #[arg(long)]
         approve_shell: bool,
+        /// Require the reply to be JSON matching this schema (file path or literal)
+        #[arg(long, value_name = "SCHEMA")]
+        output_schema: Option<String>,
     },
 }
 
@@ -102,6 +105,10 @@ pub struct ModelFlags {
     /// Cheaper model used for read-only steps; escalates to `model` on write/exec
     #[arg(long, global = true)]
     pub weak_model: Option<String>,
+
+    /// Plan mode — deny file edits and shell commands (read/search tools only)
+    #[arg(long, global = true)]
+    pub read_only: bool,
 
     #[arg(long, global = true)]
     pub base_url: Option<String>,

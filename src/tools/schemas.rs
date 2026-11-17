@@ -147,6 +147,34 @@ pub fn tool_schemas() -> Vec<serde_json::Value> {
         json!({
             "type": "function",
             "function": {
+                "name": "web_fetch",
+                "description": "Fetch a URL over HTTP(S) and return bounded plain text (HTML stripped). For docs and pages — not for binaries.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": { "type": "string", "description": "http:// or https:// URL" }
+                    },
+                    "required": ["url"]
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "ask_user",
+                "description": "Ask the user a clarifying question and wait for their answer. Use sparingly — only when blocked and the answer changes what you do next.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": { "type": "string" }
+                    },
+                    "required": ["question"]
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
                 "name": "run_command",
                 "description": "Run a shell command in the workdir (sh -c). Use for builds, git, etc.",
                 "parameters": {

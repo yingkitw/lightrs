@@ -60,9 +60,10 @@ pub fn run() -> Result<()> {
             prompt,
             json,
             approve_shell,
+            output_schema,
         } => {
             let cfg = AppConfig::load(&cli.model, cli.auto_migrate)?;
-            exec::run_prompt_blocking(cfg, prompt, json, approve_shell)
+            exec::run_prompt_blocking(cfg, prompt, json, approve_shell, output_schema)
         }
     }
 }

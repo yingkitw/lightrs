@@ -53,6 +53,9 @@ pub(crate) struct FileShell {
     pub require_approval: bool,
     /// Post-edit check run after write/edit tools; failures go back to the model.
     pub test_command: Option<String>,
+    /// Formatter run after each write/edit tool; `{path}` substitutes the
+    /// edited file, otherwise the path is appended shell-quoted.
+    pub format_command: Option<String>,
     /// Max heal runs per user turn (default 3).
     pub heal_steps: Option<u32>,
 }
@@ -110,7 +113,7 @@ pub fn project_config_mtime(workdir: &std::path::Path) -> Option<std::time::Syst
 pub(crate) fn shell_from_files<'a>(
     project: Option<&'a FileConfig>,
     global: Option<&'a FileConfig>,
-) -> (Vec<String>, bool, Option<String>, u32) {
+) -> (Vec<String>, bool, Option<String>, Option<String>, u32) {
     let src = project
         .and_then(|f| f.shell.as_ref())
         .or_else(|| global.and_then(|f| f.shell.as_ref()));
@@ -119,10 +122,11 @@ pub(crate) fn shell_from_files<'a>(
             s.allowlist.clone(),
             s.require_approval,
             s.test_command.clone(),
+            s.format_command.clone(),
             s.heal_steps.unwrap_or(3),
         )
     })
-    .unwrap_or((Vec::new(), false, None, 3))
+    .unwrap_or((Vec::new(), false, None, None, 3))
 }
 
 pub fn load_tui_theme() -> Option<String> {
@@ -224,6 +228,7 @@ mod tests {
                 allowlist: allowlist.iter().map(|s| s.to_string()).collect(),
                 require_approval: require,
                 test_command: test_cmd.map(|s| s.to_string()),
+                format_command: None,
                 heal_steps: None,
             }),
             ..Default::default()
@@ -234,7 +239,7 @@ mod tests {
     fn project_shell_replaces_global() {
         let global = file_with_shell(&["cargo "], true, Some("cargo test"));
         let project = file_with_shell(&["npm "], false, Some("npm test"));
-        let (allow, req, cmd, steps) =
+        let (allow, req, cmd, _fmt, steps) =
             shell_from_files(Some(&project), Some(&global));
         assert_eq!(allow, vec!["npm ".to_string()]);
         assert!(!req);
@@ -246,11 +251,11 @@ mod tests {
     fn global_shell_used_without_project_section() {
         let global = file_with_shell(&["cargo "], true, Some("cargo test"));
         let empty_project = FileConfig::default();
-        let (allow, req, _, _) = shell_from_files(Some(&empty_project), Some(&global));
+        let (allow, req, _, _, _) = shell_from_files(Some(&empty_project), Some(&global));
         assert_eq!(allow, vec!["cargo ".to_string()]);
         assert!(req);
         // No files at all → permissive defaults.
-        let (allow2, req2, cmd2, _) = shell_from_files(None, None);
+        let (allow2, req2, cmd2, _, _) = shell_from_files(None, None);
         assert!(allow2.is_empty() && !req2 && cmd2.is_none());
     }
 
@@ -324,7 +329,7 @@ mod tests {
     fn shell_heal_steps_honored() {
         let mut f = file_with_shell(&[], false, None);
         f.shell.as_mut().unwrap().heal_steps = Some(7);
-        let (_, _, _, steps) = shell_from_files(Some(&f), None);
+        let (_, _, _, _, steps) = shell_from_files(Some(&f), None);
         assert_eq!(steps, 7);
     }
 

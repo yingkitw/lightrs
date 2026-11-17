@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::chat::ToolCall;
-use crate::tools::{RunCommandArgs, ShellPolicy};
-use crate::tui::{AgentEvent, CommandApproval};
+use crate::provider::INTERRUPTED;
+use crate::tools::{RunCommandArgs, ShellPolicy, ToolOutcome};
+use crate::tui::{AgentEvent, AskUserRequest, CommandApproval};
 
 /// Result of shell gating before `execute_tool`.
 pub(crate) enum ShellGate {
@@ -74,6 +75,53 @@ pub(crate) fn resolve_shell_gate(
             }
             .into(),
         )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct AskUserArgs {
+    question: String,
+}
+
+/// `ask_user` — route the question through the TUI and wait for the answer.
+/// Headless/ACP have no ask channel: fail closed like shell approvals. The
+/// question text is already visible via the `ToolStart` row's arguments.
+pub(crate) async fn ask_user_outcome(
+    args: &str,
+    ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
+    cancel: &watch::Receiver<bool>,
+) -> ToolOutcome {
+    let Some(tx) = ui_tx else {
+        return ToolOutcome::ok(
+            "error: ask_user needs an interactive TUI (unavailable in exec/ACP)".to_string(),
+        );
+    };
+    let fut = async {
+        match serde_json::from_str::<AskUserArgs>(args).context("parse ask_user JSON") {
+            Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
+            Ok(q) => {
+                let (reply, rx) = tokio::sync::oneshot::channel();
+                let req = AskUserRequest {
+                    question: q.question,
+                    reply,
+                };
+                if tx.send(AgentEvent::AskUser(req)).is_err() {
+                    return ToolOutcome::ok("error: ui channel closed".to_string());
+                }
+                ToolOutcome::ok(rx.await.unwrap_or_else(|_| "error: answer channel dropped".to_string()))
+            }
+        }
+    };
+    let mut rx = cancel.clone();
+    if *rx.borrow() {
+        return ToolOutcome::ok(INTERRUPTED.to_string());
+    }
+    tokio::select! {
+        out = fut => out,
+        r = rx.changed() => {
+            let _ = r;
+            ToolOutcome::ok(INTERRUPTED.to_string())
+        }
     }
 }
 

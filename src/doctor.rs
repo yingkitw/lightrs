@@ -88,6 +88,8 @@ mod tests {
             workdir: dir.clone(),
             shell_policy: crate::tools::ShellPolicy::default(),
             test_command: None,
+            format_command: None,
+            read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
         };

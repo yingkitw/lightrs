@@ -208,6 +208,8 @@ mod tests {
             workdir: std::path::PathBuf::from("/work/proj"),
             shell_policy: ShellPolicy::default(),
             test_command: None,
+            format_command: None,
+            read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
         }

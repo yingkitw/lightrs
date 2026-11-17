@@ -179,8 +179,13 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App, agent: &Agent) {
             .join(",");
         format!(" · {ids}")
     };
+    let plan = if agent.read_only() { " · plan" } else { "" };
     let hint = if app.state == RunState::Ready {
-        if let Some(slash) = slash_command_hint(&app.input, &app.commands) {
+        // An error/notice set on Ready (failed turn, slash error) outranks
+        // the hint chain — the style already flags it, the text must too.
+        if !app.status.is_empty() {
+            app.status.clone()
+        } else if let Some(slash) = slash_command_hint(&app.input, &app.commands) {
             slash
         } else if let Some(mention) = mention_hint(&app.input, app.workdir()) {
             mention
@@ -197,7 +202,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App, agent: &Agent) {
         format!("{} · Esc or Ctrl+C stop", app.busy_label())
     };
     let text = crate::tui::info::truncate_end(
-        &format!("{ctx}{files}{skills} · {hint}"),
+        &format!("{ctx}{files}{skills}{plan} · {hint}"),
         usize::from(area.width.max(1)),
     );
     frame.render_widget(Paragraph::new(text).style(style), area);

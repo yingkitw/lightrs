@@ -28,6 +28,14 @@ pub(crate) fn apply_stream_progress(app: &mut App, status: String) -> bool {
     true
 }
 
+/// Ring the terminal bell — a turn just ended while the user may be elsewhere.
+fn bell() {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let _ = out.write_all(b"\x07");
+    let _ = out.flush();
+}
+
 /// Returns `true` when the UI should redraw immediately (streaming chunk).
 pub(crate) fn handle_agent_event(
     agent: &Arc<tokio::sync::Mutex<Agent>>,
@@ -36,6 +44,7 @@ pub(crate) fn handle_agent_event(
 ) -> bool {
     match ev {
         AgentEvent::Done => {
+            bell();
             let snapshot = app.config.clone();
             {
                 let guard = agent.blocking_lock();
@@ -48,6 +57,7 @@ pub(crate) fn handle_agent_event(
             false
         }
         AgentEvent::Failed(msg) => {
+            bell();
             {
                 let mut guard = agent.blocking_lock();
                 guard.push_error(msg.clone());
@@ -74,6 +84,11 @@ pub(crate) fn handle_agent_event(
         AgentEvent::CommandApproval(req) => {
             app.pending_approval = Some(req);
             app.status = "approve shell command".into();
+            true
+        }
+        AgentEvent::AskUser(req) => {
+            app.status = format!("model asks: {} — type answer, Esc declines", req.question);
+            app.pending_ask = Some(req);
             true
         }
         AgentEvent::ModelsListed(entries) => {
@@ -118,6 +133,8 @@ mod tests {
             workdir: PathBuf::from("."),
             shell_policy: ShellPolicy::default(),
             test_command: None,
+            format_command: None,
+            read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
         });

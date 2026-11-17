@@ -29,6 +29,7 @@ workdir = "."               # agent file/shell scope
 # [shell]
 # allowlist = ["cargo ", "git ", "rustc ", "ls", "pwd"]  # empty = allow all prefixes
 # require_approval = true   # prompt y/n for every run_command (in addition to allowlist blocks)
+# format_command = "cargo fmt -- {path}"  # formatter run after each write/edit; {path} = edited file
 # test_command = "cargo test"  # run after write/edit tools; failures go back to the model
 # heal_steps = 3               # max test_command runs per user turn
 

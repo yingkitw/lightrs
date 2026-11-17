@@ -106,6 +106,114 @@ pub fn remove(workdir: &Path) -> Result<()> {
     remove_file(&session_path(workdir))
 }
 
+/// Checkpoint the current session as a named fork (`<hash>-<slug>.json`).
+/// The fork file is untouched by later auto-saves; `/resume <slug>` restores
+/// it over the canonical session. Returns the fork filename.
+pub fn fork(agent: &Agent, workdir: &Path, name: &str) -> Result<String> {
+    fork_in(&sessions_dir(), agent, workdir, name)
+}
+
+fn fork_in(dir: &Path, agent: &Agent, workdir: &Path, name: &str) -> Result<String> {
+    let slug: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(24)
+        .collect();
+    let slug = slug.trim_matches('-');
+    let slug = if slug.is_empty() { "fork" } else { slug };
+    let stem = session_path(workdir)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let file_name = format!("{stem}-{slug}.json");
+    save_to(agent, workdir, &dir.join(&file_name))?;
+    Ok(file_name)
+}
+
+/// All session files across workdirs, newest first.
+pub fn list() -> Vec<SessionMeta> {
+    list_in(&sessions_dir())
+}
+
+/// One sessions-file entry for `/resume`.
+pub struct SessionMeta {
+    pub file_name: String,
+    pub workdir: PathBuf,
+    pub user_turns: usize,
+}
+
+fn list_in(dir: &Path) -> Vec<SessionMeta> {
+    #[derive(Deserialize)]
+    struct Meta {
+        workdir: PathBuf,
+        #[serde(default)]
+        api_history: Vec<serde_json::Value>,
+    }
+    let mut rows: Vec<(std::time::SystemTime, SessionMeta)> = Vec::new();
+    let Ok(rd) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(meta) = serde_json::from_str::<Meta>(&text) else {
+            continue;
+        };
+        let mtime = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        rows.push((
+            mtime,
+            SessionMeta {
+                file_name: entry.file_name().to_string_lossy().into_owned(),
+                workdir: meta.workdir,
+                user_turns: meta
+                    .api_history
+                    .iter()
+                    .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                    .count(),
+            },
+        ));
+    }
+    rows.sort_by_key(|b| std::cmp::Reverse(b.0));
+    rows.into_iter().map(|(_, m)| m).collect()
+}
+
+/// Load a session file by plain filename for `/resume <name>` — bypasses the
+/// workdir-keyed path lookup; only the file's own version field is checked.
+pub fn load_named(file_name: &str) -> Result<Option<SessionFile>> {
+    load_named_in(&sessions_dir(), file_name)
+}
+
+fn load_named_in(dir: &Path, file_name: &str) -> Result<Option<SessionFile>> {
+    if file_name.contains(['/', '\\']) || file_name == ".." {
+        return Ok(None);
+    }
+    let path = dir.join(file_name);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let file: SessionFile = serde_json::from_str(&text).context("parse session json")?;
+    if file.version != FORMAT_VERSION {
+        return Ok(None);
+    }
+    Ok(Some(file))
+}
+
 fn remove_file(path: &Path) -> Result<()> {
     if path.is_file() {
         fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
@@ -200,6 +308,39 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn fork_writes_named_copy_and_list_finds_it() {
+        use crate::provider::LlmClient;
+        use crate::tools::ShellPolicy;
+        use std::sync::Arc;
+
+        let dir = temp_dir().join(format!("lb-sess-fork-{}", std::process::id()));
+        let workdir = dir.join("wd");
+        let store = dir.join("sessions");
+        fs::create_dir_all(&workdir).unwrap();
+        fs::create_dir_all(&store).unwrap();
+        let workdir = workdir.canonicalize().unwrap();
+
+        let mut agent = Agent::new(
+            LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),
+            Arc::from(workdir.as_path()),
+            ShellPolicy::default(),
+        );
+        agent.api_history.push(ApiMessage::user("hello"));
+        let name = fork_in(&store, &agent, &workdir, "try a risky thing!").unwrap();
+        assert!(name.ends_with("-try-a-risky-thing.json"));
+        assert!(store.join(&name).is_file());
+
+        let metas = list_in(&store);
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].workdir, workdir);
+        assert_eq!(metas[0].user_turns, 1);
+
+        let loaded = load_named_in(&store, &name).unwrap().expect("fork loads");
+        assert_eq!(loaded.workdir, workdir);
+        assert!(load_named_in(&store, "../etc/passwd").unwrap().is_none());
     }
 
     #[test]

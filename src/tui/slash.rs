@@ -37,6 +37,9 @@ const COMMANDS: &[(&str, &str)] = &[
     ("compact", "compact old tool results in API history (no model call)"),
     ("rewind", "drop the last n user turns from history (/rewind [n])"),
     ("undo", "restore files edited on the last turn from .lightrs/backups"),
+    ("plan", "toggle plan mode — read-only tools only (no writes/shell)"),
+    ("fork", "checkpoint this session as a named fork (/fork [name])"),
+    ("resume", "list sessions or restore one (/resume <n|name>)"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +206,23 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                 n,
                 crate::config::model_context_window(&app.config.model),
             );
-            agent.push_system(context_details(&app.config, n, &usage, "status"));
+            let mut text = context_details(&app.config, n, &usage, "status");
+            let changed: Vec<&String> = agent.changed_files().collect();
+            if !changed.is_empty() {
+                let names = changed
+                    .iter()
+                    .take(5)
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let more = changed.len().saturating_sub(5);
+                let suffix = if more > 0 { format!(", +{more} more") } else { String::new() };
+                text.push_str(&format!(
+                    "\nfiles changed: {} ({names}{suffix})",
+                    changed.len()
+                ));
+            }
+            agent.push_system(text);
             SlashAction::Handled
         }
         "model" => {
@@ -398,6 +417,92 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
             match crate::session::undo_last_turn(app.workdir(), &ui) {
                 Ok(notes) => agent.push_system(notes.join("\n")),
                 Err(e) => agent.push_error(format!("undo failed: {e:#}")),
+            }
+            SlashAction::Handled
+        }
+        "plan" => {
+            agent.set_read_only(!agent.read_only());
+            SlashAction::Handled
+        }
+        "fork" => {
+            let name = line.split_whitespace().nth(1).unwrap_or("fork");
+            match session::fork(agent, app.workdir(), name) {
+                Ok(file) => {
+                    let slug = file.trim_end_matches(".json");
+                    agent.push_system(format!("session forked → {slug} (/resume {slug} to restore)"));
+                }
+                Err(e) => agent.push_error(format!("fork failed: {e:#}")),
+            }
+            SlashAction::Handled
+        }
+        "resume" => {
+            let arg = line.split_whitespace().nth(1).unwrap_or("");
+            let metas = session::list();
+            if arg.is_empty() {
+                if metas.is_empty() {
+                    agent.push_system("no saved sessions");
+                } else {
+                    let cwd = app.workdir();
+                    let rows = metas
+                        .iter()
+                        .enumerate()
+                        .map(|(i, m)| {
+                            let here = if m.workdir == *cwd { "*" } else { " " };
+                            format!(
+                                "{here} {}. {} — {} user turns — {}",
+                                i + 1,
+                                m.file_name.trim_end_matches(".json"),
+                                m.user_turns,
+                                m.workdir.display()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    agent.push_system(format!("sessions (* = this workdir):\n{rows}\nresume with /resume <n>"));
+                }
+                return SlashAction::Handled;
+            }
+            // `/resume <n>` picks by list number; `/resume <name>` matches the
+            // exact or fork-suffixed filename.
+            let file_name = arg.parse::<usize>().ok().and_then(|n| {
+                metas.get(n.wrapping_sub(1)).filter(|_| n >= 1).map(|m| m.file_name.clone())
+            }).or_else(|| {
+                let exact = format!("{arg}.json");
+                metas
+                    .iter()
+                    .find(|m| m.file_name == exact || m.file_name.ends_with(&format!("-{exact}")))
+                    .map(|m| m.file_name.clone())
+            });
+            let Some(file_name) = file_name else {
+                agent.push_system(format!("no session matching {arg} — see /resume"));
+                return SlashAction::Handled;
+            };
+            match session::load_named(&file_name) {
+                Ok(Some(file)) => {
+                    let _ = session::save(agent, app.workdir());
+                    let foreign = file.workdir != *app.workdir();
+                    if foreign {
+                        let dir = file.workdir.clone();
+                        app.config.workdir = dir.clone();
+                        app.git_branch = crate::tui::info::git_branch_label(&dir);
+                        let reload = app.config.reload_shell_from_file().ok();
+                        agent.set_shell_policy(app.config.shell_policy.clone());
+                        sync_heal(agent, app);
+                        if let Some(msg) = reload
+                            && msg.contains("project")
+                        {
+                            agent.push_system(msg);
+                        }
+                    }
+                    let wd = file.workdir.clone();
+                    agent.restore_session(file);
+                    if foreign {
+                        agent.set_workdir(std::sync::Arc::from(wd.as_path()));
+                    }
+                    agent.push_system(format!("resumed {}", file_name.trim_end_matches(".json")));
+                }
+                Ok(None) => agent.push_system(format!("no session named {file_name}")),
+                Err(e) => agent.push_error(format!("resume failed: {e:#}")),
             }
             SlashAction::Handled
         }
@@ -710,6 +815,8 @@ mod tests {
             workdir: dir.clone(),
             shell_policy: ShellPolicy::default(),
             test_command: None,
+            format_command: None,
+            read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
         });
@@ -856,6 +963,8 @@ mod tests {
                 workdir: dir.clone(),
                 shell_policy: ShellPolicy::default(),
                 test_command: None,
+                format_command: None,
+                read_only: false,
                 heal_steps: 3,
                 endpoints: Default::default(),
             });
@@ -1075,6 +1184,25 @@ mod tests {
     }
 
     #[test]
+    fn status_lists_changed_files() {
+        let (dir, mut app, mut agent) = fixture::build("statfiles");
+        run_slash("/status", &mut agent, &mut app);
+        assert!(
+            !last_ui_content(&agent).contains("files changed"),
+            "no files yet — line must not appear"
+        );
+        agent.changed_files.insert("src/a.rs".into());
+        agent.changed_files.insert("src/b.rs".into());
+        run_slash("/status", &mut agent, &mut app);
+        let text = last_ui_content(&agent);
+        assert!(
+            text.contains("files changed: 2") && text.contains("src/a.rs, src/b.rs"),
+            "{text}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn quiet_toggles_and_reports() {
         let (dir, mut app, mut agent) = fixture::build("quiet");
         run_slash("/quiet", &mut agent, &mut app);
@@ -1209,6 +1337,17 @@ mod tests {
         let msg = last_ui_content(&agent);
         // Ambient skill dirs differ per machine — both branches are valid.
         assert!(msg.contains("skill"), "{msg}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn plan_toggles_read_only() {
+        let (dir, mut app, mut agent) = fixture::build("plan");
+        assert!(!agent.read_only());
+        run_slash("/plan", &mut agent, &mut app);
+        assert!(agent.read_only(), "first /plan enables plan mode");
+        assert!(last_ui_content(&agent).contains("Plan mode ON"));
+        run_slash("/plan", &mut agent, &mut app);
+        assert!(!agent.read_only(), "second /plan disables it");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
