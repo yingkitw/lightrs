@@ -24,6 +24,24 @@ pub(crate) struct FileConfig {
     pub shell: Option<FileShell>,
     pub skills: Option<FileSkills>,
     pub tui: Option<FileTui>,
+    /// `[mcp.<name>]` — stdio MCP servers; project overlays may add/override.
+    pub mcp: Option<std::collections::BTreeMap<String, FileMcp>>,
+    /// `[lsp.<lang>]` — stdio language servers; same overlay policy as mcp.
+    pub lsp: Option<std::collections::BTreeMap<String, FileLsp>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FileMcp {
+    pub command: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FileLsp {
+    pub command: String,
+    /// File extensions routed to this server (`rs`, `ts`, …). Required for
+    /// extension → language resolution in the `lsp` tool.
+    #[serde(default)]
+    pub extensions: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -127,6 +145,29 @@ pub(crate) fn shell_from_files<'a>(
         )
     })
     .unwrap_or((Vec::new(), false, None, None, 3))
+}
+
+/// Effective `[mcp]`/`[lsp]` — project entries merge over global (same-name
+/// wins), matching how `[shell]` overlays compose.
+pub(crate) fn external_from_files(
+    project: Option<&FileConfig>,
+    global: Option<&FileConfig>,
+) -> (crate::mcp::McpSpecs, crate::lsp::LspSpecs) {
+    let mut mcp = crate::mcp::McpSpecs::new();
+    let mut lsp = crate::lsp::LspSpecs::new();
+    for src in [global, project].into_iter().flatten() {
+        if let Some(m) = &src.mcp {
+            for (name, s) in m {
+                mcp.insert(name.clone(), s.command.clone());
+            }
+        }
+        if let Some(m) = &src.lsp {
+            for (name, s) in m {
+                lsp.insert(name.clone(), (s.command.clone(), s.extensions.clone()));
+            }
+        }
+    }
+    (mcp, lsp)
 }
 
 pub fn load_tui_theme() -> Option<String> {
@@ -245,6 +286,34 @@ mod tests {
         assert!(!req);
         assert_eq!(cmd.as_deref(), Some("npm test"));
         assert_eq!(steps, 3);
+    }
+
+    #[test]
+    fn external_overlays_merge_project_over_global() {
+        let global: FileConfig = toml::from_str(
+            r#"
+[mcp.docs]
+command = "docs-server"
+[lsp.rust]
+command = "rust-analyzer"
+extensions = ["rs"]
+"#,
+        )
+        .unwrap();
+        let project: FileConfig = toml::from_str(
+            r#"
+[mcp.docs]
+command = "project-docs"
+[mcp.local]
+command = "local-server"
+"#,
+        )
+        .unwrap();
+        let (mcp, lsp) = external_from_files(Some(&project), Some(&global));
+        assert_eq!(mcp["docs"], "project-docs");
+        assert_eq!(mcp["local"], "local-server");
+        assert_eq!(lsp["rust"].0, "rust-analyzer");
+        assert_eq!(lsp["rust"].1, vec!["rs".to_string()]);
     }
 
     #[test]

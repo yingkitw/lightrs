@@ -5,34 +5,23 @@ use anyhow::Result;
 
 use crate::agent::Agent;
 use crate::config::AppConfig;
-use crate::provider::LlmClient;
 use crate::tools::ShellPolicy;
 
 pub async fn run_prompt(
-    cfg: AppConfig,
+    mut cfg: AppConfig,
     prompt: String,
     json: bool,
     approve_shell: bool,
     output_schema: Option<String>,
 ) -> Result<String> {
-    let shell_policy = if approve_shell {
-        ShellPolicy::new(
-            cfg.shell_policy.allowlist().to_vec(),
-            false,
-        )
-    } else {
-        cfg.shell_policy.clone()
-    };
-    let client = LlmClient::new(cfg.base_url.clone(), cfg.api_key.clone(), cfg.model.clone());
-    let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
-    let mut agent = Agent::new(client, Arc::clone(&workdir), shell_policy);
-    if let Some(fm) = &cfg.fallback_model {
-        agent.set_fallback_client(Some(LlmClient::new(
-            cfg.base_url.clone(),
-            cfg.api_key.clone(),
-            fm.clone(),
-        )));
+    // `--approve-shell` widens policy by mutating cfg before from_config —
+    // every agent-built-from-config feature (mcp/lsp/read_only/weak/…)
+    // reaches exec for free, and the mutation stays exec-local.
+    if approve_shell {
+        cfg.shell_policy = ShellPolicy::new(cfg.shell_policy.allowlist().to_vec(), false);
     }
+    let workdir: Arc<Path> = Arc::from(cfg.workdir.as_path());
+    let mut agent = Agent::from_config(&cfg, Arc::clone(&workdir));
     // `--output-schema` accepts a literal JSON schema or a path to a file.
     let output_schema = output_schema
         .map(|s| {
@@ -43,11 +32,6 @@ pub async fn run_prompt(
                 s
             }
         });
-    agent.set_weak_model(cfg.weak_model.clone());
-    agent.set_format_command(cfg.format_command.clone());
-    if cfg.read_only {
-        agent.set_read_only(true);
-    }
     if let Some(cmd) = &cfg.test_command {
         agent.set_heal(Some(crate::agent::HealSetting {
             command: cmd.clone(),

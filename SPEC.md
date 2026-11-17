@@ -97,7 +97,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - **Lean API context**: persisted user rows are composer text only; `@` file bodies and `$skill` bodies attach for the **active turn** only. Prior turns omit attachments when resent. Tool results in API history are capped (**6 KiB**); full output may still appear in the TUI.
 - **Streaming**: assistant text appended live when supported; tool calls assembled from stream deltas before execution
 - **Response dialects** (`provider/dialect.rs`): response parsing is lenient — `content` accepts a string or parts array (`[{"type":"text","text":…}]`), `reasoning_content`/`reasoning` fields, index-less `tool_calls` deltas, tool calls missing `id`/`type` (backfilled `call_{i}`/`function` via `normalize_tool_calls`), `function.arguments` as a JSON object (serialized), and `input_tokens`/`output_tokens` usage aliases are all accepted. Error responses read a **4 KiB-bounded** body (`error_body_capped` — HTML dumps would otherwise land in the transcript/history) and extract a message from `{"error":{"message"/"msg"/"detail"}}`, `{"error":"…"}`, or `{"message":"…"}` (`api_error_message`), falling back to the capped raw body. `ModelDialect::for_model` adds model-specific policy — today only `inline_think` (DeepSeek-R1/MiniMax-M1-style models emit `<think>…</think>` inside `content`; it's split into reasoning — live via a `ThinkSplitter` state machine that holds back tag fragments across deltas). Reasoning text renders as a muted `[think]` transcript row (streamed live via `ReasoningDelta`, or appended post-hoc for non-stream/field replies); it is **never** echoed back on the wire or persisted in API history (`ApiMessage.reasoning_content` is receive-only). Unknown models get the plain OpenAI dialect. Streamed requests send `stream_options: {"include_usage": true}` — providers omit the terminal `usage` chunk unless asked, so token stats would silently zero on every streamed turn (the field is cleared on the non-stream fallback). When SSE fails, the non-stream `chat()` retry is **cancelable** — Esc aborts the in-flight request (the select drops the future) instead of waiting out the HTTP timeout
-- Tools: `read_file`, `write_file`, `patch_file`, `multi_edit`, `list_dir`, `grep`, `glob_file_search`, `run_command`, `todo_write`, `web_fetch`, `ask_user` (schemas in `tools/schemas.rs`)
+- Tools: `read_file`, `write_file`, `patch_file`, `multi_edit`, `list_dir`, `grep`, `glob_file_search`, `run_command`, `todo_write`, `web_fetch`, `ask_user`, `spawn_agent`, `mcp_call`, `lsp` (schemas in `tools/schemas.rs`)
 - **`read_file`**: `max_bytes` (default 64 KiB, hard max 512 KiB) bounds the **read at the source** (`File::take` + `metadata` size for the truncation note) — an oversized file can never load whole.
 - **`patch_file`**: exact match first; single-occurrence edits fall back to whitespace/indent-tolerant match (`tools/edit_match.rs`). **`replace_all`** requires exact `old_string` matches. Prior content is read-bounded at **1 MiB** — larger files refuse (`patch` must match against real content); `write_file` over one proceeds without backup or diff and says so in the summary.
 - **`grep`** (non-`rg` fallback): reads at most `MAX_READ_BYTES`+1 per file (256 KiB) — binaries are skipped by NUL check on that bounded slice, not by loading the file.
@@ -105,7 +105,10 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - **`todo_write`**: replaces the whole task list (`items[].content`, `items[].status` ∈ `pending|in_progress|completed`, max 32) persisted to `.lightrs/todos.json` (`tools/todo.rs`); view with `/todo`
 - **`web_fetch`** (`tools/web.rs`): GET an `http(s)` URL; HTML stripped to text (script/style dropped, entities decoded, blanks collapsed); body bounded at **64 KiB** read live off the stream; http/https schemes only; cancel-aware. Dispatched async from the turn loop (no `reqwest::blocking` dep)
 - **`ask_user`** (`agent/approval.rs`): model-initiated clarifying question — routes through `ui_tx` oneshot like shell approval; next Enter submits the answer, Esc declines with `(user declined to answer)`; headless/ACP fail closed (`needs an interactive TUI`)
-- **Plan mode** (`/plan`, `--read-only`): `write_file`/`patch_file`/`multi_edit`/`run_command` are denied at the tool gate before approval/execution (`READ_ONLY_DENY`); read/search/`todo_write`/`web_fetch`/`ask_user` still run; the system prompt carries the mode so the model plans instead of discovering per-call; status bar shows `· plan`
+- **`spawn_agent`** (`agent/approval.rs`): delegates a self-contained prompt to a child `Agent` sharing the parent's client — own context, same tools, **depth-capped** (children cannot spawn), headless policy (shell approvals fail closed), cancel propagates through the shared watch token. `read_only: true` forces the child into plan mode — inherited automatically when the parent is in plan mode
+- **`mcp_call`** (`mcp/`): calls a tool on a `[mcp.<name>]` stdio server — newline-delimited JSON-RPC (`initialize` → `tools/list` cached → `tools/call`), spawned lazily on first use, 30s per-RPC deadline, dead servers respawn on next call. Omit `tool` to list the server's tools. Configured server names are advertised in the system prompt. Denied in plan mode (unknown side effects)
+- **`lsp`** (`lsp/`): navigates via a `[lsp.<lang>]` stdio language server — `Content-Length` framed JSON-RPC, `initialize` per language, full-text `didOpen`/`didChange` sync (refused past 512 KiB — truncated docs would analyze wrong), 15s deadline, failed requests drop the server for respawn. `definition`/`references`/`hover`/`symbols`; language resolved from the file extension so the model never names a server
+- **Plan mode** (`/plan`, `--read-only`): `write_file`/`patch_file`/`multi_edit`/`run_command`/`mcp_call` are denied at the tool gate before approval/execution (`READ_ONLY_DENY`); read/search/`todo_write`/`web_fetch`/`ask_user`/`lsp` still run, `spawn_agent` runs with an inherited read-only child; the system prompt carries the mode so the model plans instead of discovering per-call; status bar shows `· plan`
 - **HTTP**: chat requests use 120s timeout, 30s connect timeout, up to **3** retries on 429/5xx and transient transport errors (`provider/http.rs`). Retries honor `Retry-After: <secs>` (seconds only, capped at **30s** — `max(hint, exponential backoff)`) and the retry sleep is **cancelable**; discarded retry bodies are read capped (4 KiB), never in full.
 - **Fallback model**: `--fallback-model <m>` or `fallback_model` in `config.toml` retries a failed model fetch **once** on the secondary model (any non-interrupt error); a `[sys]` line notes the switch
 - **Weak-model routing**: `--weak-model <m>` or `weak_model` runs each user turn on the cheaper model until a step calls a write/exec tool (`write_file`, `patch_file`, `multi_edit`, `run_command`), then escalates to `model` for the rest of that turn (one `[sys]` note per escalation). Next turn starts weak again.
@@ -130,7 +133,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 
 Priority: **CLI/env > project overlay > config file > defaults** (`config/file.rs`, `config.example.toml`). API-key env vars feed the CLI tier via clap `env=` args.
 
-**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, `weak_model`, and `[shell]` are applied — a project `[shell]` section replaces the global one entirely. `provider`, `base_url`, `keys`, `endpoints`, and `workdir` are parsed but ignored, so a repo file cannot redirect API calls or inject credentials.
+**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, `weak_model`, `[shell]`, `[mcp.*]`, and `[lsp.*]` are applied — a project `[shell]` section replaces the global one entirely; `[mcp]`/`[lsp]` entries merge (same-name project wins). `provider`, `base_url`, `keys`, `endpoints`, and `workdir` are parsed but ignored, so a repo file cannot redirect API calls or inject credentials.
 
 **Secret-bearing files** are written owner-only: `config.toml` (`save_tui_theme`, `migrate`, `import opencode` incl. the `opencode-import.toml` alt) and OpenCode `mcp.json` go through `write_private_file` — `mode(0o600)` at create plus `set_permissions` to normalize a pre-existing permissive file.
 
@@ -155,6 +158,29 @@ require_approval = true
 When `require_approval` is true, the TUI prompts **y/n** before `run_command`, except **likely read-only** commands (`ls`, `git status`, `cargo check`, …) auto-run (`tools/shell_readonly.rs`; deny list still wins; `KEY=val` env prefixes are peeled before classifying). When the allowlist blocks a command, the same prompt appears; **y** runs it once (bypass allowlist for that invocation only). **n** or **Esc** denies and the tool returns `error: user denied shell command` to the model. While prompting, the input area shows the command(s) and other keys are ignored.
 
 **Batched**: all `run_command` calls in one model step that need approval are collected into a **single** prompt (up to 3 command lines shown + `… +n more`); **y** approves every command in the step, **n** denies all. Read-only calls in the same step still auto-run. **ACP / headless** auto-runs the same read-only set; other commands fail closed without a TUI.
+
+### MCP servers
+
+```toml
+[mcp.docs]
+command = "npx -y @modelcontextprotocol/server-filesystem /tmp"
+```
+
+Each `[mcp.<name>]` registers a stdio MCP server reachable through `mcp_call`. Servers spawn lazily on first call and are killed at drop; framing is newline-delimited JSON-RPC 2.0 (the common stdio-server shape — not Content-Length). Project overlays may add/override entries (same risk profile as `test_command`).
+
+### Language servers
+
+```toml
+[lsp.rust]
+command = "rust-analyzer"
+extensions = ["rs"]          # file extensions routed to this server
+
+[lsp.ts]
+command = "typescript-language-server --stdio"
+extensions = ["ts", "tsx"]
+```
+
+Each `[lsp.<lang>]` registers a stdio language server for the `lsp` tool. `extensions` is required — it maps a file path to a server so the tool schema stays language-free. `command` runs via `sh -c` in the workdir (rootUri).
 
 ### Heal / post-edit check
 

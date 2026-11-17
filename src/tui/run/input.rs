@@ -288,6 +288,8 @@ mod tests {
             read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
+            mcp: Default::default(),
+            lsp: Default::default(),
         })
     }
 

@@ -390,6 +390,8 @@ mod tests {
             read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
+            mcp: Default::default(),
+            lsp: Default::default(),
         })
     }
 
@@ -445,6 +447,8 @@ mod tests {
             read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
+            mcp: Default::default(),
+            lsp: Default::default(),
         });
         let (tx, rx) = tokio::sync::oneshot::channel();
         app.pending_ask = Some(AskUserRequest {

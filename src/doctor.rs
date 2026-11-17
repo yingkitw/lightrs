@@ -92,6 +92,8 @@ mod tests {
             read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
+            mcp: Default::default(),
+            lsp: Default::default(),
         };
         run_check(&cfg).unwrap();
         let _ = std::fs::remove_dir_all(&dir);

@@ -87,6 +87,16 @@ pub struct Agent {
     pub(crate) format_cmd: Option<String>,
     /// Plan/read-only mode — write/exec tools denied at the tool gate.
     pub(crate) read_only: bool,
+    /// Sub-agent depth — `spawn_agent` children get depth+1; depth ≥1 cannot spawn.
+    pub(crate) depth: u8,
+    /// Lazy MCP servers (`[mcp.<name>]`); behind its own mutex so the agent
+    /// lock is never held across a server RPC.
+    pub(crate) mcp: Option<Arc<tokio::sync::Mutex<crate::mcp::McpManager>>>,
+    /// Lazy LSP servers (`[lsp.<lang>]`); same lock-isolation rule.
+    pub(crate) lsp: Option<Arc<tokio::sync::Mutex<crate::lsp::LspManager>>>,
+    /// Configured MCP server names — advertised in the system prompt so the
+    /// model knows valid `mcp_call.server` values.
+    pub(crate) mcp_names: Vec<String>,
     /// Heal runs so far this user turn (reset in `begin_user_turn`).
     pub(crate) heal_ran: u32,
     /// One-shot `[sys]` note once the wire window first sends fewer turns than history holds.
@@ -94,7 +104,24 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// Sub-agent constructor — shares the parent's client `Arc` (clients are
+    /// stateless per request) and records depth so grandchildren are denied.
+    pub(crate) fn new_shared(
+        client: Arc<dyn ModelClient>,
+        workdir: Arc<Path>,
+        shell_policy: ShellPolicy,
+        depth: u8,
+    ) -> Self {
+        let mut agent = Self::new_inner(client, workdir, shell_policy);
+        agent.depth = depth;
+        agent
+    }
+
     pub fn new(client: impl ModelClient + 'static, workdir: Arc<Path>, shell_policy: ShellPolicy) -> Self {
+        Self::new_inner(Arc::new(client), workdir, shell_policy)
+    }
+
+    fn new_inner(client: Arc<dyn ModelClient>, workdir: Arc<Path>, shell_policy: ShellPolicy) -> Self {
         let mut api_history = Vec::new();
         let skill_catalog = SkillCatalog::default();
         api_history.push(ApiMessage::system(system_prompt(
@@ -102,9 +129,10 @@ impl Agent {
             &shell_policy,
             &skill_catalog,
             false,
+            &[],
         )));
         let mut agent = Self {
-            client: Arc::new(client),
+            client,
             fallback_client: None,
             weak_model: None,
             weak_active: false,
@@ -125,6 +153,10 @@ impl Agent {
             heal: None,
             format_cmd: None,
             read_only: false,
+            depth: 0,
+            mcp: None,
+            lsp: None,
+            mcp_names: Vec::new(),
             heal_ran: 0,
             wire_window_noted: false,
         };
@@ -152,6 +184,19 @@ impl Agent {
         agent.set_format_command(cfg.format_command.clone());
         if cfg.read_only {
             agent.set_read_only(true);
+        }
+        if !cfg.mcp.is_empty() {
+            agent.mcp_names = cfg.mcp.keys().cloned().collect();
+            agent.mcp = Some(Arc::new(tokio::sync::Mutex::new(crate::mcp::McpManager::new(
+                cfg.mcp.clone(),
+            ))));
+            agent.ensure_system_prompt();
+        }
+        if !cfg.lsp.is_empty() {
+            agent.lsp = Some(Arc::new(tokio::sync::Mutex::new(crate::lsp::LspManager::new(
+                cfg.lsp.clone(),
+                cfg.workdir.clone(),
+            ))));
         }
         agent
     }
@@ -248,6 +293,7 @@ impl Agent {
             &self.shell_policy,
             &self.skill_catalog,
             self.read_only,
+            &self.mcp_names,
         ));
         match self.api_history.first_mut() {
             Some(first) if matches!(first.role, ApiRole::System) => *first = prompt,
@@ -419,6 +465,7 @@ impl Agent {
             &self.shell_policy,
             &self.skill_catalog,
             self.read_only,
+            &self.mcp_names,
         )));
         let mut ui = self.ui_history.lock().unwrap();
         ui.clear();
@@ -494,6 +541,8 @@ mod streaming_tests {
             read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
+            mcp: Default::default(),
+            lsp: Default::default(),
         };
         let agent = Agent::from_config(&cfg, Arc::from(Path::new(".")));
         assert_eq!(agent.client.model(), "main");

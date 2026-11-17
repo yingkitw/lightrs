@@ -119,6 +119,10 @@ pub struct AppConfig {
     /// kimi-for-coding key needs `api.kimi.ai/coding/v1`, not moonshot).
     /// Global config only — project overlays ignore it like keys/base_url.
     pub endpoints: std::collections::BTreeMap<Provider, String>,
+    /// `[mcp.<name>]` — name → stdio command (lazily spawned by `mcp_call`).
+    pub mcp: crate::mcp::McpSpecs,
+    /// `[lsp.<lang>]` — lang → (stdio command, extensions) for the `lsp` tool.
+    pub lsp: crate::lsp::LspSpecs,
 }
 
 impl AppConfig {
@@ -185,6 +189,7 @@ impl AppConfig {
 
         let (allowlist, require_approval, test_command, format_command, heal_steps) =
             file::shell_from_files(project.as_ref(), file.as_ref());
+        let (mcp, lsp) = file::external_from_files(project.as_ref(), file.as_ref());
 
         Ok(Self {
             provider,
@@ -218,6 +223,8 @@ impl AppConfig {
                         .collect()
                 })
                 .unwrap_or_default(),
+            mcp,
+            lsp,
         })
     }
 
@@ -436,6 +443,8 @@ mod endpoint_tests {
                 Provider::Kimi,
                 "https://api.kimi.ai/coding/v1".into(),
             )]),
+            mcp: Default::default(),
+            lsp: Default::default(),
         }
     }
 

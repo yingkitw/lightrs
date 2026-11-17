@@ -175,6 +175,54 @@ pub fn tool_schemas() -> Vec<serde_json::Value> {
         serde_json::json!({
             "type": "function",
             "function": {
+                "name": "spawn_agent",
+                "description": "Delegate a self-contained subtask to a child agent (own context, same tools). Returns its final reply. Cannot be approved for shell interactively — write-free subtasks work best.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": { "type": "string", "description": "Complete task description — the child sees no prior conversation" },
+                        "read_only": { "type": "boolean", "description": "Force plan mode on the child (exploration only). Inherited automatically when the parent is in plan mode." }
+                    },
+                    "required": ["prompt"]
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "mcp_call",
+                "description": "Call a tool on a configured MCP server ([mcp.<name>] in config). Omit `tool` to list the server's tools first.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "server": { "type": "string", "description": "Server name from config" },
+                        "tool": { "type": "string", "description": "Tool name; omit to list available tools" },
+                        "arguments": { "type": "object", "description": "Tool arguments (JSON object)" }
+                    },
+                    "required": ["server"]
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "lsp",
+                "description": "Query a configured language server ([lsp.<lang>] in config) for code navigation. Language is resolved from the file extension.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "op": { "type": "string", "enum": ["definition", "references", "hover", "symbols"], "description": "Operation" },
+                        "path": { "type": "string", "description": "File path (relative to workdir)" },
+                        "line": { "type": "integer", "description": "1-based line; required for definition/references/hover" },
+                        "character": { "type": "integer", "description": "1-based column; defaults to 1" }
+                    },
+                    "required": ["op", "path"]
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
                 "name": "run_command",
                 "description": "Run a shell command in the workdir (sh -c). Use for builds, git, etc.",
                 "parameters": {

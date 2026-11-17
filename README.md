@@ -118,14 +118,14 @@ lightrs import opencode --config ~/.config/opencode/opencode.json --project ./op
 
 Writes under `~/.config/lightrs/` (`config.toml` or `opencode-import.toml`, `mcp.json`, `skills/`, `rules/`, `hooks/`). API keys are copied into TOML locally — keep that directory private.
 
-**MCP:** `mcp.json` is saved for your reference (same shape as OpenCode/Cursor). lightrs does not spawn MCP servers in v0.1 — use your editor’s MCP client or a future `lightrs` release if we wire it.
+**MCP:** `mcp.json` is saved for your reference (same shape as OpenCode/Cursor). To actually run servers, add them under `[mcp.<name>]` in `config.toml` — lightrs spawns them on demand for the `mcp_call` tool.
 
 At runtime, lightrs **discovers skills** from that tree plus `~/.cursor/skills`, `~/.claude/skills`, `~/.agents/skills`, `~/.pi/agent/skills`, and `~/.codex/skills`, puts a compact catalog in the system prompt, and loads full skill text when you use `$skill-name` in a message (same idea as OpenCode/pi/Codex-style skills).
 
 ## Design
 
 - One OpenAI-compatible HTTP client for all backends (optional streaming SSE)
-- Fixed tool set (11): fs read/write/patch, `grep`, `list_dir`, `glob_file_search`, `run_command`, `todo_write`, `web_fetch`, `ask_user`; no in-process MCP/LSP
+- Fixed tool set (14): fs read/write/patch, `grep`, `list_dir`, `glob_file_search`, `run_command`, `todo_write`, `web_fetch`, `ask_user`, `spawn_agent` (sub-agents), `mcp_call` + `lsp` (stdio servers, config-declared)
 - Tokio agent worker + sync TUI thread; per-project session JSON under `~/.config/lightrs/sessions/` (user/agent/tool turns; ephemeral `[sys]` omitted)
 - Main crates: `ratatui`, `reqwest`, `pulldown-cmark`, `syntect`, `similar` (write diffs)
 
@@ -138,9 +138,9 @@ Compared 2026-11-16 against Claude Code, Codex CLI, OpenCode, and pi — ✅ shi
 |---|---|---|---|---|---|
 | Stack / footprint | Rust, ~7.4M bin, 13 deps | Node/TS | Rust | TS/Bun + Go TUI | TS |
 | Providers | GLM/Kimi/MiniMax + any OpenAI-compat | Anthropic | OpenAI | 75+ | multi |
-| Tools | 9, all bounded | ~15 | shell+patch | ~12 + LSP | 8 + ext |
+| Tools | 14, all bounded | ~15 | shell+patch | ~12 + LSP | 8 + ext |
 | Web fetch | ✅ | ✅ | ✅ | ✅ | ext |
-| MCP / sub-agents / LSP | ⛔ | ✅ | ◐/—/— | ✅ | ext |
+| MCP / sub-agents / LSP | ✅ (stdio, lean) | ✅ | ◐/—/— | ✅ | ext |
 | Plan/read-only mode | ✅ `/plan` `--read-only` | ✅ | ✅ | ✅ | ext |
 | OS sandbox | — | ✅ | ✅ | — | — |
 | Fork/branch session | ✅ `/fork` `/resume` | ✅ | — | ✅ | ✅ |
@@ -152,4 +152,4 @@ Compared 2026-11-16 against Claude Code, Codex CLI, OpenCode, and pi — ✅ shi
 
 **Gaps worth adopting** (ranked in TODO brainstorm): all adopted — `web_fetch`, plan mode, `/fork` + `/resume`, `[shell].format_command`, turn-end bell, `--output-schema`, `ask_user`.
 
-**Deliberate non-goals**: MCP runtime, sub-agents, LSP/tree-sitter, OS sandbox, hooks, keyring, worktrees, semantic index, plugins, vim mode, image input, share links.
+**Deliberate non-goals**: OS sandbox, hooks, keyring, worktrees, semantic index, tree-sitter, plugins, vim mode, image input, share links. (MCP/sub-agents/LSP graduated from this list — see the lean implementations above.)

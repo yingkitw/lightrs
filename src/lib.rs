@@ -8,6 +8,8 @@ pub mod commands;
 pub mod config;
 pub mod doctor;
 pub mod exec;
+pub mod lsp;
+pub mod mcp;
 pub mod mentions;
 pub mod migrate;
 pub mod opencode;

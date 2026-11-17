@@ -9,7 +9,7 @@ use crate::provider::{ModelClient, is_interrupted};
 use crate::tools::{ShellPolicy, execute_tool, tool_schemas};
 use crate::tui::AgentEvent;
 
-use super::approval::{ShellGate, ask_user_outcome, resolve_shell_gate};
+use super::approval::{ShellGate, ask_user_outcome, resolve_shell_gate, spawn_agent_outcome};
 use super::helpers::{
     MAX_TOOL_STEPS, append_assistant_delta, append_thinking_delta, normalize_assistant_text,
     remove_trailing_empty_assistant, truncate_tool_ui,
@@ -430,6 +430,9 @@ async fn execute_one_tool_shared(
     let outcome = match name {
         "web_fetch" => crate::tools::web::run(workdir, args, Some(&cancel)).await,
         "ask_user" => ask_user_outcome(args, ui_tx, &cancel).await,
+        "spawn_agent" => spawn_agent_outcome(agent, workdir, args, &cancel).await,
+        "mcp_call" => crate::mcp::call_outcome(agent, args, &cancel).await,
+        "lsp" => crate::lsp::call_outcome(agent, workdir, args, &cancel).await,
         _ => {
             let (wd, n, a, p) = (
                 workdir.to_path_buf(),
@@ -483,7 +486,14 @@ const HEAL_TOOLS: &[&str] = &["write_file", "patch_file", "multi_edit"];
 
 /// Tools denied outright in plan/read-only mode (`/plan`, `--read-only`).
 /// `todo_write` stays — it's session scratch, not a file or shell change.
-const READ_ONLY_DENY: &[&str] = &["write_file", "patch_file", "multi_edit", "run_command"];
+const READ_ONLY_DENY: &[&str] = &[
+    "write_file",
+    "patch_file",
+    "multi_edit",
+    "run_command",
+    // MCP tools have unknown side effects — fail closed in plan mode.
+    "mcp_call",
+];
 
 /// Run the configured heal/test command (bypasses the shell policy, 120s cap).
 fn run_heal_command(

@@ -38,9 +38,21 @@ workdir = "."               # agent file/shell scope
 # enabled = true
 # paths = ["/extra/skill/root"]
 
+# Optional: stdio MCP servers — spawned lazily on first `mcp_call` (newline
+# JSON-RPC; omit `tool` in mcp_call args to list a server's tools first).
+# [mcp.filesystem]
+# command = "npx -y @modelcontextprotocol/server-filesystem /tmp"
+
+# Optional: stdio language servers — spawned lazily on first `lsp` call.
+# `extensions` routes a file to this server (the model passes only a path).
+# [lsp.rust]
+# command = "rust-analyzer"
+# extensions = ["rs"]
+
 # ──────────────────────────────────────────────────────────────
 # Per-project overlay: <workdir>/.lightrs/config.toml
-# Same schema; only model, fallback_model, weak_model, and [shell] are applied
-# (a project [shell] replaces the global one entirely).
+# Same schema; only model, fallback_model, weak_model, [shell], [mcp.*], and
+# [lsp.*] are applied (a project [shell] replaces the global one entirely;
+# mcp/lsp entries merge — same-name project wins).
 # provider / base_url / keys / workdir are ignored in the project file.
 # Precedence: CLI flags > project overlay > this global file.

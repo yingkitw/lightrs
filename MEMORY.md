@@ -483,3 +483,15 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Turn-end notify is one byte**: `\x07` on Done/Failed in the event handler — ratatui's alt screen doesn't corrupt on BEL.
 - **Pending modal state must die with its event**: `pending_ask`/`pending_approval` handlers return early for *every* key — if the turn's terminal event (Interrupted/Failed) doesn't clear them the UI is locked. Clear pending prompts on every terminal `AgentEvent`.
 - **New runtime flags belong in `Agent::from_config`**: TUI and ACP both build via `from_config`; wiring `read_only`/`format_command` there beat three call sites — ACP was silently ignoring both. exec keeps its own (different shell_policy for `--approve-shell`).
+
+## MCP / LSP / sub-agents (2026-11-16)
+
+- **Two stdio framings, don't confuse them**: MCP servers speak **newline-delimited** JSON-RPC; LSP servers speak `Content-Length: N\r\n\r\n` + body. `Content-Length:` header parse tolerates `Content-Type` siblings — read headers until blank line, then `read_exact(len)`.
+- **Server→client requests need a reply**: an eager server (roots/list, workspace/configuration) that gets silence can stall — both clients answer method-not-found (`-32601`) for inbound requests instead of ignoring them.
+- **Async recursion in the tool loop**: `execute_one_tool_shared` → `spawn_agent_outcome` → `run_user_turn_shared` recurses — `Box::pin` the child future or rustc rejects it (E0733).
+- **Sub-agent sharing, not copying**: `Agent::new_shared` clones the client `Arc` (stateless per request) + shell policy, records `depth`; child gets own history/ui buffers. Plan mode is *inherited* (`parent.read_only || args.read_only`) — a writable child would bypass the mode.
+- **Managers behind their own `Arc<Mutex>`**: `agent.mcp`/`agent.lsp` — `call_outcome` clones the Arc and drops the agent lock before the server RPC (same rule as approvals: never hold the agent lock across external IO).
+- **`.into()` into `impl Into<String>` params is ambiguous** (E0283): `ToolOutcome::ok("...".into())` fails to infer — pass the `&str` directly.
+- **Fake protocol servers for e2e tests**: a `while read`-loop `sh` script emulates MCP (newline JSON); for LSP framing, `dd bs=1 count=$len` reads the exact body (POSIX `read` is byte-wise on pipes so buffered over-read isn't a problem; `head -c` WOULD over-read). Echo the request `id` back via `sed`.
+- **Deny-by-default for unknown side effects**: `mcp_call` is in `READ_ONLY_DENY` — an MCP tool might write; `lsp` is navigation-only and allowed; `spawn_agent` is allowed but forced read-only.
+- **Model can't guess config names**: `[mcp.<name>]` server names are injected into `system_prompt` (param `mcp_names`) — the schema description alone doesn't tell the model which servers exist. `lsp` avoids this entirely by resolving lang from the file extension.

@@ -9,6 +9,7 @@ pub(crate) fn system_prompt(
     shell: &ShellPolicy,
     skills: &SkillCatalog,
     read_only: bool,
+    mcp_names: &[String],
 ) -> String {
     let mut text = format!(
         "lightrs agent. Workdir: {}. Use tools for filesystem facts; grep/glob to find paths; patch_file or multi_edit for edits; concise replies.",
@@ -24,6 +25,12 @@ pub(crate) fn system_prompt(
         text.push_str(
             " Plan/read-only mode: file edits and shell commands are disabled — explore, analyze, and propose a plan instead.",
         );
+    }
+    if !mcp_names.is_empty() {
+        text.push_str(&format!(
+            " MCP servers configured: {} — call mcp_call with one of these server names (omit `tool` to list its tools).",
+            mcp_names.join(", ")
+        ));
     }
     text.push_str(&load_workdir_context(workdir));
     text.push_str(&system_appendix(skills));
@@ -41,7 +48,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("AGENTS.md"), "always run clippy").unwrap();
-        let p = system_prompt(&dir, &ShellPolicy::default(), &SkillCatalog::default(), false);
+        let p = system_prompt(&dir, &ShellPolicy::default(), &SkillCatalog::default(), false, &[]);
         assert!(p.contains("always run clippy"));
         let _ = std::fs::remove_dir_all(&dir);
     }

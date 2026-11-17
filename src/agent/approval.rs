@@ -125,6 +125,65 @@ pub(crate) async fn ask_user_outcome(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct SpawnAgentArgs {
+    prompt: String,
+    #[serde(default)]
+    read_only: bool,
+}
+
+/// `spawn_agent` — run a delegated prompt in a child `Agent` sharing the
+/// parent's client `Arc` (stateless per request). Depth-capped: sub-agents
+/// cannot spawn agents. Headless — shell approvals inside the child fail
+/// closed like `exec`. Cancel propagates through the shared watch token.
+pub(crate) async fn spawn_agent_outcome(
+    parent: &std::sync::Arc<tokio::sync::Mutex<super::Agent>>,
+    workdir: &std::path::Path,
+    args: &str,
+    cancel: &watch::Receiver<bool>,
+) -> ToolOutcome {
+    let parsed: Result<SpawnAgentArgs> =
+        serde_json::from_str(args).context("parse spawn_agent JSON");
+    let (client, policy, depth, parent_read_only) = {
+        let g = parent.lock().await;
+        (
+            g.client.clone(),
+            g.shell_policy.clone(),
+            g.depth,
+            g.read_only,
+        )
+    };
+    if depth >= 1 {
+        return ToolOutcome::ok(
+            "error: spawn_agent depth limit — sub-agents cannot spawn agents".to_string(),
+        );
+    }
+    let a = match parsed {
+        Ok(a) if !a.prompt.trim().is_empty() => a,
+        Ok(_) => return ToolOutcome::ok("error: spawn_agent needs a non-empty prompt"),
+        Err(e) => return ToolOutcome::ok(format!("error: {e:#}")),
+    };
+    let mut child =
+        super::Agent::new_shared(client, std::sync::Arc::from(workdir), policy, depth + 1);
+    // Plan mode inherits: a writable child would bypass the parent's mode.
+    if a.read_only || parent_read_only {
+        child.set_read_only(true);
+    }
+    let child = std::sync::Arc::new(tokio::sync::Mutex::new(child));
+    // Boxed: spawn_agent → run_user_turn → spawn_agent is async recursion.
+    let fut = Box::pin(super::Agent::run_user_turn_shared(
+        child,
+        a.prompt,
+        |_| {},
+        cancel.clone(),
+        None,
+    ));
+    match fut.await {
+        Ok(text) => ToolOutcome::ok(text),
+        Err(e) => ToolOutcome::ok(format!("error: sub-agent failed: {e:#}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +273,88 @@ mod tests {
             .unwrap();
         assert_eq!(verdict, Some(true));
         approve.await.unwrap();
+    }
+
+    fn text_reply(text: &str) -> crate::provider::ModelReply {
+        (
+            crate::chat::ApiMessage {
+                role: crate::chat::ApiRole::Assistant,
+                content: Some(serde_json::Value::String(text.into())),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+                reasoning_content: None,
+            },
+            Some("stop".into()),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_runs_child_and_returns_reply() {
+        use crate::provider::MockModel;
+        let tool_call_msg = crate::chat::ApiMessage {
+            role: crate::chat::ApiRole::Assistant,
+            content: None,
+            tool_calls: Some(vec![ToolCall {
+                id: "s1".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "spawn_agent".into(),
+                    arguments: r#"{"prompt":"child task"}"#.into(),
+                },
+            }]),
+            tool_call_id: None,
+            name: None,
+            reasoning_content: None,
+        };
+        let mock = std::sync::Arc::new(MockModel::new(
+            "m",
+            vec![
+                Ok((tool_call_msg, Some("tool_calls".into()), None)),
+                Ok(text_reply("child answer")),
+                Ok(text_reply("parent final")),
+            ],
+        ));
+        let agent = std::sync::Arc::new(tokio::sync::Mutex::new(
+            crate::agent::Agent::new_shared(
+                mock.clone(),
+                std::sync::Arc::from(std::path::Path::new(".")),
+                ShellPolicy::default(),
+                0,
+            ),
+        ));
+        let (_tx, rx) = watch::channel(false);
+        let reply =
+            crate::agent::Agent::run_user_turn_shared(agent, "go".into(), |_| {}, rx, None)
+                .await
+                .unwrap();
+        assert_eq!(reply, "parent final");
+        let reqs = mock.requests.lock().unwrap();
+        assert_eq!(reqs.len(), 3);
+        // Request #2 is the child's — its user message carries the delegated prompt.
+        assert!(reqs[1].messages.iter().any(|m| {
+            serde_json::to_string(&m.content)
+                .unwrap_or_default()
+                .contains("child task")
+        }));
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_denied_at_depth_one() {
+        use crate::provider::MockModel;
+        let mock = std::sync::Arc::new(MockModel::text("m", "x"));
+        let agent = std::sync::Arc::new(tokio::sync::Mutex::new(
+            crate::agent::Agent::new_shared(
+                mock,
+                std::sync::Arc::from(std::path::Path::new(".")),
+                ShellPolicy::default(),
+                1,
+            ),
+        ));
+        let (_tx, rx) = watch::channel(false);
+        let out =
+            spawn_agent_outcome(&agent, std::path::Path::new("."), r#"{"prompt":"x"}"#, &rx).await;
+        assert!(out.body.contains("depth limit"), "{}", out.body);
     }
 }

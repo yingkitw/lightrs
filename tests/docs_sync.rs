@@ -36,6 +36,8 @@ const ARCHITECTURE_PATHS: &[(&str, &str)] = &[
     ("src/tui/run/observe.rs", "observe"),
     ("src/tui/editor.rs", "editor.rs"),
     ("src/tools/todo.rs", "todo"),
+    ("src/mcp/mod.rs", "mcp"),
+    ("src/lsp/mod.rs", "lsp"),
     ("src/tui/highlight/markdown.rs", "markdown"),
     ("src/tui/highlight/syntect.rs", "syntect"),
     ("src/tui/highlight/diff.rs", "highlight/diff"),
@@ -52,6 +54,11 @@ const TOOLS: &[&str] = &[
     "multi_edit",
     "run_command",
     "todo_write",
+    "web_fetch",
+    "ask_user",
+    "spawn_agent",
+    "mcp_call",
+    "lsp",
 ];
 
 const SLASH: &[&str] = &[
