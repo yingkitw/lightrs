@@ -154,6 +154,7 @@ impl Agent {
             tools: Some(tool_schemas()),
             tool_choice: Some(serde_json::json!("auto")),
             stream: None,
+            stream_options: None,
         }
     }
 
@@ -601,6 +602,7 @@ mod model_tests {
             tools: None,
             tool_choice: None,
             stream: None,
+            stream_options: None,
         }
     }
 

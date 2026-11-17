@@ -11,9 +11,9 @@ use tokio::sync::watch;
 pub use http::build_http_client;
 pub use stream::{StreamApply, StreamAccumulator, post_chat_stream, replay_sse_body};
 
-use crate::chat::{ApiErrorBody, ApiMessage, ChatRequest, ChatResponse, TokenUsage};
+use crate::chat::{ApiMessage, ChatRequest, ChatResponse, TokenUsage};
 use dialect::ModelDialect;
-use http::{HttpRetryOptions, auth_headers, post_json_with_retry};
+use http::{HttpRetryOptions, api_error_message, auth_headers, error_body_capped, post_json_with_retry};
 
 /// Pinned boxed future — keeps `ModelClient` object-safe without `async-trait`.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -87,12 +87,17 @@ impl LlmClient {
             .await
             .context("http request")?;
         let status = response.status();
-        let body = response.text().await.context("read response body")?;
+        // Errors read a bounded body — success needs the whole payload.
+        let body = if status.is_success() {
+            response.text().await.context("read response body")?
+        } else {
+            error_body_capped(response).await
+        };
         if !status.is_success() {
-            if let Ok(err) = serde_json::from_str::<ApiErrorBody>(&body) {
-                bail!("api {}: {}", status, err.error.message);
+            if let Some(msg) = api_error_message(&body) {
+                bail!("api {status}: {msg}");
             }
-            bail!("api {}: {}", status, body);
+            bail!("api {status}: {body}");
         }
         let doc: serde_json::Value =
             serde_json::from_str(&body).context("parse models response")?;
@@ -119,18 +124,23 @@ impl LlmClient {
             headers,
             &request,
             HttpRetryOptions::default(),
+            None, // `send()` wraps `chat()` in a cancelable select already
         )
         .await
         .context("http request")?;
 
         let status = response.status();
-        let body = response.text().await.context("read response body")?;
+        let body = if status.is_success() {
+            response.text().await.context("read response body")?
+        } else {
+            error_body_capped(response).await
+        };
 
         if !status.is_success() {
-            if let Ok(err) = serde_json::from_str::<ApiErrorBody>(&body) {
-                bail!("api {}: {}", status, err.error.message);
+            if let Some(msg) = api_error_message(&body) {
+                bail!("api {status}: {msg}");
             }
-            bail!("api {}: {}", status, body);
+            bail!("api {status}: {body}");
         }
 
         serde_json::from_str(&body).context("parse chat response")
@@ -169,36 +179,77 @@ impl ModelClient for LlmClient {
             let finish = |mut message: ApiMessage,
                           finish_reason: Option<String>,
                           usage: Option<TokenUsage>,
+                          streamed_think: bool,
                           on_apply: &mut (dyn FnMut(StreamApply) + Send)| {
                 self.dialect.adapt(&mut message);
+                message.normalize_tool_calls();
                 // Reasoning that never streamed as deltas (non-stream replies,
-                // inline `<think>` splits) reaches the UI as one post-hoc
-                // apply — field-streamed reasoning already arrived live, so
-                // `into_assistant_message` leaves `reasoning_content` unset.
-                if let Some(reasoning) = message.reasoning_content.clone() {
+                // field-based `reasoning_content`) reaches the UI as one
+                // post-hoc apply — skipped when a live `<think>` split already
+                // delivered it, or `into_assistant_message` leaves it unset
+                // for field-streamed reasoning.
+                if !streamed_think
+                    && let Some(reasoning) = message.reasoning_content.clone()
+                {
                     on_apply(StreamApply::ReasoningDelta(reasoning));
                 }
                 (message, finish_reason, usage)
             };
-            match self
-                .chat_stream(request.clone(), &mut *on_apply, cancel)
+            // Inline-think dialects route streamed content through a splitter
+            // so `<think>` text becomes live reasoning deltas, not raw tags
+            // in the transcript.
+            let mut splitter = dialect::ThinkSplitter::new();
+            let result = if self.dialect.inline_think {
+                self.chat_stream(
+                    request.clone(),
+                    |apply| splitter.push(apply, &mut *on_apply),
+                    cancel.clone(),
+                )
                 .await
-            {
+            } else {
+                self.chat_stream(request.clone(), &mut *on_apply, cancel.clone())
+                    .await
+            };
+            match result {
                 Ok(acc) => {
+                    if self.dialect.inline_think {
+                        splitter.finish(&mut *on_apply);
+                    }
+                    let streamed_think = self.dialect.inline_think && splitter.saw_think();
                     let finish_reason = acc.finish_reason.clone();
                     let usage = acc.usage;
                     Ok(finish(
                         acc.into_assistant_message(),
                         finish_reason,
                         usage,
+                        streamed_think,
                         on_apply,
                     ))
                 }
                 Err(e) if is_interrupted(&e) => Err(e),
                 // SSE failed mid-connect — retry once as a plain chat request.
+                // The retry is cancelable: dropping the chat future aborts
+                // the in-flight HTTP request; a parked arm means the sender
+                // closed without cancelling (nothing to interrupt).
                 Err(_) => {
                     request.stream = None;
-                    let response = self.chat(request).await?;
+                    request.stream_options = None;
+                    let mut cancel_wait = cancel.clone();
+                    let response = tokio::select! {
+                        res = self.chat(request) => res?,
+                        _ = async {
+                            loop {
+                                if *cancel_wait.borrow() {
+                                    break;
+                                }
+                                // Sender dropped without cancelling → park
+                                // forever, let the request decide.
+                                if cancel_wait.changed().await.is_err() {
+                                    std::future::pending::<()>().await;
+                                }
+                            }
+                        } => anyhow::bail!(INTERRUPTED),
+                    };
                     let choice = response
                         .choices
                         .into_iter()
@@ -208,6 +259,7 @@ impl ModelClient for LlmClient {
                         choice.message,
                         choice.finish_reason,
                         response.usage,
+                        false,
                         on_apply,
                     ))
                 }

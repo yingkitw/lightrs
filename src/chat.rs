@@ -163,6 +163,21 @@ impl ApiMessage {
 
     /// Text body — handles both `"content": "…"` and the parts-array form
     /// `"content": [{"type":"text","text":"…"}]` some providers return.
+    /// Backfill tool-call fields a provider omitted — tool results must echo
+    /// a real `tool_call_id`/`type` back or the API rejects the conversation.
+    pub fn normalize_tool_calls(&mut self) {
+        if let Some(calls) = self.tool_calls.as_mut() {
+            for (i, call) in calls.iter_mut().enumerate() {
+                if call.id.is_empty() {
+                    call.id = format!("call_{i}");
+                }
+                if call.call_type.is_empty() {
+                    call.call_type = "function".into();
+                }
+            }
+        }
+    }
+
     pub fn text_content(&self) -> Option<String> {
         match self.content.as_ref()? {
             serde_json::Value::String(s) => Some(s.clone()),
@@ -181,16 +196,36 @@ impl ApiMessage {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolCall {
+    /// Some providers omit `id`/`type` on non-stream tool calls — default and
+    /// backfill via `normalize_tool_calls` rather than failing the response.
+    #[serde(default)]
     pub id: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_call_type")]
     pub call_type: String,
     pub function: FunctionCall,
+}
+
+fn default_call_type() -> String {
+    "function".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
+    /// A few providers send `arguments` as a JSON object rather than the
+    /// spec'd stringified JSON — accept both, serializing objects.
+    #[serde(deserialize_with = "de_string_or_json")]
     pub arguments: String,
+}
+
+fn de_string_or_json<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Ok(s),
+        other => Ok(other.to_string()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -203,12 +238,25 @@ pub struct ChatRequest {
     pub tool_choice: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    /// Streaming-only opt-ins — providers omit the terminal `usage` chunk
+    /// unless asked, so token stats would silently zero on every streamed turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<StreamOptions>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamOptions {
+    pub include_usage: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(default)]
 pub struct TokenUsage {
+    /// `input_tokens`/`output_tokens` are the aliases Anthropic-style
+    /// gateways emit — same meaning, normalized here.
+    #[serde(alias = "input_tokens")]
     pub prompt_tokens: Option<u32>,
+    #[serde(alias = "output_tokens")]
     pub completion_tokens: Option<u32>,
     pub total_tokens: Option<u32>,
 }
@@ -278,6 +326,36 @@ mod tests {
         assert_eq!(msg.text_content().as_deref(), Some("Hello"));
         msg.content = Some(serde_json::json!([{"type": "image", "url": "x"}]));
         assert!(msg.text_content().is_none());
+    }
+
+    #[test]
+    fn tool_calls_parse_leniently_and_normalize() {
+        // No `id`, no `type`, arguments as a JSON object — a strict parser
+        // would fail the whole response.
+        let mut msg: ApiMessage = serde_json::from_str(
+            r#"{"role":"assistant","tool_calls":[
+                {"function":{"name":"read_file","arguments":{"path":"a.rs"}}},
+                {"id":"c9","type":"function","function":{"name":"grep","arguments":"{}"}}
+            ]}"#,
+        )
+        .unwrap();
+        msg.normalize_tool_calls();
+        let calls = msg.tool_calls.as_ref().unwrap();
+        assert_eq!(calls[0].id, "call_0", "missing id backfilled positionally");
+        assert_eq!(calls[0].call_type, "function");
+        assert_eq!(calls[0].function.arguments, r#"{"path":"a.rs"}"#);
+        assert_eq!(calls[1].id, "c9", "present id untouched");
+        // Round-trips back out correctly.
+        let wire = serde_json::to_string(&calls[0]).unwrap();
+        assert!(wire.contains(r#""id":"call_0""#) && wire.contains(r#""type":"function""#));
+    }
+
+    #[test]
+    fn usage_accepts_anthropic_style_aliases() {
+        let u: TokenUsage =
+            serde_json::from_str(r#"{"input_tokens":100,"output_tokens":7}"#).unwrap();
+        assert_eq!(u.prompt_tokens, Some(100));
+        assert_eq!(u.completion_tokens, Some(7));
     }
 
     #[test]

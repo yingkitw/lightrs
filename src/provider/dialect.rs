@@ -5,6 +5,114 @@
 //! which models think inline via `<think>…</think>` inside `content`.
 
 use crate::chat::ApiMessage;
+use crate::provider::stream::StreamApply;
+
+const OPEN: &str = "<think>";
+const CLOSE: &str = "</think>";
+
+/// Routes streamed content deltas around `<think>` tags: text inside a tag
+/// becomes `ReasoningDelta`, text outside stays `ContentDelta`. Tags can be
+/// split across deltas (`<thi` + `nk>`), so a tail that could complete a tag
+/// is held back until the next delta resolves it. Only constructed for
+/// `inline_think` dialects — other models pass deltas through untouched.
+#[derive(Default)]
+pub struct ThinkSplitter {
+    in_think: bool,
+    saw_think: bool,
+    buf: String,
+}
+
+impl ThinkSplitter {
+    pub fn new() -> Self {
+        Self {
+            in_think: false,
+            saw_think: false,
+            buf: String::new(),
+        }
+    }
+
+    /// Whether a `<think>` section was actually consumed — distinguishes
+    /// "enabled, no tags seen" (post-hoc reasoning emit is still needed)
+    /// from "tags split live" (emitting again would duplicate).
+    pub fn saw_think(&self) -> bool {
+        self.saw_think
+    }
+
+    pub fn push(&mut self, apply: StreamApply, emit: &mut dyn FnMut(StreamApply)) {
+        match apply {
+            StreamApply::ContentDelta(text) => {
+                self.buf.push_str(&text);
+                self.drain(emit);
+            }
+            other => emit(other),
+        }
+    }
+
+    /// End of stream — whatever is buffered flushes in the current role.
+    /// An unclosed think means the tail was truncated reasoning.
+    pub fn finish(&mut self, emit: &mut dyn FnMut(StreamApply)) {
+        let tail = std::mem::take(&mut self.buf);
+        if tail.is_empty() {
+            return;
+        }
+        let apply = if self.in_think {
+            StreamApply::ReasoningDelta(tail)
+        } else {
+            StreamApply::ContentDelta(tail)
+        };
+        emit(apply);
+    }
+
+    fn drain(&mut self, emit: &mut dyn FnMut(StreamApply)) {
+        loop {
+            let (tag, in_think) = if self.in_think { (CLOSE, false) } else { (OPEN, true) };
+            match self.buf.find(tag) {
+                Some(i) => {
+                    self.emit_range(0, i, self.in_think, emit);
+                    self.buf.drain(..i + tag.len());
+                    self.in_think = in_think;
+                    self.saw_think |= in_think;
+                }
+                None => {
+                    // Emit all but a tail that could complete the tag.
+                    let hold = partial_tag_tail(&self.buf, tag);
+                    let end = self.buf.len() - hold;
+                    self.emit_range(0, end, self.in_think, emit);
+                    self.buf.drain(..end);
+                    return;
+                }
+            }
+        }
+    }
+
+    fn emit_range(
+        &self,
+        start: usize,
+        end: usize,
+        as_reasoning: bool,
+        emit: &mut dyn FnMut(StreamApply),
+    ) {
+        if start == end {
+            return;
+        }
+        let text = self.buf[start..end].to_string();
+        emit(if as_reasoning {
+            StreamApply::ReasoningDelta(text)
+        } else {
+            StreamApply::ContentDelta(text)
+        });
+    }
+}
+
+/// Longest suffix of `buf` that is a prefix of `tag` (a tag possibly split
+/// across stream deltas). ASCII tags → byte comparisons are char-safe.
+fn partial_tag_tail(buf: &str, tag: &str) -> usize {
+    let max = tag.len() - 1;
+    (1..=max.min(buf.len()))
+        .rev()
+        .find(|n| buf.ends_with(&tag[..*n]))
+        .unwrap_or(0)
+}
 
 /// Model-specific response policy, resolved once per client from the model
 /// name. Extend fields here as provider quirks are observed, not speculated.
@@ -98,6 +206,74 @@ fn push_section(out: &mut String, section: &str) {
 mod tests {
     use super::*;
     use crate::chat::ApiRole;
+
+    fn collect(parts: &[&str]) -> (Vec<StreamApply>, bool) {
+        let mut sp = ThinkSplitter::new();
+        let mut out = Vec::new();
+        for p in parts {
+            sp.push(StreamApply::ContentDelta(p.to_string()), &mut |a| out.push(a));
+        }
+        sp.finish(&mut |a| out.push(a));
+        (out, sp.saw_think())
+    }
+
+    #[test]
+    fn splitter_routes_around_tags_split_across_deltas() {
+        // `<thi` `nk>` and `</th` `ink>` — tags split mid-delta must not leak.
+        let (out, saw) = collect(&["<thi", "nk>why</th", "ink>answer"]);
+        assert!(saw);
+        assert_eq!(
+            out,
+            vec![
+                StreamApply::ReasoningDelta("why".into()),
+                StreamApply::ContentDelta("answer".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn splitter_handles_text_around_think() {
+        let (out, _) = collect(&["pre<think>x", "y</think>post"]);
+        assert_eq!(
+            out,
+            vec![
+                StreamApply::ContentDelta("pre".into()),
+                StreamApply::ReasoningDelta("x".into()),
+                StreamApply::ReasoningDelta("y".into()),
+                StreamApply::ContentDelta("post".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn splitter_passthrough_without_tags() {
+        let (out, saw) = collect(&["just ", "text"]);
+        assert!(!saw);
+        assert_eq!(
+            out,
+            vec![
+                StreamApply::ContentDelta("just ".into()),
+                StreamApply::ContentDelta("text".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn splitter_unclosed_think_flushes_as_reasoning() {
+        let (out, saw) = collect(&["<think>trailing thought"]);
+        assert!(saw);
+        assert_eq!(out, vec![StreamApply::ReasoningDelta("trailing thought".into())]);
+        // Truncated opener at end-of-stream flushes as content — never a
+        // dangling partial tag reaching the UI.
+        let (out, _) = collect(&["text<thi"]);
+        assert_eq!(
+            out,
+            vec![
+                StreamApply::ContentDelta("text".into()),
+                StreamApply::ContentDelta("<thi".into()),
+            ]
+        );
+    }
 
     #[test]
     fn for_model_flags_inline_think_names_only() {

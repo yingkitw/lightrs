@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use tokio::sync::watch;
 
-use super::http::{HttpRetryOptions, auth_headers, post_json_with_retry};
+use super::http::{HttpRetryOptions, api_error_message, auth_headers, error_body_capped, post_json_with_retry};
 use crate::chat::{
     ApiMessage, ApiRole, ChatRequest, FunctionCall, TokenUsage, ToolCall,
 };
@@ -91,8 +91,8 @@ impl StreamAccumulator {
             None
         } else {
             let mut calls: Vec<ToolCall> = self
-                .tool_parts.into_values().map(|p| ToolCall {
-                    id: p.id.unwrap_or_else(|| "call_stream".into()),
+                .tool_parts.into_iter().map(|(index, p)| ToolCall {
+                    id: p.id.unwrap_or_else(|| format!("call_{index}")),
                     call_type: p.call_type.unwrap_or_else(|| "function".into()),
                     function: FunctionCall {
                         name: p.name.unwrap_or_default(),
@@ -222,6 +222,9 @@ pub async fn post_chat_stream(
     cancel: watch::Receiver<bool>,
 ) -> Result<StreamAccumulator> {
     request.stream = Some(true);
+    request.stream_options = Some(crate::chat::StreamOptions {
+        include_usage: true,
+    });
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let headers = auth_headers(api_key)?;
 
@@ -231,13 +234,17 @@ pub async fn post_chat_stream(
         headers,
         &request,
         HttpRetryOptions::default(),
+        Some(&cancel),
     )
     .await
     .context("http request")?;
 
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body = error_body_capped(response).await;
+        if let Some(msg) = api_error_message(&body) {
+            anyhow::bail!("api {status}: {msg}");
+        }
         anyhow::bail!("api {status}: {body}");
     }
 
@@ -364,6 +371,17 @@ mod tests {
         let msg = acc.into_assistant_message();
         let calls = msg.tool_calls.expect("calls");
         assert_eq!(calls[0].function.name, "read_file");
+    }
+
+    #[test]
+    fn tool_call_without_id_gets_index_backfill() {
+        let mut acc = StreamAccumulator::default();
+        acc.apply_chunk_json(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":2,"function":{"name":"x","arguments":"{}"}}]}}]}"#,
+        )
+        .unwrap();
+        let msg = acc.into_assistant_message();
+        assert_eq!(msg.tool_calls.unwrap()[0].id, "call_2");
     }
 
     #[test]
