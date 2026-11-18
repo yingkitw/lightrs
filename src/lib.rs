@@ -8,6 +8,7 @@ pub mod commands;
 pub mod config;
 pub mod doctor;
 pub mod exec;
+pub mod install;
 pub mod lsp;
 pub mod mcp;
 pub mod mentions;
@@ -58,6 +59,7 @@ pub fn run() -> Result<()> {
                 migrate::run_migrate(dry_run, from.as_deref())
             }
         }
+        Command::Add { source } => install::add(&source).map(|r| println!("{r}")),
         Command::Exec {
             prompt,
             json,

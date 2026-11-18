@@ -58,6 +58,7 @@ async fn ask_user_routes_answer_through_ui_channel() {
         |_| {},
         cancel_rx,
         Some(&ui_tx),
+        None,
     )
     .await
     .unwrap();

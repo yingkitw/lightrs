@@ -4,6 +4,8 @@ provider = "kimi"           # glm | kimi | minimax
 model = ""                  # empty = provider default
 # fallback_model = ""       # retried once when the primary model errors
 # weak_model = ""           # cheaper model for read-only steps; escalates to `model` on write/exec
+# thinking = "high"         # sent verbatim as `reasoning_effort` (low|medium|high);
+                           # providers without support may ignore or reject it — opt-in
 base_url = ""               # empty = built-in default
 workdir = "."               # agent file/shell scope
 
@@ -64,9 +66,14 @@ workdir = "."               # agent file/shell scope
 # extensions = ["rs"]
 
 # ──────────────────────────────────────────────────────────────
-# Per-project overlay: <workdir>/.lightrs/config.toml
-# Same schema; only model, fallback_model, weak_model, [shell], [mcp.*], and
-# [lsp.*] are applied (a project [shell] replaces the global one entirely;
-# mcp/lsp entries merge — same-name project wins).
+# Per-project overlay: <workdir>/.lightrs/config.toml — applies ONLY to
+# workdirs listed under [trust].dirs below (or after in-TUI `/trust`, or a
+# one-off `--trust`). Untrusted projects are skipped with a startup notice.
+# Same schema; only model, fallback_model, weak_model, thinking, [shell],
+# [mcp.*], and [lsp.*] are applied (a project [shell] replaces the global one
+# entirely; mcp/lsp entries merge — same-name project wins).
 # provider / base_url / keys / workdir are ignored in the project file.
 # Precedence: CLI flags > project overlay > this global file.
+
+# [trust]
+# dirs = ["/path/to/repo"]  # canonical workdir paths allowed a project overlay

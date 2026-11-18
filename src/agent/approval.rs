@@ -216,6 +216,7 @@ pub(crate) async fn spawn_agent_outcome(
         |_| {},
         cancel.clone(),
         None,
+        None,
     ));
     match fut.await {
         Ok(text) => ToolOutcome::ok(text),
@@ -365,7 +366,7 @@ mod tests {
         ));
         let (_tx, rx) = watch::channel(false);
         let reply =
-            crate::agent::Agent::run_user_turn_shared(agent, "go".into(), |_| {}, rx, None)
+            crate::agent::Agent::run_user_turn_shared(agent, "go".into(), |_| {}, rx, None, None)
                 .await
                 .unwrap();
         assert_eq!(reply, "parent final");
@@ -422,7 +423,7 @@ mod tests {
         };
         let (_tx, rx) = watch::channel(false);
         let reply =
-            crate::agent::Agent::run_user_turn_shared(parent, "go".into(), |_| {}, rx, None)
+            crate::agent::Agent::run_user_turn_shared(parent, "go".into(), |_| {}, rx, None, None)
                 .await
                 .unwrap();
         assert_eq!(reply, "parent final");

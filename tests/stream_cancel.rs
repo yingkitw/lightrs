@@ -28,6 +28,7 @@ fn request() -> ChatRequest {
         tool_choice: None,
         stream: None,
         stream_options: None,
+        reasoning_effort: None,
     }
 }
 

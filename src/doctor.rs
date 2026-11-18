@@ -123,6 +123,7 @@ mod tests {
             model: "test".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "https://example.invalid".into(),
             api_key: String::new(),
             workdir: dir.clone(),
@@ -134,6 +135,8 @@ mod tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         };
         run_check(&cfg).unwrap();
         let _ = std::fs::remove_dir_all(&dir);

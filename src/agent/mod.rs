@@ -57,6 +57,8 @@ pub struct Agent {
     pub(crate) weak_model: Option<String>,
     /// Whether the current turn is still running on `weak_model`.
     pub(crate) weak_active: bool,
+    /// `thinking` config → `reasoning_effort` request field, sent verbatim.
+    pub(crate) thinking: Option<String>,
     /// In-flight tool's transcript row + start time — replaced in place by the
     /// result so slow tools are visible while running.
     pub(crate) pending_tool: Option<(usize, std::time::Instant)>,
@@ -81,6 +83,9 @@ pub struct Agent {
     pub(crate) turn_skills: Vec<String>,
     /// Files written by write/edit tools this session (diff paths, sorted).
     pub(crate) changed_files: std::collections::BTreeSet<String>,
+    /// Tails detached by `/rewind` — `/branch` swaps them back in. Persisted
+    /// in the session file (non-destructive rewind).
+    pub(crate) branches: Vec<crate::chat::TurnBranch>,
     pub(crate) heal: Option<HealSetting>,
     /// Formatter run after each write/edit tool (`[shell].format_command`);
     /// `{path}` is replaced with the diff path, shell-quoted otherwise.
@@ -135,6 +140,7 @@ impl Agent {
             client,
             fallback_client: None,
             weak_model: None,
+            thinking: None,
             weak_active: false,
             pending_tool: None,
             turn_started: None,
@@ -150,6 +156,7 @@ impl Agent {
             active_user_expansion: None,
             turn_skills: Vec::new(),
             changed_files: std::collections::BTreeSet::new(),
+            branches: Vec::new(),
             heal: None,
             format_cmd: None,
             read_only: false,
@@ -181,6 +188,7 @@ impl Agent {
             )));
         }
         agent.set_weak_model(cfg.weak_model.clone());
+        agent.thinking = cfg.thinking.clone();
         agent.set_format_command(cfg.format_command.clone());
         if cfg.read_only {
             agent.set_read_only(true);
@@ -263,6 +271,7 @@ impl Agent {
             .filter_map(|m| m.file_diff.as_ref().map(|d| d.path.clone()))
             .collect();
         self.token_stats = saved.token_stats;
+        self.branches = saved.branches;
         self.refresh_context_estimate();
     }
 
@@ -450,16 +459,62 @@ impl Agent {
             .filter(|m| m.role == crate::chat::ApiRole::User)
             .count()
             .max(1);
-        self.api_history.truncate(api_cut);
+        let api_tail = self.api_history.split_off(api_cut);
         self.active_user_expansion = None;
         let mut ui = self.ui_history.lock().unwrap();
-        if let Some(ui_cut) = nth_last_ui_user_index(&ui, n) {
-            ui.truncate(ui_cut);
-        }
+        let (ui_len, ui_tail) = match nth_last_ui_user_index(&ui, n) {
+            Some(ui_cut) => (ui_cut, ui.split_off(ui_cut)),
+            None => (ui.len(), Vec::new()),
+        };
         drop(ui);
+        // Non-destructive: the detached tail becomes a swap-restoreable branch.
+        self.branches.push(crate::chat::TurnBranch {
+            api_len: api_cut,
+            ui_len,
+            api_tail,
+            ui_tail,
+        });
         self.context_warned_above = 0;
         self.refresh_context_estimate();
         dropped
+    }
+
+    pub fn branches(&self) -> &[crate::chat::TurnBranch] {
+        &self.branches
+    }
+
+    /// Swap the current history tail for branch `i`: truncate to the branch's
+    /// fork point, append its tail, and stash the replaced tail as a new
+    /// branch (switching branches is itself reversible). Returns the
+    /// restored user-turn count, or `None` for a bad index.
+    pub fn restore_branch(&mut self, i: usize) -> Option<usize> {
+        let b = self.branches.get(i)?.clone();
+        let api_cut = b.api_len.min(self.api_history.len());
+        let api_tail = self.api_history.split_off(api_cut);
+        let mut ui = self.ui_history.lock().unwrap();
+        let ui_cut = b.ui_len.min(ui.len());
+        let ui_tail = ui.split_off(ui_cut);
+        if api_tail.is_empty() && ui_tail.is_empty() {
+            self.branches.remove(i);
+        } else {
+            self.branches[i] = crate::chat::TurnBranch {
+                api_len: api_cut,
+                ui_len: ui_cut,
+                api_tail,
+                ui_tail,
+            };
+        }
+        self.api_history.extend(b.api_tail);
+        ui.extend(b.ui_tail);
+        drop(ui);
+        self.context_warned_above = 0;
+        self.refresh_context_estimate();
+        Some(
+            self.api_history
+                .iter()
+                .filter(|m| m.role == crate::chat::ApiRole::User)
+                .count(),
+        )
     }
 
     pub fn clear_conversation(&mut self) {
@@ -482,6 +537,7 @@ impl Agent {
         self.token_stats = TokenStats::default();
         self.turn_skills.clear();
         self.changed_files.clear();
+        self.branches.clear();
         self.context_warned_above = 0;
         self.wire_window_noted = false;
         self.refresh_context_estimate();
@@ -537,6 +593,7 @@ mod streaming_tests {
             model: "main".into(),
             fallback_model: Some("fb".into()),
             weak_model: Some("weak".into()),
+            thinking: Some("high".into()),
             base_url: "http://x".into(),
             api_key: "k".into(),
             workdir: std::path::PathBuf::from("."),
@@ -548,12 +605,15 @@ mod streaming_tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         };
         let agent = Agent::from_config(&cfg, Arc::from(Path::new(".")));
         assert_eq!(agent.client.model(), "main");
         assert!(agent.fallback_client.is_some());
         assert_eq!(agent.fallback_client.as_ref().unwrap().model(), "fb");
         assert_eq!(agent.weak_model.as_deref(), Some("weak"));
+        assert_eq!(agent.thinking.as_deref(), Some("high"));
 
         let mut slim = cfg.clone();
         slim.fallback_model = None;
@@ -700,6 +760,7 @@ mod streaming_tests {
                 diff_row,
             ],
             token_stats: Default::default(),
+            branches: vec![],
         };
         agent.restore_session(saved);
         let files: Vec<&String> = agent.changed_files().collect();
@@ -719,5 +780,46 @@ mod streaming_tests {
         assert_eq!(agent.rewind_turns(5), 2);
         assert_eq!(agent.api_history.len(), 1); // system prompt only
         assert_eq!(agent.rewind_turns(1), 0); // nothing left to rewind
+    }
+
+    #[test]
+    fn rewind_tail_is_restorable_via_branch() {
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let mut agent = Agent::new(client, Arc::from(Path::new(".")), ShellPolicy::default());
+        for i in 0..2 {
+            agent.api_history.push(ApiMessage::user(format!("u{i}")));
+            agent
+                .api_history
+                .push(ApiMessage::tool_result(format!("t{i}"), "read_file", "b"));
+        }
+        {
+            let mut ui = agent.ui_history.lock().unwrap();
+            ui.push(UiMessage::with_role(UiRole::User, "u1"));
+            ui.push(UiMessage::with_role(UiRole::Assistant, "a1"));
+        }
+
+        assert_eq!(agent.rewind_turns(1), 1);
+        assert_eq!(agent.api_history.len(), 3); // sys + u0/t0
+        assert_eq!(agent.branches().len(), 1);
+
+        // A new turn after the rewind: restoring must swap, not lose it.
+        agent.api_history.push(ApiMessage::user("new"));
+        assert_eq!(agent.restore_branch(0), Some(2));
+        // sys + u0/t0 + u1/t1 restored; "new" became the branch tail.
+        assert_eq!(agent.api_history.len(), 5);
+        assert_eq!(agent.branches().len(), 1);
+        assert_eq!(
+            agent.branches()[0].api_tail[0].text_content().unwrap(),
+            "new"
+        );
+
+        // Swap back: the original tail returns, "new" comes back.
+        assert_eq!(agent.restore_branch(0), Some(2));
+        assert_eq!(agent.api_history.len(), 4);
+        assert_eq!(
+            agent.api_history.last().unwrap().text_content().unwrap(),
+            "new"
+        );
+        assert_eq!(agent.branches().len(), 1);
     }
 }

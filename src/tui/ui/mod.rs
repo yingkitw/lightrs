@@ -54,6 +54,7 @@ mod tests {
             model: "m".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: PathBuf::from("/tmp/myproj"),
@@ -65,6 +66,8 @@ mod tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         });
         let agent = Agent::new(
             LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),

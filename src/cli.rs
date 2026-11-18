@@ -58,6 +58,12 @@ pub enum Command {
         #[arg(long, help = "Only migrate from this tool (opencode, claude-code, codex, aider, pi, cursor)")]
         from: Option<String>,
     },
+    /// Install skills/commands from a git repo or local directory
+    #[command(name = "add")]
+    Add {
+        /// Git URL or local dir containing SKILL.md dirs and/or commands/*.md
+        source: String,
+    },
     /// Run one prompt without the TUI (stdout or JSON)
     Exec {
         /// Prompt text (non-interactive agent turn)
@@ -109,6 +115,10 @@ pub struct ModelFlags {
     /// Plan mode — deny file edits and shell commands (read/search tools only)
     #[arg(long, global = true)]
     pub read_only: bool,
+
+    /// Trust this workdir's `.lightrs/config.toml` for this run (see `/trust`)
+    #[arg(long, global = true)]
+    pub trust: bool,
 
     /// Extra directory the agent may READ (never write) — repeat for several
     #[arg(long = "add-dir", global = true, value_name = "PATH")]

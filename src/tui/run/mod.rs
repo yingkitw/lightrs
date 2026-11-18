@@ -2,6 +2,7 @@ mod events;
 mod input;
 mod observe;
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +38,8 @@ fn pump_queued(
     if app.state != RunState::Ready || app.pending_approval.is_some() {
         return Ok(InputAction::Continue);
     }
-    match app.queued.pop_front() {
+    let next = app.queued.lock().unwrap().pop_front();
+    match next {
         Some(line) => submit_line(line, agent, app, kick_tx),
         None => Ok(InputAction::Continue),
     }
@@ -69,10 +71,16 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let cancel_tx = Arc::new(cancel_tx);
+    // Shared busy-queue: the TUI pushes on Enter-while-busy; the in-flight
+    // turn drains steering lines at each step boundary; pump_queued and the
+    // interrupt-restore path handle what's left.
+    let queued: Arc<std::sync::Mutex<VecDeque<String>>> =
+        Arc::new(std::sync::Mutex::new(VecDeque::new()));
 
     let agent_bg = Arc::clone(&agent);
     let tx_bg = tx.clone();
     let cancel_bg = Arc::clone(&cancel_tx);
+    let steer_bg = Arc::clone(&queued);
     rt.spawn(async move {
         while let Some(text) = kick_rx.recv().await {
             let _ = cancel_bg.send(false);
@@ -86,6 +94,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
                 },
                 cancel_rx.clone(),
                 Some(&tx_bg),
+                Some(&steer_bg),
             )
             .await;
             match result {
@@ -116,6 +125,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
     std::io::Write::write_all(&mut *terminal.backend_mut(), MOUSE_ON.as_bytes())?;
 
     let mut app = App::new(cfg.clone());
+    app.queued = queued;
     app.rt = Some(rt.handle().clone());
     app.ev_tx = Some(tx.clone());
     let mut last_title = String::new();
@@ -131,6 +141,11 @@ pub fn run(cfg: AppConfig) -> Result<()> {
             guard.push_system(session_resume_message(&app.config, ui, api));
         } else {
             guard.push_system(session_start_message(&app.config));
+        }
+        if app.config.untrusted_project {
+            guard.push_system(
+                "untrusted dir — skipped .lightrs/config.toml (/trust to persist, --trust for one run)",
+            );
         }
     }
 
@@ -236,6 +251,7 @@ mod tests {
             model: "test".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: PathBuf::from("."),
@@ -247,6 +263,8 @@ mod tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         })
     }
 
@@ -254,14 +272,14 @@ mod tests {
     fn pump_queued_sends_when_ready() {
         let agent = test_agent();
         let mut app = test_app();
-        app.queued.push_back("hello".into());
+        app.queued.lock().unwrap().push_back("hello".into());
         let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
 
         let action = pump_queued(&agent, &mut app, &kick_tx).unwrap();
 
         assert_eq!(action, InputAction::Continue);
         assert_eq!(kick_rx.try_recv().unwrap(), "hello");
-        assert!(app.queued.is_empty());
+        assert!(app.queued.lock().unwrap().is_empty());
         assert_eq!(app.state, RunState::Busy);
     }
 
@@ -270,13 +288,13 @@ mod tests {
         let agent = test_agent();
         let mut app = test_app();
         app.set_busy();
-        app.queued.push_back("x".into());
+        app.queued.lock().unwrap().push_back("x".into());
         let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
 
         let action = pump_queued(&agent, &mut app, &kick_tx).unwrap();
 
         assert_eq!(action, InputAction::Continue);
-        assert_eq!(app.queued.len(), 1);
+        assert_eq!(app.queued.lock().unwrap().len(), 1);
         assert!(kick_rx.try_recv().is_err());
     }
 }

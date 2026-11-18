@@ -55,6 +55,30 @@ impl Agent {
         self.maybe_context_pressure_sys();
     }
 
+    /// Pull queued steering lines into the conversation as ordinary user
+    /// messages (same expansion as a submitted turn). Lines starting with
+    /// `/` or `!` stay in the queue — they're local commands, not steering.
+    fn drain_steering(
+        &mut self,
+        steer: &std::sync::Mutex<std::collections::VecDeque<String>>,
+    ) {
+        let mut lines = Vec::new();
+        {
+            let mut q = steer.lock().unwrap();
+            let mut i = 0;
+            while i < q.len() {
+                if q[i].trim_start().starts_with(['/', '!']) {
+                    i += 1;
+                } else {
+                    lines.push(q.remove(i).unwrap());
+                }
+            }
+        }
+        for line in lines {
+            self.begin_user_turn(line);
+        }
+    }
+
     /// Headless turn (exec/ACP): no cancel, no approval UI — shell commands
     /// that would need a prompt are denied.
     pub async fn run_user_turn_headless(
@@ -63,7 +87,7 @@ impl Agent {
         on: impl FnMut(ObserveEvent<'_>) + Send,
     ) -> Result<String> {
         let (_stop, cancel) = watch::channel(false);
-        Self::run_user_turn_shared(agent, user_text, on, cancel, None).await
+        Self::run_user_turn_shared(agent, user_text, on, cancel, None, None).await
     }
 
     pub async fn run_user_turn_shared(
@@ -72,6 +96,7 @@ impl Agent {
         mut on: impl FnMut(ObserveEvent<'_>) + Send,
         cancel: watch::Receiver<bool>,
         ui_tx: Option<&mpsc::UnboundedSender<AgentEvent>>,
+        steer: Option<&Arc<std::sync::Mutex<std::collections::VecDeque<String>>>>,
     ) -> Result<String> {
         {
             let mut g = agent.lock().await;
@@ -81,6 +106,13 @@ impl Agent {
         for _step in 0..MAX_TOOL_STEPS {
             if *cancel.borrow() {
                 anyhow::bail!(crate::provider::INTERRUPTED);
+            }
+            // Steering (pi-style): lines queued while busy are injected as
+            // user messages at this step boundary, so the model can
+            // course-correct mid-run. Slash/bang lines stay queued — they
+            // dispatch locally after the run, not to the model.
+            if let Some(steer) = steer {
+                agent.lock().await.drain_steering(steer);
             }
 
             let (client, fallback, request, ui_history, workdir, shell_policy) = {
@@ -175,6 +207,7 @@ impl Agent {
             tool_choice: Some(serde_json::json!("auto")),
             stream: None,
             stream_options: None,
+            reasoning_effort: self.thinking.clone(),
         }
     }
 
@@ -722,6 +755,7 @@ mod model_tests {
             tool_choice: None,
             stream: None,
             stream_options: None,
+            reasoning_effort: None,
         }
     }
 
@@ -916,5 +950,58 @@ mod model_tests {
         assert!(sys
             .iter()
             .any(|m| matches!(m.role, UiRole::System) && m.content.contains("weak model → m")));
+    }
+
+    #[test]
+    fn drain_steering_injects_text_keeps_slash_and_bang() {
+        let mut a = agent();
+        let q = std::sync::Mutex::new(std::collections::VecDeque::from([
+            "actually skip that".to_string(),
+            " /undo".to_string(),
+            "!ls".to_string(),
+        ]));
+        a.drain_steering(&q);
+        assert!(a
+            .api_history
+            .iter()
+            .any(|m| m.text_content().as_deref() == Some("actually skip that")));
+        let rest: Vec<String> = q.lock().unwrap().iter().cloned().collect();
+        assert_eq!(rest, vec![" /undo".to_string(), "!ls".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn steering_line_reaches_first_request() {
+        // Queued before the run → drained at the step boundary → the model
+        // sees it in the very next request, not after the run ends.
+        let mock = std::sync::Arc::new(MockModel::text("m", "done"));
+        let dyn_mock: std::sync::Arc<dyn ModelClient> = mock.clone();
+        let agent = std::sync::Arc::new(tokio::sync::Mutex::new(Agent::new_shared(
+            dyn_mock,
+            Arc::from(std::path::Path::new(".")),
+            ShellPolicy::default(),
+            0,
+        )));
+        let steer = Arc::new(std::sync::Mutex::new(
+            std::collections::VecDeque::from(["hold on — wrong dir".to_string()]),
+        ));
+        let (_tx, rx) = watch::channel(false);
+        Agent::run_user_turn_shared(
+            agent,
+            "go".into(),
+            |_| {},
+            rx,
+            None,
+            Some(&steer),
+        )
+        .await
+        .expect("turn");
+        assert!(steer.lock().unwrap().is_empty());
+        let reqs = mock.requests.lock().unwrap();
+        let texts: Vec<String> = reqs[0]
+            .messages
+            .iter()
+            .filter_map(|m| m.text_content())
+            .collect();
+        assert!(texts.iter().any(|t| t.contains("hold on — wrong dir")));
     }
 }

@@ -91,7 +91,11 @@ pub struct App {
     /// Live streamed assistant chars this turn (from UI transcript).
     pub stream_chars: usize,
     /// User lines submitted while `Busy`; drained when the turn ends.
-    pub queued: VecDeque<String>,
+    /// Busy-typed lines. Shared with the in-flight turn — the tool loop
+    /// drains non-`/`/`!` lines as steering messages at each step boundary;
+    /// `pump_queued` dispatches whatever remains (slash/bang, late arrivals)
+    /// after the run ends.
+    pub queued: Arc<std::sync::Mutex<VecDeque<String>>>,
     /// Git branch for the header path label; refreshed on `/cd`.
     pub git_branch: Option<String>,
     /// Tokio handle + event channel for slash commands that spawn background
@@ -131,7 +135,7 @@ impl App {
             commands: Vec::new(),
             theme: theme::normalize_theme_id(config::load_tui_theme()),
             stream_chars: 0,
-            queued: VecDeque::new(),
+            queued: Arc::new(std::sync::Mutex::new(VecDeque::new())),
             rt: None,
             ev_tx: None,
             model_choices: Vec::new(),
@@ -275,8 +279,9 @@ impl App {
         if self.stream_chars > 0 {
             label.push_str(&format!(" · {} chars", self.stream_chars));
         }
-        if !self.queued.is_empty() {
-            label.push_str(&format!(" · queued {}", self.queued.len()));
+        let queued_n = self.queued.lock().unwrap().len();
+        if queued_n > 0 {
+            label.push_str(&format!(" · queued {queued_n}"));
         }
         label
     }
@@ -387,6 +392,7 @@ mod tests {
             model: "test".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: PathBuf::from("."),
@@ -398,6 +404,8 @@ mod tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         })
     }
 
@@ -444,6 +452,7 @@ mod tests {
             model: "m".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "http://x".into(),
             api_key: "k".into(),
             workdir: std::path::PathBuf::from("."),
@@ -455,6 +464,8 @@ mod tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         });
         let (tx, rx) = tokio::sync::oneshot::channel();
         app.pending_ask = Some(AskUserRequest {

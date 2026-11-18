@@ -28,6 +28,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("model", "list/switch model — fetches /models per keyed provider"),
     ("context", "context breakdown and token usage"),
     ("reload", "re-read config.toml [shell] policy"),
+    ("trust", "trust this workdir's .lightrs/config.toml (persisted)"),
     ("quiet", "toggle per-step token sys lines"),
     ("skills", "list discovered agent skills"),
     ("export", "write UI transcript to markdown in workdir"),
@@ -35,7 +36,8 @@ const COMMANDS: &[(&str, &str)] = &[
     ("diff", "replay this session's file changes as expandable diff rows"),
     ("theme", "list or set TUI color theme (mocha, hc)"),
     ("compact", "compact old tool results in API history (no model call)"),
-    ("rewind", "drop the last n user turns from history (/rewind [n])"),
+    ("rewind", "drop the last n user turns into a restorable branch (/rewind [n])"),
+    ("branch", "list or swap rewind branches back in (/branch [n])"),
     ("undo", "restore files edited on the last turn from .lightrs/backups"),
     ("plan", "toggle plan mode — read-only tools only (no writes/shell)"),
     ("fork", "checkpoint this session as a named fork (/fork [name])"),
@@ -432,8 +434,53 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                 let len = agent.ui_messages().len();
                 app.expanded_tools.retain(|i| *i < len);
                 agent.push_system(format!(
-                    "rewound {dropped} turn(s) — history and session file updated"
+                    "rewound {dropped} turn(s) — tail kept as a branch (/branch to restore)"
                 ));
+            }
+            SlashAction::Handled
+        }
+        "branch" => {
+            let arg = line.split_whitespace().nth(1);
+            match arg {
+                None => {
+                    let branches = agent.branches();
+                    if branches.is_empty() {
+                        agent.push_system("no branches — /rewind keeps dropped tails here");
+                    } else {
+                        let mut out =
+                            String::from("branches (tails detached by /rewind):");
+                        for (i, b) in branches.iter().enumerate() {
+                            let turns = b
+                                .api_tail
+                                .iter()
+                                .filter(|m| m.role == crate::chat::ApiRole::User)
+                                .count();
+                            let preview = b
+                                .api_tail
+                                .iter()
+                                .find_map(|m| m.text_content())
+                                .map(|t| crate::tools::shell::escape_controls(&t.chars().take(60).collect::<String>()))
+                                .unwrap_or_default();
+                            out.push_str(&format!("\n  {}. {} turn(s) — {}", i + 1, turns, preview));
+                        }
+                        out.push_str("\n/branch <n> swaps the current tail in for that branch");
+                        agent.push_system(out);
+                    }
+                }
+                Some(a) => match a.parse::<usize>().ok().and_then(|n| n.checked_sub(1)) {
+                    None => agent.push_system(format!("unknown branch '{a}' — /branch lists them")),
+                    Some(i) => match agent.restore_branch(i) {
+                        None => agent.push_system("no such branch — /branch lists them"),
+                        Some(turns) => {
+                            let _ = session::save(agent, app.workdir());
+                            let len = agent.ui_messages().len();
+                            app.expanded_tools.retain(|i| *i < len);
+                            agent.push_system(format!(
+                                "branch restored — {turns} user turn(s) now in history (replaced tail kept as a branch)"
+                            ));
+                        }
+                    },
+                },
             }
             SlashAction::Handled
         }
@@ -581,6 +628,22 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                 SlashAction::Handled
             }
         },
+        "trust" => {
+            // cfg(test) gate: unit tests share the dev's real config.toml —
+            // `save_trust_dir_to` covers the write logic.
+            if !cfg!(test)
+                && let Err(e) = crate::config::save_trust_dir(app.workdir())
+            {
+                agent.push_error(format!("trust failed: {e:#}"));
+                return SlashAction::Handled;
+            }
+            agent.push_system(format!(
+                "trusted {} — project .lightrs/config.toml applies next launch \
+                 (/reload applies its [shell] now; model/mcp/lsp need restart)",
+                app.workdir().display()
+            ));
+            SlashAction::Handled
+        }
         "quit" | "exit" => SlashAction::Quit,
         other => {
             // Project commands from `.claude/commands/*.md` — rescan so a
@@ -698,6 +761,7 @@ mod tests {
             model: "m".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: dir.clone(),
@@ -709,6 +773,8 @@ mod tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         });
         let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
         let mut agent = Agent::new(
@@ -848,6 +914,7 @@ mod tests {
                 model: "m".into(),
                 fallback_model: None,
                 weak_model: None,
+                thinking: None,
                 base_url: "http://localhost".into(),
                 api_key: String::new(),
                 workdir: dir.clone(),
@@ -859,6 +926,8 @@ mod tests {
                 endpoints: Default::default(),
                 mcp: Default::default(),
                 lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
             });
             let agent = Agent::new(
                 LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),

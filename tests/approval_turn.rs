@@ -57,6 +57,7 @@ async fn shared_turn_prompts_once_and_releases_mutex_during_approval() {
         |_| {},
         cancel_rx,
         Some(&ui_tx),
+        None,
     )
     .await
     .expect("turn completes");

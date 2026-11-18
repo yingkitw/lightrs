@@ -9,7 +9,7 @@ use crate::mentions;
 use crate::paths::config_dir;
 use crate::tools::truncate_bytes;
 
-const SKILL_FILE: &str = "SKILL.md";
+pub(crate) const SKILL_FILE: &str = "SKILL.md";
 const MAX_SKILLS: usize = 64;
 const CATALOG_MAX_CHARS: usize = 3_500;
 const RULES_MAX_CHARS: usize = 4_096;
@@ -323,7 +323,7 @@ fn load_rules(rules_dir: &Path) -> String {
     out.trim().to_string()
 }
 
-fn slug_id(name: &str) -> String {
+pub(crate) fn slug_id(name: &str) -> String {
     let mut out = String::new();
     for c in name.chars() {
         if c.is_ascii_alphanumeric() || c == '-' || c == '_' {

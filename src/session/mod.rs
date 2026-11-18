@@ -26,6 +26,10 @@ pub struct SessionFile {
     pub ui_history: Vec<UiMessage>,
     #[serde(default)]
     pub token_stats: TokenStats,
+    /// Tails detached by `/rewind` — swap-restoreable via `/branch`.
+    /// `default` keeps v1 files loadable and old readers forward-compatible.
+    #[serde(default)]
+    pub branches: Vec<crate::chat::TurnBranch>,
 }
 
 pub fn sessions_dir() -> PathBuf {
@@ -86,6 +90,7 @@ fn save_to(agent: &Agent, workdir: &Path, path: &Path) -> Result<()> {
         api_history: agent.export_api_history(),
         ui_history: conversation_ui_history(agent.export_ui_history()),
         token_stats: agent.token_summary().stats,
+        branches: agent.branches().to_vec(),
     };
     let json = serde_json::to_string_pretty(&file).context("serialize session")?;
     // Temp file + same-dir rename: a crash leaves old or new, never half JSON.
@@ -253,6 +258,7 @@ mod tests {
             api_history: vec![ApiMessage::user("hi")],
             ui_history: vec![UiMessage::with_role(crate::chat::UiRole::User, "hi")],
             token_stats: TokenStats::default(),
+            branches: vec![],
         };
         let json = serde_json::to_string(&file).unwrap();
         let again: SessionFile = serde_json::from_str(&json).unwrap();
@@ -271,6 +277,7 @@ mod tests {
             api_history: vec![ApiMessage::user("hi")],
             ui_history: vec![UiMessage::with_role(UiRole::User, "hi")],
             token_stats: TokenStats::default(),
+            branches: vec![],
         }
     }
 

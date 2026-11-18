@@ -81,7 +81,27 @@ pub(crate) fn handle_agent_event(
             // key forever — the pending handlers return early for all input.
             app.pending_approval = None;
             app.pending_ask = None;
+            // Abort returns queued messages to the editor (pi parity): the
+            // user stopped the run — queued lines must not auto-fire next.
+            let restored = !app.queued.lock().unwrap().is_empty();
+            if restored {
+                let lines = app
+                    .queued
+                    .lock()
+                    .unwrap()
+                    .drain(..)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                app.input = if app.input.is_empty() {
+                    lines
+                } else {
+                    format!("{lines}\n{}", app.input)
+                };
+            }
             app.set_ready(&app.config.clone());
+            if restored {
+                app.status = "queued messages restored to input".into();
+            }
             if app.pin_bottom {
                 app.scroll_to_bottom();
             }
@@ -139,6 +159,7 @@ mod tests {
             model: "test".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: PathBuf::from("."),
@@ -150,6 +171,8 @@ mod tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         });
         app.set_busy();
         app.status = status.into();
@@ -349,5 +372,26 @@ mod tests {
             handle_agent_event(&agent, &mut app, ev);
             assert!(app.pending_approval.is_none() && app.pending_ask.is_none());
         }
+    }
+
+    #[test]
+    fn interrupted_restores_queued_to_input() {
+        // Abort returns queued messages to the editor instead of letting
+        // pump_queued auto-fire them once the run ends.
+        let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
+        let agent = Arc::new(Mutex::new(crate::agent::Agent::new(
+            client,
+            Arc::from(std::path::Path::new(".")),
+            ShellPolicy::default(),
+        )));
+        let mut app = test_app("busy");
+        app.queued.lock().unwrap().push_back("first".into());
+        app.queued.lock().unwrap().push_back("second".into());
+
+        handle_agent_event(&agent, &mut app, AgentEvent::Interrupted);
+
+        assert!(app.queued.lock().unwrap().is_empty());
+        assert_eq!(app.input, "first\nsecond");
+        assert!(app.status.contains("restored"));
     }
 }

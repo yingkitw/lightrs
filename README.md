@@ -42,6 +42,13 @@ lightrs doctor --check
 lightrs exec -p "summarize this repo in one paragraph"
 lightrs exec -p "run cargo test" --approve-shell --json
 
+# Install skills/commands from a repo or local dir (~/.config/lightrs/skills, ~/.claude/commands)
+lightrs add https://github.com/user/agent-resources
+lightrs add ./my-skills
+
+# Trust this repo's .lightrs/config.toml for one run (or /trust inside the TUI to persist)
+lightrs --trust
+
 # same as: lightrs tui --provider kimi
 
 # GLM
@@ -67,7 +74,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `@path` — attach workdir files to the API message (`Tab` completes); `$skill-id` — attach a **skill** (`Tab` on `$` prefix); paths skip `.git` / `target` / `node_modules`
 - `Esc` — clear input; while busy, **interrupt** the current turn
 - `Esc` / `Ctrl+C` / `Ctrl+Q` while busy — stop streaming (does not quit); typing `stop` (or `wait`/`halt`) also interrupts
-- **Keep typing while busy** — `Enter` queues the message (`queued N` in the status bar); it sends automatically when the turn finishes
+- **Keep typing while busy** — `Enter` queues the message (`queued N` in the status bar); it sends automatically when the turn finishes **and is injected mid-run at each tool-step boundary** (steering — course-correct a long tool loop without aborting). Interrupting restores queued lines to the composer instead of sending them
 - While a turn runs: spinner in header, chat title, status bar, and a progress row at the transcript bottom (`thinking` / `streaming…`)
 - `↑` / `↓` — scroll transcript when input is empty
 - `o` or **click** a tool block — expand/collapse tool call detail (name + short args when collapsed; full args/result when expanded)
@@ -77,7 +84,7 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 - `Ctrl+C` / `q` — quit (when idle); while busy these interrupt instead
 - `/` — slash commands (not sent to the model); `Tab` completes
 - `!cmd` — run a shell command locally (no model turn); output shows as a `[sys]` row. Allowlist bypassed (you typed it), deny list + `[sandbox]` still apply
-- `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/undo`, `/diff`, `/export`, `/status`, `/model`, `/context`, `/reload`, `/quiet`, `/skills`, `/cd`, `/cwd`, `/todo`, `/editor`, `/doctor`, `/init`, `/quit`, …)
+- `/help` — list commands (`/clear`, `/compact`, `/rewind`, `/branch`, `/undo`, `/diff`, `/export`, `/status`, `/model`, `/context`, `/reload`, `/trust`, `/quiet`, `/skills`, `/cd`, `/cwd`, `/todo`, `/editor`, `/doctor`, `/init`, `/quit`, …)
 - `/cd <path>` — switch working directory mid-session (keeps the conversation); `/editor` — draft the prompt in `$EDITOR`; `/todo` — show the agent's task list
 - `.claude/commands/*.md` — project slash commands (`/name` sends the file body to the model, args appended)
 - Session header shows **version, provider, model, path:git-branch, context size (+ % of the model's window), API host**; `/status` prints full details and `/context` shows where the tokens sit (per-role breakdown, heaviest messages, current-turn real usage). A `turn · N calls · X in + Y out · Ns` line closes each turn (`/quiet` silences routine token lines)
@@ -90,7 +97,9 @@ lightrs --provider kimi --base-url https://api.moonshot.cn/v1
 
 The agent can **read/write/patch files** (patch tolerates minor whitespace drift), **`grep`** (literal search in tree), **list directories**, **run shell commands** (64 KiB output cap per stream), and maintain a **`todo_write`** task list (`.lightrs/todos.json`) under the configured working directory (same privilege as your user). Reads may extend to extra directories via `--add-dir <path>` (repeatable) or `extra_read_dirs` in the global `config.toml` — **read-only**; writes stay confined to the workdir.
 
-**Optional reliability helpers:** `fallback_model` (top of `config.toml`, or `--fallback-model`) retries a failed model call once on a secondary model. `weak_model` (`--weak-model`) serves read-only steps on a cheaper model and escalates to `model` the moment a write/exec tool appears. `[shell].test_command` (e.g. `cargo test`) runs after every successful file edit — failures are handed back to the model to fix (`[shell].heal_steps`, default 3 per turn).
+**Optional reliability helpers:** `fallback_model` (top of `config.toml`, or `--fallback-model`) retries a failed model call once on a secondary model. `weak_model` (`--weak-model`) serves read-only steps on a cheaper model and escalates to `model` the moment a write/exec tool appears. `thinking = "high"` sends `reasoning_effort` verbatim on each request (providers without support may ignore/reject it — opt-in). `[shell].test_command` (e.g. `cargo test`) runs after every successful file edit — failures are handed back to the model to fix (`[shell].heal_steps`, default 3 per turn).
+
+**Project trust:** `<workdir>/.lightrs/config.toml` (shell policy, MCP/LSP servers, model) only applies to **trusted** workdirs — `/trust` in the TUI persists it (`[trust].dirs` in global config), `--trust` grants one run. Untrusted projects are skipped with a startup notice.
 
 **Context stays bounded:** past ~32k estimated tokens, old tool results and `tool_calls` argument bodies are stubbed automatically; past ~64k, the oldest user turns are dropped (current turn is never touched). `/compact` does the same on demand. Full policy: [`docs/context.md`](docs/context.md).
 

@@ -218,6 +218,17 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
+/// A history tail detached by `/rewind` — kept so `/branch` can swap it back
+/// in (pi-style non-destructive rewind; branches persist in the session file).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TurnBranch {
+    /// History lengths at the cut point — restore truncates to these first.
+    pub api_len: usize,
+    pub ui_len: usize,
+    pub api_tail: Vec<ApiMessage>,
+    pub ui_tail: Vec<UiMessage>,
+}
+
 fn de_string_or_json<'de, D>(d: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -242,6 +253,10 @@ pub struct ChatRequest {
     /// unless asked, so token stats would silently zero on every streamed turn.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
+    /// `thinking` config knob — sent verbatim; providers without support
+    /// ignore or reject the field (opt-in only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -11,7 +11,8 @@ use crate::migrate::{self, format_scan_report, infer_provider_from_env, scan_loc
 use crate::tools::ShellPolicy;
 
 pub use file::{
-    config_path, load_tui_theme, project_config_mtime, save_model_selection, save_tui_theme,
+    config_path, load_tui_theme, project_config_mtime, save_model_selection, save_trust_dir,
+    save_tui_theme,
 };
 pub(crate) use file::write_private_file;
 
@@ -105,6 +106,9 @@ pub struct AppConfig {
     pub fallback_model: Option<String>,
     /// Cheaper model for read-only steps (`--weak-model` / `weak_model`).
     pub weak_model: Option<String>,
+    /// `thinking` → `reasoning_effort` request field, sent verbatim. Providers
+    /// that don't support it ignore or reject the field — opt-in only.
+    pub thinking: Option<String>,
     pub base_url: String,
     pub api_key: String,
     pub workdir: PathBuf,
@@ -125,6 +129,11 @@ pub struct AppConfig {
     pub mcp: crate::mcp::McpSpecs,
     /// `[lsp.<lang>]` — lang → (stdio command, extensions) for the `lsp` tool.
     pub lsp: crate::lsp::LspSpecs,
+    /// A `.lightrs/config.toml` existed at load but was skipped — the dir
+    /// isn't in `[trust].dirs`. Surfaced as a `[sys]` notice at session start.
+    pub untrusted_project: bool,
+    /// `--trust` run-scoped override — honored again by `/reload`.
+    pub trust_project: bool,
 }
 
 impl AppConfig {
@@ -164,8 +173,12 @@ impl AppConfig {
         .or_else(|_| std::env::current_dir())
         .context("resolve working directory")?;
 
-        // Per-project overlay: `<workdir>/.lightrs/config.toml` (safe subset only).
-        let project = file::load_project_config_file(&workdir)?;
+        // Per-project overlay: `<workdir>/.lightrs/config.toml` (safe subset
+        // only) — gated on project trust: the overlay can auto-execute
+        // (`[shell].test_command`, `[mcp]`/`[lsp]` spawns), so an untrusted
+        // dir's file is skipped until `/trust` or `--trust`.
+        let (project, untrusted_project) =
+            file::trusted_project_overlay(&workdir, file.as_ref(), flags.trust)?;
 
         // Precedence: CLI flags > project overlay > global file.
         let model = flags
@@ -213,6 +226,10 @@ impl AppConfig {
                 .clone()
                 .or_else(|| project.as_ref().and_then(|f| f.weak_model.clone()))
                 .or_else(|| file.as_ref().and_then(|f| f.weak_model.clone())),
+            thinking: project
+                .as_ref()
+                .and_then(|f| f.thinking.clone())
+                .or_else(|| file.as_ref().and_then(|f| f.thinking.clone())),
             base_url,
             api_key,
             workdir,
@@ -234,6 +251,8 @@ impl AppConfig {
                 .unwrap_or_default(),
             mcp: external.mcp,
             lsp: external.lsp,
+            untrusted_project,
+            trust_project: flags.trust,
         })
     }
 
@@ -248,7 +267,8 @@ impl AppConfig {
     pub fn reload_shell_from_file(&mut self) -> Result<String> {
         let path = config_path();
         let file = file::load_config_file()?;
-        let project = file::load_project_config_file(&self.workdir)?;
+        let (project, skipped) =
+            file::trusted_project_overlay(&self.workdir, file.as_ref(), self.trust_project)?;
         let (allowlist, require_approval, test_command, format_command, heal_steps) =
             file::shell_from_files(project.as_ref(), file.as_ref());
         let external = file::external_from_files(project.as_ref(), file.as_ref());
@@ -263,6 +283,8 @@ impl AppConfig {
         self.heal_steps = heal_steps;
         let project_note = if project.is_some() {
             " + project .lightrs/config.toml"
+        } else if skipped {
+            " (project .lightrs/config.toml skipped — dir untrusted)"
         } else {
             ""
         };
@@ -516,6 +538,7 @@ mod endpoint_tests {
             model: "glm-4.6".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "https://custom.example/v1".into(),
             api_key: "k".into(),
             workdir: PathBuf::from("."),
@@ -530,6 +553,8 @@ mod endpoint_tests {
             )]),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         }
     }
 

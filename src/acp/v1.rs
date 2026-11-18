@@ -255,6 +255,7 @@ mod tests {
             model: "m".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "http://127.0.0.1:9".into(),
             api_key: "k".into(),
             workdir: std::env::temp_dir(),
@@ -264,6 +265,10 @@ mod tests {
             read_only: false,
             heal_steps: 3,
             endpoints: Default::default(),
+            mcp: Default::default(),
+            lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         }
     }
 

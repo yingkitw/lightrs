@@ -269,10 +269,13 @@ fn handle_key(
                 return Ok(InputAction::Continue);
             }
             app.composer.commit(line.clone());
-            app.queued.push_back(line);
-            let n = app.queued.len();
+            let n = {
+                let mut q = app.queued.lock().unwrap();
+                q.push_back(line);
+                q.len()
+            };
             agent.blocking_lock().push_system(format!(
-                "queued ({n}) — sends after this turn; type \"stop\" to interrupt"
+                "queued ({n}) — steers at the next step; type \"stop\" to interrupt"
             ));
         }
         KeyCode::Enter if app.state == RunState::Ready => {
@@ -340,6 +343,7 @@ mod tests {
             model: "test".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "http://localhost".into(),
             api_key: String::new(),
             workdir: PathBuf::from("."),
@@ -351,6 +355,8 @@ mod tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         })
     }
 
@@ -383,8 +389,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(action, InputAction::Continue);
-        assert_eq!(app.queued.len(), 1);
-        assert_eq!(app.queued[0], "follow up");
+        assert_eq!(app.queued.lock().unwrap().len(), 1);
+        assert_eq!(app.queued.lock().unwrap()[0], "follow up");
         assert!(app.input.is_empty());
         assert!(kick_rx.try_recv().is_err());
     }
@@ -408,7 +414,7 @@ mod tests {
         .unwrap();
 
         assert!(*cancel_rx.borrow());
-        assert!(app.queued.is_empty());
+        assert!(app.queued.lock().unwrap().is_empty());
     }
 
     #[test]

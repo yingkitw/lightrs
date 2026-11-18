@@ -32,6 +32,9 @@ pub async fn run_prompt(
                 s
             }
         });
+    if cfg.untrusted_project {
+        eprintln!("note: .lightrs/config.toml skipped — dir untrusted (use --trust or /trust)");
+    }
     if let Some(cmd) = &cfg.test_command {
         agent.set_heal(Some(crate::agent::HealSetting {
             command: cmd.clone(),

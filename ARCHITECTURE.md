@@ -114,7 +114,7 @@ Reference: [Codex `codex-rs/tui`](https://github.com/openai/codex/tree/main/code
 | Theme | Shared palette `tui/theme.rs` (roles, diff +/-, code blocks) |
 | Composer | Multi-line input, **Ctrl+P/N** history (`tui/composer.rs`) |
 | Lifecycle | Busy spinner; **Esc / Ctrl+C** interrupt |
-| Slash | Local only (`tui/slash.rs`): `/help`, `/clear`, `/compact`, `/context`, `/copy`, `/cwd`, `/cd`, `/diff`, `/doctor`, `/editor`, `/export`, `/fork`, `/init`, `/model`, `/plan`, `/quiet`, `/quit`, `/reload`, `/resume`, `/rewind`, `/skills`, `/status`, `/theme`, `/todo`, `/undo` |
+| Slash | Local only (`tui/slash.rs`): `/help`, `/branch`, `/clear`, `/compact`, `/context`, `/copy`, `/cwd`, `/cd`, `/diff`, `/doctor`, `/editor`, `/export`, `/fork`, `/init`, `/model`, `/plan`, `/quiet`, `/quit`, `/reload`, `/resume`, `/rewind`, `/skills`, `/status`, `/theme`, `/todo`, `/trust`, `/undo` |
 
 Not in v0.1: Codex bottom-pane modals, side-by-side diff pane. Shell exec uses input-pane **y/n** approval when configured (`[shell].require_approval` or allowlist block); one prompt covers all `run_command` calls in a model step (`approval::resolve_shell_approvals`).
 

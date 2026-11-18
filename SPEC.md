@@ -51,7 +51,8 @@
 - `Ctrl+P` / `Ctrl+N` prompt history
 - Scroll transcript when input empty (`↑`/`↓`, PgUp/PgDn, Home/End)
 - Interrupt while busy: `Esc`, `Ctrl+C`, `Ctrl+Q`, or send a bare `stop` / `wait` / `halt` (does not quit). Interrupt reaches a running `run_command` within ~50ms and kills its process group — no waiting out `timeout_secs`. A turn cut mid-tool-batch leaves assistant `tool_calls` without results — `close_orphaned_tool_calls` inserts `[interrupted — no result recorded]` stubs before the next request (a dangling tool_call is a provider 400)
-- **Queued input**: typing while busy edits the composer; `Enter` queues the line (`queued N` in the status bar) and it sends automatically when the turn ends or is interrupted. Slash commands queued the same way run when idle
+- **Queued input**: typing while busy edits the composer; `Enter` queues the line (`queued N` in the status bar) and it sends automatically when the turn ends. Interrupting the run instead **restores queued lines to the composer** — a stopped turn never auto-fires what was typed behind it. Slash commands queued the same way run when idle
+- **Steering**: queued non-slash lines are also drained at each **tool-step boundary** mid-run (pi-style steering) — the turn loop injects them as user messages between tool steps, so a long tool loop can be course-corrected without aborting. Slash/`!` lines stay queued for local dispatch
 
 ### Slash commands (not sent to model)
 
@@ -67,13 +68,15 @@
 | `/model` | Bare `/model` fetches `GET /models` for every provider with a resolvable key in the background and renders a numbered list (`←` marks current; unkeyed/failed providers show an error row). Pick by typing a bare number as the next input (one-shot pending state), or `/model <n>`; `/model <name>` switches model on the same provider (keeps base URL + key); `/model <provider> [name]` switches provider (default endpoint, provider default model when omitted; key re-resolved from config/env — fails fast when missing). Every successful switch persists `provider`/`model`/`base_url` to `config.toml` (the API key is never persisted — re-resolved from env/`[keys]` next launch) so the selection survives restarts. Header + context % update |
 | `/context` | Context budgets (`limits:`), wire vs stored turn counts, per-role breakdown, heaviest messages, current-turn in/out — full policy in `docs/context.md` |
 | `/reload` | Re-read `config.toml` `[shell]`; rescan skills; refresh agent system prompt |
+| `/trust` | Persist the current workdir in global `[trust].dirs` — its `.lightrs/config.toml` applies on next launch and to `/reload` now |
 | `/quiet` | Toggle `[sys]` token lines (`send · ~N ctx`, per-step in/out, turn total); header + `/context` unchanged |
 | `/skills` | List discovered skills (`$id` to invoke on send) |
 | `/export` [path] | Write UI transcript to markdown under workdir (default `lightrs-transcript.md`; skips `[sys]`) |
 | `/copy` [`code`] | Copy latest assistant reply to the OS clipboard; `code` = last fenced ``` block only |
 | `/theme` [`id`] | List palettes or set `mocha` / `hc`; saved under `[tui]` in `config.toml` |
 | `/compact` | Replace older API tool bodies + assistant `tool_calls` argument blobs with placeholders (keeps last 6 tool results); no LLM call |
-| `/rewind` [`n`] | Drop the last `n` user turns (default 1) from API + UI history at user-turn boundaries, then resave the session |
+| `/rewind` [`n`] | Move the last `n` user turns (default 1) out of API + UI history at user-turn boundaries — the detached tail is kept as a restorable **branch**, then the session resaves |
+| `/branch` [`n`] | List rewind branches (turn count + prompt preview) or swap branch `n` back in; the replaced tail becomes a branch itself, so switching is reversible |
 | `/diff` | Replay this session's stored write diffs as expandable tool rows (`+N −M` totals per file; no filesystem reads) |
 | `/undo` | Restore files edited since your last message from `.lightrs/backups/` |
 | `/plan` | Toggle plan/read-only mode — write/exec tools denied; system prompt + status bar reflect it |
@@ -113,6 +116,8 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 - **HTTP**: chat requests use 120s timeout, 30s connect timeout, up to **3** retries on 429/5xx and transient transport errors (`provider/http.rs`). Retries honor `Retry-After: <secs>` (seconds only, capped at **30s** — `max(hint, exponential backoff)`) and the retry sleep is **cancelable**; discarded retry bodies are read capped (4 KiB), never in full — and scanned for `insufficient_quota`, which short-circuits: billing failures are terminal, so neither the backoff retries nor the stream→non-stream fallback spend another request.
 - **Fallback model**: `--fallback-model <m>` or `fallback_model` in `config.toml` retries a failed model fetch **once** on the secondary model (any non-interrupt error); a `[sys]` line notes the switch
 - **Weak-model routing**: `--weak-model <m>` or `weak_model` runs each user turn on the cheaper model until a step calls a write/exec tool (`write_file`, `patch_file`, `multi_edit`, `run_command`), then escalates to `model` for the rest of that turn (one `[sys]` note per escalation). Next turn starts weak again.
+- **Thinking knob**: `thinking = "high"` in `config.toml` (global or trusted project overlay) is sent verbatim as `reasoning_effort` on every chat request. No validation — providers without support may ignore or reject the field; opt-in only.
+- **`lightrs add <src>`**: install resources from a git URL (shallow clone, `GIT_TERMINAL_PROMPT=0`) or local dir — dirs containing `SKILL.md` copy to `~/.config/lightrs/skills/<slug>/` (same-id replaced; `.git`/oversized files skipped), `*.md` under a `commands/` dir copy to `~/.claude/commands/`. Scan/copy are bounded (8k entries, 5 depth, 200 files, 256 KiB/file).
 - **Context pressure**: when estimated API context exceeds **~20k tokens**, the TUI shows a `[sys]` hint (respects `/quiet`).
 - **Wire window**: the model never receives the full stored history — each request is trimmed to the **last 12 user turns**, then oldest whole turns drop until the wire payload fits **~48k est tokens** (never the in-flight turn, never split tool_call pairs). `api_history` keeps everything for `/rewind` and session save; a one-time `[sys]` note announces the first trim, and `/context` shows `wire: X of Y turns`.
 - **Auto-compact**: before each request, if the *stored* history estimate exceeds **~32k tokens**, old tool results and assistant `tool_calls` argument blobs (>512 chars) are stubbed in `api_history`; if still above **~64k tokens**, the oldest whole user turns are dropped permanently. A `[sys]` line reports what was removed. The estimate is recomputed via `chars/4`, not provider tokenizers.
@@ -134,7 +139,7 @@ Per canonical **workdir**, `~/.config/lightrs/sessions/<hash>.json` stores API h
 
 Priority: **CLI/env > project overlay > config file > defaults** (`config/file.rs`, `config.example.toml`). API-key env vars feed the CLI tier via clap `env=` args.
 
-**Per-project overlay**: `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file. Only `model`, `fallback_model`, `weak_model`, `[shell]`, `[mcp.*]`, and `[lsp.*]` are applied — a project `[shell]` section replaces the global one entirely; `[mcp]`/`[lsp]` entries merge (same-name project wins). `provider`, `base_url`, `keys`, `endpoints`, `workdir`, and `extra_read_dirs` are parsed but ignored, so a repo file cannot redirect API calls, inject credentials, or widen its own read scope.
+**Per-project overlay** (trust-gated): `<workdir>/.lightrs/config.toml` uses the same schema and layers over the global file, but only when the workdir is **trusted** — its canonical path is listed in global `[trust].dirs` (written by `/trust`) or the session started with `--trust` (one run). An untrusted project overlay is skipped with a startup `[sys]` notice (`/trust` to persist, `--trust` for one run). Only `model`, `fallback_model`, `weak_model`, `thinking`, `[shell]`, `[mcp.*]`, and `[lsp.*]` are applied — a project `[shell]` section replaces the global one entirely; `[mcp]`/`[lsp]` entries merge (same-name project wins). `provider`, `base_url`, `keys`, `endpoints`, `workdir`, and `extra_read_dirs` are parsed but ignored, so a repo file cannot redirect API calls, inject credentials, or widen its own read scope.
 
 **`extra_read_dirs` / `--add-dir <path>`** — extra directories the agent may **read** (never write) beyond the workdir. `read_file`/`list_dir`/`grep`/`glob_file_search`/`lsp`/`@`-mentions resolve via `validate_read_path` (workdir → then each root, canonicalized). Global file + CLI flag only; writes stay confined to the workdir (use `/cd` to move write scope).
 

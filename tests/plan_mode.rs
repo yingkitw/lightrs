@@ -48,6 +48,7 @@ async fn plan_mode_denies_writes_and_shell_but_reads() {
         |_| {},
         cancel_rx,
         None,
+        None,
     )
     .await
     .unwrap();

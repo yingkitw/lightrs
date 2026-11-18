@@ -203,6 +203,7 @@ mod tests {
             model: "k2".into(),
             fallback_model: None,
             weak_model: None,
+            thinking: None,
             base_url: "https://api.moonshot.ai/v1".into(),
             api_key: String::new(),
             workdir: std::path::PathBuf::from("/work/proj"),
@@ -214,6 +215,8 @@ mod tests {
             endpoints: Default::default(),
             mcp: Default::default(),
             lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
         }
     }
 

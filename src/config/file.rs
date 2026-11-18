@@ -21,6 +21,9 @@ pub(crate) struct FileConfig {
     pub fallback_model: Option<String>,
     /// Cheaper model for read-only steps; escalates to `model` on write/exec tools.
     pub weak_model: Option<String>,
+    /// Reasoning effort sent verbatim as `reasoning_effort` on each request
+    /// (`low`/`medium`/`high`/provider-specific). None = field omitted.
+    pub thinking: Option<String>,
     pub shell: Option<FileShell>,
     pub skills: Option<FileSkills>,
     pub tui: Option<FileTui>,
@@ -34,6 +37,16 @@ pub(crate) struct FileConfig {
     /// overlay granting itself `~/.ssh` read access is a consent violation.
     #[serde(default)]
     pub extra_read_dirs: Vec<String>,
+    /// `[trust] dirs` — workdirs whose `.lightrs/config.toml` may apply.
+    /// Global file only (a project can't trust itself).
+    pub trust: Option<FileTrust>,
+}
+
+/// `[trust]` — canonical workdir paths allowed to supply a project overlay.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct FileTrust {
+    #[serde(default)]
+    pub dirs: Vec<String>,
 }
 
 /// `[sandbox]` — `on`/`network` apply from the GLOBAL file only; a project
@@ -141,6 +154,69 @@ pub fn project_config_mtime(workdir: &std::path::Path) -> Option<std::time::Syst
         .ok()?
         .modified()
         .ok()
+}
+
+/// Is `workdir` in the global `[trust] dirs` list? Entries are canonical
+/// paths written by `save_trust_dir`; compare canonical-vs-canonical so a
+/// hand-edited non-canonical entry still matches.
+pub fn is_trusted(workdir: &std::path::Path, global: Option<&FileConfig>) -> bool {
+    let Some(dirs) = global.and_then(|f| f.trust.as_ref()).map(|t| &t.dirs) else {
+        return false;
+    };
+    let canon = workdir
+        .canonicalize()
+        .unwrap_or_else(|_| workdir.to_path_buf());
+    dirs.iter().any(|d| {
+        let p = PathBuf::from(d);
+        let p = p.canonicalize().unwrap_or(p);
+        p == canon
+    })
+}
+
+/// Load the project overlay honoring the trust decision (pi/codex parity:
+/// trust resolves before project resources). Returns `(overlay, skipped)` —
+/// `skipped` is true when a file existed but the dir isn't trusted, so the
+/// caller can surface the notice.
+pub fn trusted_project_overlay(
+    workdir: &std::path::Path,
+    global: Option<&FileConfig>,
+    force_trust: bool,
+) -> Result<(Option<FileConfig>, bool)> {
+    let project = load_project_config_file(workdir)?;
+    let trusted = force_trust || is_trusted(workdir, global);
+    Ok(match (project, trusted) {
+        (Some(p), true) => (Some(p), false),
+        (Some(_), false) => (None, true),
+        (None, _) => (None, false),
+    })
+}
+
+/// Persist `workdir` (canonical) into the global `[trust] dirs` list —
+/// merge-edit via `edit_config_at`, preserving everything else in the file.
+pub fn save_trust_dir(workdir: &std::path::Path) -> Result<()> {
+    save_trust_dir_to(&config_path(), workdir)
+}
+
+fn save_trust_dir_to(path: &std::path::Path, workdir: &std::path::Path) -> Result<()> {
+    let canon = workdir
+        .canonicalize()
+        .unwrap_or_else(|_| workdir.to_path_buf());
+    let dir = toml::Value::String(canon.to_string_lossy().into_owned());
+    edit_config_at(path, |table| {
+        let trust = table
+            .entry("trust")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        if let toml::Value::Table(trust_t) = trust {
+            let dirs = trust_t
+                .entry("dirs")
+                .or_insert_with(|| toml::Value::Array(Vec::new()));
+            if let toml::Value::Array(a) = dirs
+                && !a.contains(&dir)
+            {
+                a.push(dir.clone());
+            }
+        }
+    })
 }
 
 /// Effective `[shell]` — a project `[shell]` section replaces the global one
@@ -595,6 +671,37 @@ extra_read_dirs = ["~/.ssh", "../sneaky"]
         // `[skills]` defaults: enabled = true.
         let cfg: FileConfig = toml::from_str("[skills]\n").unwrap();
         assert!(cfg.skills.unwrap().enabled);
+    }
+
+    #[test]
+    fn trust_round_trip_and_overlay_gate() {
+        let dir = std::env::temp_dir().join(format!("lb-trust-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let work = dir.join("repo");
+        std::fs::create_dir_all(work.join(".lightrs")).unwrap();
+        std::fs::write(work.join(".lightrs/config.toml"), "model = \"x\"\n").unwrap();
+        let cfg_path = dir.join("config.toml");
+
+        // Untrusted: overlay exists but is skipped.
+        let (proj, skipped) = trusted_project_overlay(&work, None, false).unwrap();
+        assert!(proj.is_none() && skipped);
+        assert!(!is_trusted(&work, None));
+
+        // Persist trust → overlay applies; a sibling dir stays untrusted.
+        save_trust_dir_to(&cfg_path, &work).unwrap();
+        let global: FileConfig =
+            toml::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
+        assert!(is_trusted(&work, Some(&global)));
+        let (proj, skipped) =
+            trusted_project_overlay(&work, Some(&global), false).unwrap();
+        assert_eq!(proj.unwrap().model.as_deref(), Some("x"));
+        assert!(!skipped);
+        assert!(!is_trusted(&dir.join("other"), Some(&global)));
+
+        // --trust run override applies without any stored trust.
+        let (proj, skipped) = trusted_project_overlay(&dir.join("other"), None, true).unwrap();
+        assert!(proj.is_none() && !skipped, "no file = nothing skipped");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
