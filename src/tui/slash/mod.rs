@@ -256,8 +256,27 @@ pub fn run_slash(line: &str, agent: &mut Agent, app: &mut App) -> SlashAction {
                     app.config.model = sw.model.clone();
                     app.config.base_url = sw.base_url.clone();
                     app.config.api_key = sw.api_key;
+                    // Unit tests share the dev's real config.toml — skip the
+                    // write under cfg(test); `save_model_selection_to` covers
+                    // the file logic and integration binaries persist for real.
+                    let saved = if cfg!(test) {
+                        ""
+                    } else {
+                        match crate::config::save_model_selection(
+                            sw.provider,
+                            &sw.model,
+                            &sw.base_url,
+                        ) {
+                            Ok(()) => " · saved (restored next launch)",
+                            Err(e) => {
+                                agent
+                                    .push_error(format!("could not save model selection: {e:#}"));
+                                ""
+                            }
+                        }
+                    };
                     agent.push_system(format!(
-                        "model → {} · {} · {}",
+                        "model → {} · {} · {}{saved}",
                         provider_name(sw.provider),
                         sw.model,
                         sw.base_url

@@ -100,6 +100,9 @@ pub struct App {
     pub ev_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     /// Last `/model` fetch result in display order — numbered `/model <n>` picks.
     pub model_choices: Vec<(crate::config::Provider, String)>,
+    /// Set after `/model` prints a numbered list — the next submitted bare
+    /// number picks that model (one-shot; any other input clears it).
+    pub pending_model_pick: bool,
 }
 
 impl App {
@@ -132,6 +135,7 @@ impl App {
             rt: None,
             ev_tx: None,
             model_choices: Vec::new(),
+            pending_model_pick: false,
             git_branch,
         }
     }

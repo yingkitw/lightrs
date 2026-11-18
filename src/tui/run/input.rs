@@ -38,6 +38,15 @@ pub(crate) fn submit_line(
     if line.trim().is_empty() {
         return Ok(InputAction::Continue);
     }
+    // `/model` list is up — a bare number is a pick, anything else clears the
+    // pending state and runs normally.
+    let mut line = line;
+    if app.pending_model_pick {
+        app.pending_model_pick = false;
+        if line.trim().parse::<usize>().is_ok() {
+            line = format!("/model {}", line.trim());
+        }
+    }
     if let Some(cmd) = line.trim_start().strip_prefix('!') {
         return bang_command(cmd.trim(), agent, app);
     }
@@ -718,6 +727,39 @@ mod tests {
         assert!(text.contains("hi") && text.contains("exit=0"), "{text}");
         drop(guard);
         assert_eq!(app.state, RunState::Ready, "bang never sets Busy");
+    }
+
+    #[test]
+    fn bare_number_picks_listed_model() {
+        let agent = test_agent();
+        let mut app = test_app();
+        app.model_choices = vec![
+            (Provider::Kimi, "kimi-a".into()),
+            (Provider::Kimi, "kimi-b".into()),
+            (Provider::Kimi, "kimi-picked".into()),
+        ];
+        app.pending_model_pick = true;
+        let (kick_tx, _kick_rx) = mpsc::unbounded_channel::<String>();
+
+        let action = submit_line("3".into(), &agent, &mut app, &kick_tx).unwrap();
+
+        assert_eq!(action, InputAction::Continue);
+        assert_eq!(app.config.model, "kimi-picked");
+        assert!(!app.pending_model_pick, "pick consumes the pending state");
+    }
+
+    #[test]
+    fn non_number_clears_pending_pick() {
+        let agent = test_agent();
+        let mut app = test_app();
+        app.model_choices = vec![(Provider::Kimi, "kimi-a".into())];
+        app.pending_model_pick = true;
+        let (kick_tx, mut kick_rx) = mpsc::unbounded_channel::<String>();
+
+        submit_line("fix bug 7".into(), &agent, &mut app, &kick_tx).unwrap();
+
+        assert!(!app.pending_model_pick);
+        assert_eq!(kick_rx.try_recv().unwrap(), "fix bug 7");
     }
 
     #[test]

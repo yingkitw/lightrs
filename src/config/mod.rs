@@ -10,7 +10,9 @@ use crate::cli::ModelFlags;
 use crate::migrate::{self, format_scan_report, infer_provider_from_env, scan_local_tools};
 use crate::tools::ShellPolicy;
 
-pub use file::{config_path, load_tui_theme, project_config_mtime, save_tui_theme};
+pub use file::{
+    config_path, load_tui_theme, project_config_mtime, save_model_selection, save_tui_theme,
+};
 pub(crate) use file::write_private_file;
 
 /// Last modification time of `config.toml`, if present.

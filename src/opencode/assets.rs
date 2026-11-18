@@ -6,6 +6,23 @@ use serde_json::Value;
 
 use super::paths::default_opencode_global_config;
 
+/// Copied instruction/hook files come from paths a (possibly project-level)
+/// config declares — a declared giant file would otherwise fill the config
+/// disk on import.
+const COPY_MAX: u64 = 1024 * 1024;
+
+/// Copy `src` → `dest`, refusing declared files past `COPY_MAX`.
+/// Returns whether the copy happened so callers can report honestly.
+fn copy_bounded(src: &Path, dest: &Path) -> Result<bool> {
+    let len = src.metadata().map(|m| m.len()).unwrap_or(0);
+    if len > COPY_MAX {
+        eprintln!("skip oversized file ({} B): {}", len, src.display());
+        return Ok(false);
+    }
+    fs::copy(src, dest).with_context(|| format!("copy {}", src.display()))?;
+    Ok(true)
+}
+
 pub fn import_mcp(doc: &Value, dest: &Path) -> Result<()> {
     if let Some(mcp) = doc.get("mcp") {
         let path = dest.join("mcp.json");
@@ -75,8 +92,11 @@ pub fn import_rules(doc: &Value, dest: &Path) -> Result<()> {
                         .file_name()
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_else(|| "rule.md".into());
-                    fs::copy(&p, rules_dir.join(&name))?;
-                    out.push_str(&format!("- `{path}` → rules/{name}\n"));
+                    if copy_bounded(&p, &rules_dir.join(&name))? {
+                        out.push_str(&format!("- `{path}` → rules/{name}\n"));
+                    } else {
+                        out.push_str(&format!("- (skipped — oversized) `{path}`\n"));
+                    }
                 } else {
                     out.push_str(&format!("- (missing) `{path}`\n"));
                 }
@@ -105,8 +125,7 @@ pub fn import_hooks(doc: &Value, dest: &Path) -> Result<()> {
         PathBuf::from(".opencode/hooks.json"),
     ] {
         if candidate.is_file() {
-            fs::copy(&candidate, hooks_dir.join(candidate.file_name().unwrap_or_default()))?;
-            found = true;
+            found |= copy_bounded(&candidate, &hooks_dir.join(candidate.file_name().unwrap_or_default()))?;
         }
     }
 
@@ -227,6 +246,21 @@ mod tests {
         let index = fs::read_to_string(dest.join("rules/INDEX.md")).unwrap();
         assert!(index.contains("rules/coding.md"));
         assert!(index.contains("(missing)"));
+        let _ = fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn rules_marks_oversized_as_skipped() {
+        let dest = temp("big-rule");
+        let big = dest.join("huge.md");
+        fs::write(&big, vec![b'x'; COPY_MAX as usize + 1]).unwrap();
+
+        let doc = json!({"instructions": [big.to_string_lossy()]});
+        import_rules(&doc, &dest).unwrap();
+
+        assert!(!dest.join("rules/huge.md").exists());
+        let index = fs::read_to_string(dest.join("rules/INDEX.md")).unwrap();
+        assert!(index.contains("(skipped — oversized)"));
         let _ = fs::remove_dir_all(&dest);
     }
 

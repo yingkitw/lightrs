@@ -224,10 +224,14 @@ pub fn load_tui_theme() -> Option<String> {
     file.tui.and_then(|t| t.theme)
 }
 
-pub fn save_tui_theme(theme: &str) -> Result<()> {
-    let path = config_path();
+/// Read `config.toml` (or start an empty table), mutate the root, write back
+/// with secret-safe perms — preserves keys/sections the edit didn't touch.
+fn edit_config_at(
+    path: &std::path::Path,
+    edit: impl FnOnce(&mut toml::map::Map<String, toml::Value>),
+) -> Result<()> {
     let mut root: toml::Value = if path.exists() {
-        let text = std::fs::read_to_string(&path)?;
+        let text = std::fs::read_to_string(path)?;
         toml::from_str(&text).unwrap_or(toml::Value::Table(toml::map::Map::new()))
     } else {
         toml::Value::Table(toml::map::Map::new())
@@ -235,19 +239,54 @@ pub fn save_tui_theme(theme: &str) -> Result<()> {
     let toml::Value::Table(ref mut table) = root else {
         bail!("config.toml root must be a table");
     };
-    let ui = table
-        .entry("tui")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    if let toml::Value::Table(ui_table) = ui {
-        ui_table.insert("theme".to_string(), toml::Value::String(theme.to_string()));
-    }
+    edit(table);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    write_private_file(&path, &toml::to_string_pretty(&root)?).with_context(|| {
-        format!("write {}", path.display())
-    })?;
+    write_private_file(path, &toml::to_string_pretty(&root)?)
+        .with_context(|| format!("write {}", path.display()))?;
     Ok(())
+}
+
+pub fn save_tui_theme(theme: &str) -> Result<()> {
+    edit_config_at(&config_path(), |table| {
+        let ui = table
+            .entry("tui")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        if let toml::Value::Table(ui_table) = ui {
+            ui_table.insert("theme".to_string(), toml::Value::String(theme.to_string()));
+        }
+    })
+}
+
+/// Persist a `/model` pick so the next launch restores it (`provider`/`model`
+/// are read at startup; `base_url` captures the endpoint actually in use —
+/// including a custom `--base-url` session). The API key is never persisted —
+/// startup re-resolves it from env/`[keys]` like any other launch.
+pub fn save_model_selection(provider: Provider, model: &str, base_url: &str) -> Result<()> {
+    save_model_selection_to(&config_path(), provider, model, base_url)
+}
+
+fn save_model_selection_to(
+    path: &std::path::Path,
+    provider: Provider,
+    model: &str,
+    base_url: &str,
+) -> Result<()> {
+    edit_config_at(path, |table| {
+        table.insert(
+            "provider".to_string(),
+            toml::Value::String(provider.id().to_string()),
+        );
+        table.insert(
+            "model".to_string(),
+            toml::Value::String(model.to_string()),
+        );
+        table.insert(
+            "base_url".to_string(),
+            toml::Value::String(base_url.to_string()),
+        );
+    })
 }
 
 /// Write a file that may hold secrets (`config.toml` carries `[keys]`,
@@ -556,5 +595,35 @@ extra_read_dirs = ["~/.ssh", "../sneaky"]
         // `[skills]` defaults: enabled = true.
         let cfg: FileConfig = toml::from_str("[skills]\n").unwrap();
         assert!(cfg.skills.unwrap().enabled);
+    }
+
+    #[test]
+    fn save_model_selection_preserves_other_sections() {
+        let dir = std::env::temp_dir().join(format!("lb-sel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(
+            &path,
+            "model = \"glm-4.6\"\n[keys]\nkimi = \"sekrit\"\n[tui]\ntheme = \"hc\"\n",
+        )
+        .unwrap();
+
+        save_model_selection_to(&path, Provider::Kimi, "kimi-k2", "https://api.moonshot.cn/v1")
+            .unwrap();
+
+        let cfg: FileConfig = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(cfg.provider, Some(Provider::Kimi));
+        assert_eq!(cfg.model.as_deref(), Some("kimi-k2"));
+        assert_eq!(
+            cfg.base_url.as_deref(),
+            Some("https://api.moonshot.cn/v1")
+        );
+        // Untouched sections survive — secrets and UI prefs are not clobbered.
+        let root: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["keys"]["kimi"].as_str(), Some("sekrit"));
+        assert_eq!(root["tui"]["theme"].as_str(), Some("hc"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

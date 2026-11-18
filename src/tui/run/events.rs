@@ -99,6 +99,7 @@ pub(crate) fn handle_agent_event(
         }
         AgentEvent::ModelsListed(entries) => {
             app.model_choices = crate::tui::slash::model_choices_from(&entries);
+            app.pending_model_pick = !app.model_choices.is_empty();
             let text = crate::tui::slash::format_model_list(&entries, &app.config);
             agent.blocking_lock().push_system(text);
             true
@@ -258,6 +259,7 @@ mod tests {
         ));
         assert_eq!(app.model_choices.len(), 2);
         assert_eq!(app.model_choices[1].1, "glm-5.3");
+        assert!(app.pending_model_pick);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

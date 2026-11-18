@@ -128,7 +128,7 @@ pub(crate) fn format_model_list(
         }
     }
     if n > 0 {
-        out.push_str("\n/model <n> to switch · /model <name> for any id");
+        out.push_str("\ntype a number (or /model <n>) to switch · /model <name> for any id");
     }
     out
 }

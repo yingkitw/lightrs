@@ -3,8 +3,12 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+/// `opencode.json` can be project-level (repo-controlled) — cap the read.
+const JSONC_MAX: u64 = 1024 * 1024;
+
 pub fn load_jsonc(path: &Path) -> Result<Value> {
-    let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
+    let text = crate::tools::read_to_string_capped(path, JSONC_MAX)
+        .ok_or_else(|| anyhow::anyhow!("{} unreadable or over {JSONC_MAX} B", path.display()))?;
     let stripped = strip_jsonc_comments(&text);
     serde_json::from_str(&stripped).with_context(|| format!("parse {}", path.display()))
 }
@@ -62,4 +66,19 @@ fn strip_jsonc_comments(input: &str) -> String {
         out.push(ch);
     }
     out
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_jsonc_rejects_oversized() {
+        let dir = std::env::temp_dir().join(format!("lb-jsonc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("opencode.json");
+        std::fs::write(&path, vec![b' '; JSONC_MAX as usize + 1]).unwrap();
+        assert!(load_jsonc(&path).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
