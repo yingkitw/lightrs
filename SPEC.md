@@ -173,7 +173,7 @@ network = true                             # default true; false closes the exfi
 
 When `on`, every spawned child — `run_command`, `format`/`test` hooks, `[mcp.*]`/`[lsp.*]` servers — runs confined: **workspace-write** semantics (writes allowed only under the workdir + tmp + `writable` roots; read/exec everywhere; network per the flag). Backends: `sandbox-exec` (seatbelt) on macOS, `bwrap` on Linux; **fail-closed** when enabled with no backend. File tools are *not* sandboxed — they're already confined in-process by `validate_work_path` (the agent itself must write sessions/config outside workdir, so process-wide jails don't apply). Honest limit: network-on confinement stops destructive writes but not exfiltration of readable files — set `network = false` for that.
 
-**Overlay rule**: `on`/`network` are GLOBAL-only — a project `[sandbox]` may add `writable` roots but can never weaken confinement (same redirect-attack class as `endpoints`).
+**Overlay rule**: `on`/`network` are GLOBAL-only — a project `[sandbox]` may add `writable` roots but can never weaken confinement (same redirect-attack class as `endpoints`). When a confined command exits non-zero with a permission-denial signature (`Operation not permitted` / `Permission denied` / `deny(`), the result appends a confinement hint naming `writable`/`on` as the escape — a raw EPERM otherwise sends the model hunting in the wrong place.
 
 ### MCP servers
 

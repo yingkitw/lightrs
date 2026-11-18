@@ -104,6 +104,19 @@ pub fn run_command(
             "\n[stderr truncated at {MAX_SHELL_STREAM_BYTES} bytes]"
         ));
     }
+    // Under confinement, an EPERM-style failure gets no sandbox context — the
+    // child just sees a denied syscall. Hint when output carries the denial
+    // signature so the fix (`writable` root / `.on = false`) is discoverable.
+    if !status.success()
+        && policy.sandbox().on
+        && ["Operation not permitted", "Permission denied", "deny("]
+            .iter()
+            .any(|sig| out.contains(sig) || err.contains(sig))
+    {
+        body.push_str(
+            "\n[note: [sandbox] confinement is on — if this was a write outside workdir/tmp/`writable` roots, the sandbox denied it ([sandbox].writable widens; on = false disables)]",
+        );
+    }
     Ok(body)
 }
 
@@ -359,6 +372,38 @@ mod tests {
         // Group-killed grandchild never writes the marker.
         std::thread::sleep(Duration::from_millis(1500));
         assert!(!marker.exists(), "sleep grandchild survived group kill");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A sandboxed command dying on a denied write must name the cause — the
+    /// raw EPERM alone sends the model/user hunting in the wrong place.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sandbox_denied_write_hints_at_confinement() {
+        let dir = std::env::temp_dir().join(format!("lightrs-hint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut policy = ShellPolicy::default();
+        policy.set_sandbox(crate::tools::sandbox::SandboxCfg {
+            on: true,
+            ..Default::default()
+        });
+        // `touch` into a denied path exits non-zero with EPERM on stderr.
+        let out = run_command(
+            &dir,
+            RunCommandArgs {
+                command: "touch /var/empty/sbx-x".into(),
+                timeout_secs: Some(10),
+            },
+            &policy,
+            true,
+            None,
+        )
+        .unwrap();
+        assert!(
+            out.contains("[note: [sandbox] confinement is on"),
+            "denied write must hint at confinement: {out}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

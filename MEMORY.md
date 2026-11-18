@@ -564,3 +564,8 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 - **Every path-taking surface must use the SAME resolver**: `read_roots` widened `read_file`/`grep`/`glob`/`lsp` but `mentions.rs` kept `validate_work_path` — `@`-mentions under user-declared roots silently skipped. When widening a scope boundary, grep for the OLD validator — the sites that didn't migrate are the bugs.
 - **Dead pub fn → delegation, not deletion**: once all reads moved to `validate_read_path`, `validate_work_path` was dead — refactoring `validate_read_path` to delegate to it deduped the canonicalize+prefix logic AND kept the primitive alive. Two near-identical validators > one canonicalize path.
+
+## Sandbox denial hint (2026-11-18)
+
+- **Confined failures need a named cause**: seatbelt denials reach the child as a bare EPERM — the tool's own stderr ("Operation not permitted") carries zero sandbox context, so every sandboxed write failure reads as a permissions mystery. Signature-match on non-zero exit + denial strings → append a hedged possible-cause note (not a claim — same signatures come from ordinary fs perms).
+- **No unsandboxed escape valve is intentional**: `!cmd` bypasses the allowlist (user consented by typing) but NOT the sandbox — confinement guards against what binaries do, and a user-typed `cargo build` can still carry a compromised dep. `writable` roots are the designed escape; the hint surfaces that.
