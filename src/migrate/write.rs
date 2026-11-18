@@ -15,11 +15,13 @@ pub fn config_lines(profile: &ModelProfile, header: &str) -> Vec<String> {
         Provider::Minimax => "minimax",
     };
     let mut lines = vec![header.into(), format!("provider = \"{provider_name}\"")];
+    // `{s:?}` debug-quoting is TOML basic-string escaping — source config
+    // values (which a repo-level opencode.json can supply) can't inject keys.
     if let Some(m) = &profile.model {
-        lines.push(format!("model = \"{m}\""));
+        lines.push(format!("model = {m:?}"));
     }
     if let Some(url) = &profile.base_url {
-        lines.push(format!("base_url = \"{url}\""));
+        lines.push(format!("base_url = {url:?}"));
     }
     append_keys(&mut lines, &profile.keys);
     append_endpoints(&mut lines, profile);
@@ -55,7 +57,7 @@ pub fn append_endpoints(lines: &mut Vec<String>, profile: &ModelProfile) {
     }
     lines.push("[endpoints]".into());
     for (p, url) in extra {
-        lines.push(format!("{} = \"{url}\"", p.id()));
+        lines.push(format!("{} = {url:?}", p.id()));
     }
 }
 
@@ -73,13 +75,13 @@ pub fn append_keys(lines: &mut Vec<String>, keys: &Keys) {
     }
     lines.push("[keys]".into());
     if let Some(k) = &keys.glm {
-        lines.push(format!("glm = \"{k}\""));
+        lines.push(format!("glm = {k:?}"));
     }
     if let Some(k) = &keys.kimi {
-        lines.push(format!("kimi = \"{k}\""));
+        lines.push(format!("kimi = {k:?}"));
     }
     if let Some(k) = &keys.minimax {
-        lines.push(format!("minimax = \"{k}\""));
+        lines.push(format!("minimax = {k:?}"));
     }
 }
 
@@ -168,6 +170,26 @@ mod tests {
         assert!(text.ends_with('\n'));
         let _ = fs::remove_dir_all(&dir);
     }
+    /// Source values come from foreign configs — a `"` or newline must stay
+    /// inside its string, never split the TOML or inject a section. Debug
+    /// quoting is TOML basic-string escaping.
+    #[test]
+    fn hostile_values_stay_inside_strings() {
+        let mut p = profile(Provider::Glm);
+        p.model = Some("x\"\n[keys]\nglm = \"evil".into());
+        p.base_url = Some("https://x/v1\"\nendpoint = \"y".into());
+        p.keys.kimi = Some("k\\\n".into());
+        let text = config_lines(&p, "# h").join("\n");
+        let doc: toml::Value = toml::from_str(&text).expect("emitted TOML must parse");
+        assert_eq!(
+            doc["model"].as_str().unwrap(),
+            "x\"\n[keys]\nglm = \"evil",
+            "model must round-trip literally, not inject [keys]"
+        );
+        assert!(doc.get("keys").is_none() || doc["keys"].get("glm").is_none());
+        assert_eq!(doc["keys"]["kimi"].as_str().unwrap(), "k\\\n");
+    }
+
     #[test]
     fn shell_allowlist_emits_section() {
         let mut p = profile(Provider::Kimi);

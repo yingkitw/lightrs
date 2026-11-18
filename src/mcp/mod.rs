@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
@@ -23,6 +23,9 @@ use crate::tools::ToolOutcome;
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// Result text cap — same order as tool bodies elsewhere.
 const RESULT_CAP: usize = 64 * 1024;
+/// One response line must fit — a newlineless stream is otherwise unbounded
+/// memory for the full RPC timeout (same class as the SSE line cap).
+const LINE_MAX: usize = 4 * 1024 * 1024;
 
 /// Server specs from `[mcp.<name>]` config: name → shell command.
 pub type McpSpecs = BTreeMap<String, String>;
@@ -217,8 +220,16 @@ impl McpServer {
         let mut line = String::new();
         loop {
             line.clear();
-            if self.reader.read_line(&mut line).await? == 0 {
+            if (&mut self.reader)
+                .take(LINE_MAX as u64 + 1)
+                .read_line(&mut line)
+                .await?
+                == 0
+            {
                 bail!("MCP server closed stdout");
+            }
+            if line.len() > LINE_MAX {
+                bail!("MCP response line over {LINE_MAX} B");
             }
             let Ok(msg) = serde_json::from_str::<Value>(&line) else {
                 continue;
@@ -253,6 +264,12 @@ impl McpServer {
 
 impl Drop for McpServer {
     fn drop(&mut self) {
+        // process_group(0) at spawn — kill the whole group or grandchildren
+        // (npx → node) survive every respawn cycle.
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            crate::tools::shell::kill_process_group(pid);
+        }
         let _ = self.child.start_kill();
     }
 }
@@ -400,6 +417,100 @@ exit 0
         // Next call respawns and works again.
         let tools = mgr.list_tools("s").await.unwrap();
         assert!(tools.contains("echo"), "{tools}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A response line past `LINE_MAX` errors instead of growing `line`
+    /// without bound — a newlineless stream would otherwise consume memory
+    /// for the whole RPC timeout.
+    #[tokio::test]
+    async fn oversized_response_line_errors() {
+        let dir = std::env::temp_dir().join(format!("lightrs-mcp-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("big-line.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+IFS= read -r l1
+head -c 5000000 </dev/zero | tr '\0' 'a'
+printf '\n'
+"#,
+        )
+        .unwrap();
+        let mut mgr = McpManager::new(
+            BTreeMap::from([(
+                "s".to_string(),
+                format!("sh {}", script.display()),
+            )]),
+            crate::tools::sandbox::SandboxCfg::default(),
+            dir.clone(),
+        );
+        let err = mgr.call("s", "echo", json!({})).await.unwrap_err();
+        assert!(format!("{err:#}").contains("over"), "{err:#}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Dropping a server must kill its whole process group — a launcher like
+    /// `npx` otherwise leaves its real server child orphaned on every
+    /// respawn cycle.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn drop_kills_process_group() {
+        let dir = std::env::temp_dir().join(format!("lightrs-mcp-pgid-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pidfile = dir.join("grandchild.pid");
+        let script = dir.join("spawner.sh");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+sleep 300 &
+echo $! > {}
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *notifications*) : ;;
+    *initialize*) [ -n "$id" ] && printf '{{"jsonrpc":"2.0","id":%s,"result":{{}}}}\n' "$id" ;;
+    *tools/list*) [ -n "$id" ] && printf '{{"jsonrpc":"2.0","id":%s,"result":{{"tools":[]}}}}\n' "$id" ;;
+  esac
+done
+"#,
+                pidfile.display()
+            ),
+        )
+        .unwrap();
+        let mut mgr = McpManager::new(
+            BTreeMap::from([(
+                "s".to_string(),
+                format!("sh {}", script.display()),
+            )]),
+            crate::tools::sandbox::SandboxCfg::default(),
+            dir.clone(),
+        );
+        mgr.list_tools("s").await.unwrap();
+        drop(mgr);
+        // SIGKILL is immediate; the grandchild is reparented+reaped by init.
+        // Poll briefly for `kill -0` to start failing.
+        let pid = std::fs::read_to_string(&pidfile).unwrap();
+        let pid = pid.trim();
+        let alive = |pid: &str| {
+            std::process::Command::new("kill")
+                .args(["-0", pid])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        for _ in 0..50 {
+            if !alive(pid) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let alive = alive(pid);
+        assert!(!alive, "grandchild still running after drop");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

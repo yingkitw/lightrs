@@ -262,7 +262,7 @@ impl App {
         let mut label = format!(
             "{} {}{}",
             self.busy_spinner(),
-            self.busy_phase(),
+            crate::tools::shell::escape_controls(self.busy_phase()),
             self.busy_dots()
         );
         if let Some(s) = self.busy_elapsed() {

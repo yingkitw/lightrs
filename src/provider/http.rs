@@ -45,6 +45,12 @@ pub fn retriable_status(status: StatusCode) -> bool {
     matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504)
 }
 
+/// `insufficient_quota` is a billing failure, not congestion — every retry
+/// would get the same answer, so don't spend the backoff (codex #6340 parity).
+fn quota_exhausted(body: &str) -> bool {
+    body.contains("insufficient_quota")
+}
+
 pub fn retriable_error(err: &reqwest::Error) -> bool {
     err.is_timeout() || err.is_connect() || err.is_request() || err.is_body()
 }
@@ -110,7 +116,12 @@ pub async fn post_json_with_retry<T: serde::Serialize + ?Sized>(
                 }
                 // Provider hint wins over our exponential guess.
                 let wait = retry_after_delay(&resp).map_or(delay, |hint| delay.max(hint));
-                let _ = error_body_capped(resp).await;
+                let body = error_body_capped(resp).await;
+                if quota_exhausted(&body) {
+                    return Err(anyhow::anyhow!(
+                        "insufficient_quota — provider quota/billing exhausted"
+                    ));
+                }
                 interruptible_sleep(wait, cancel).await?;
                 delay = delay.saturating_mul(2);
             }

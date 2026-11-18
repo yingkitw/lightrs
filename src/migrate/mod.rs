@@ -90,7 +90,10 @@ fn apply_tool(tool: &DetectedTool) -> Result<()> {
             fs::create_dir_all(dir)?;
             write_config(&profile, dir)?;
             if let Some(mcp) = &tool.mcp_json {
-                fs::write(dir.join("mcp.json"), serde_json::to_string_pretty(mcp)?)?;
+                crate::config::write_private_file(
+                    &dir.join("mcp.json"),
+                    &serde_json::to_string_pretty(mcp)?,
+                )?;
             }
             Ok(())
         }

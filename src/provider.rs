@@ -35,6 +35,13 @@ pub fn is_interrupted(err: &anyhow::Error) -> bool {
     err.to_string().contains(INTERRUPTED)
 }
 
+/// A quota/billing failure is terminal — the non-stream fallback would get
+/// the same answer, so it must not spend the request. `{err:#}` walks the
+/// context chain — callers wrap the raw marker in their own context.
+fn is_quota_err(err: &anyhow::Error) -> bool {
+    format!("{err:#}").contains("insufficient_quota")
+}
+
 pub trait ModelClient: Send + Sync {
     /// Model name this client was configured for (used in `[sys]` notes and
     /// request rewriting on fallback retry).
@@ -241,6 +248,7 @@ impl ModelClient for LlmClient {
                     ))
                 }
                 Err(e) if is_interrupted(&e) => Err(e),
+                Err(e) if is_quota_err(&e) => Err(e),
                 // SSE failed mid-connect — retry once as a plain chat request.
                 // The retry is cancelable: dropping the chat future aborts
                 // the in-flight HTTP request; a parked arm means the sender

@@ -76,7 +76,7 @@ pub fn draw_input(frame: &mut Frame, area: Rect, app: &App) -> Rect {
             .commands
             .iter()
             .take(MAX_APPROVAL_LINES)
-            .map(|c| Line::from(Span::styled(c.clone(), theme::busy())))
+            .map(|c| Line::from(Span::styled(crate::tools::shell::escape_controls(c), theme::busy())))
             .collect();
         if ap.commands.len() > MAX_APPROVAL_LINES {
             rows.push(Line::from(Span::styled(
@@ -201,9 +201,12 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App, agent: &Agent) {
     } else {
         format!("{} · Esc or Ctrl+C stop", app.busy_label())
     };
+    // `hint` and the Δ-file names can carry model/repo-controlled text —
+    // escape controls so nothing reaches the terminal or forges rows.
     let text = crate::tui::info::truncate_end(
         &format!("{ctx}{files}{skills}{plan} · {hint}"),
         usize::from(area.width.max(1)),
     );
+    let text = crate::tools::shell::escape_controls(&text);
     frame.render_widget(Paragraph::new(text).style(style), area);
 }

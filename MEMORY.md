@@ -569,3 +569,26 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 
 - **Confined failures need a named cause**: seatbelt denials reach the child as a bare EPERM — the tool's own stderr ("Operation not permitted") carries zero sandbox context, so every sandboxed write failure reads as a permissions mystery. Signature-match on non-zero exit + denial strings → append a hedged possible-cause note (not a claim — same signatures come from ordinary fs perms).
 - **No unsandboxed escape valve is intentional**: `!cmd` bypasses the allowlist (user consented by typing) but NOT the sandbox — confinement guards against what binaries do, and a user-typed `cargo build` can still carry a compromised dep. `writable` roots are the designed escape; the hint surfaces that.
+
+## MCP/LSP stdio bounds + process-group drop (2026-11-18)
+
+- **Every `read_line` on untrusted output needs a byte cap** — tokio `read_line` grows the buffer until `\n`; a newlineless stream from a spawned server is unbounded memory for the whole RPC timeout. Bound at the source: `(&mut reader).take(CAP + 1).read_line(&mut line)` — `take` on `&mut BufReader` stays `AsyncBufRead` (no `by_ref` in tokio — that's futures/std). If `line.len() > CAP` the stream can't be resynced mid-line anyway, so bail → drop → respawn. LSP framing caps the body but *not* headers — audit each read site, not each protocol.
+- **`process_group(0)` without group-kill is a dead setting** — `start_kill`/`.kill()` signal the leader pid only; wrapper launchers (`npx` → node, `sh -c` → real server) leave grandchildren orphaned on every respawn cycle. `kill_process_group(pgid)` (`kill -KILL -- -pgid`) is the reusable primitive; a dead/zombie group returns EPERM — harmless, ignore status.
+
+## Chrome surfaces need escaping, not stripping (2026-11-18)
+
+- **Escape-injection sweeps must enumerate every render surface, not just the transcript**: approval prompts, status bar, busy label, header, and hint chains all render strings — each is an injection surface for model args (tool names, paths, ask questions) AND repo-controlled names (workdir files via @-hints, command names via slash hints, SKILL.md ids).
+- **`escape_controls` (`char::escape_default`) ≠ `strip_ansi`**: strip drops the sequence entirely — fine for transcript bodies; chrome prompts show controls *visibly* (`\u{1b}`, `\n`) so nothing hidden survives into an approval decision, and `\n` can't forge a second prompt row. Clean strings pass through verbatim (guard on `char::is_control` first).
+- **Escape at the compose site, not per-source**: `draw_status`'s hint chain merges 5 sources — one escape on the composed string covers all, including sources added later. Double-escaping is the trap when mixing site-level and compose-level fixes.
+
+## Import/migrate = foreign data crossing a trust boundary (2026-11-18)
+
+- **Every emitted config line is a serialization boundary**: `config_lines` builds TOML by hand — any `{x}` interpolation of a foreign-sourced value is an injection hole (`"`/`\n` → new sections). `{s:?}` debug quoting is TOML basic-string escaping and was already the file's own convention for `allowlist`; apply it to *all* value emissions.
+- **Secret-adjacent writes must all go through `write_private_file`**: a sweep covering one call site (opencode `import_mcp`) doesn't cover others (`migrate::apply_tool` mcp.json) — audit by *searching for the primitive's competitors* (`fs::write` on config paths), not by checking sites.
+- **`import` merges repo-controlled docs into global state by design** — opencode `skills.paths`/`instructions`/`mcp` carry persistent effects (prompt injection, global endpoints). The escape fix closes the serialization hole; the feature-level trust (don't `import` inside untrusted repos) is documented in SPEC.
+
+## Quota errors are terminal, not congestion (2026-11-18)
+
+- **`insufficient_quota` ≠ 429-rate-limit**: the retriable-status table lumps billing failures in with congestion; the 4 KiB-capped error body (already read for discard) is the discriminator. Two gates needed: the retry loop itself AND `send()`'s stream→non-stream fallback, which catches *any* non-interrupt stream error.
+- **`err.to_string()` sees only the outermost context** — errors wrapped in `.context("...")` hide the marker from `to_string()`; match on `format!("{err:#}")` (chain-walk) when the check must survive wrapping. `is_interrupted` gets away with `to_string()` only because INTERRUPTED is never context-wrapped.
+- **e2e mock ordering matters for two-path tests**: stream-path errors consume one mock response, then the fallback consumes the next — a 200/SSE answer in slot 2 produces a parse error, not the error you're testing. Assert request *count* to prove which paths ran.

@@ -25,6 +25,9 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 /// the server would then analyze incorrectly.
 const DOC_MAX: u64 = 512 * 1024;
 const RESULT_CAP: usize = 32 * 1024;
+/// Header lines are `Content-Length: N` — a newlineless stream is otherwise
+/// unbounded memory for the full RPC timeout.
+const HDR_LINE_MAX: usize = 8 * 1024;
 
 /// `[lsp.<lang>]` specs: lang → (command, extensions).
 pub type LspSpecs = BTreeMap<String, (String, Vec<String>)>;
@@ -246,8 +249,16 @@ impl LspServer {
             let mut header = String::new();
             loop {
                 header.clear();
-                if self.reader.read_line(&mut header).await? == 0 {
+                if (&mut self.reader)
+                    .take(HDR_LINE_MAX as u64 + 1)
+                    .read_line(&mut header)
+                    .await?
+                    == 0
+                {
                     bail!("LSP server closed stdout");
+                }
+                if header.len() > HDR_LINE_MAX {
+                    bail!("LSP header line over {HDR_LINE_MAX} B");
                 }
                 let h = header.trim();
                 if h.is_empty() {
@@ -298,6 +309,12 @@ impl LspServer {
 
 impl Drop for LspServer {
     fn drop(&mut self) {
+        // process_group(0) at spawn — kill the whole group or grandchildren
+        // (wrapper launchers) survive every respawn cycle.
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            crate::tools::shell::kill_process_group(pid);
+        }
         let _ = self.child.start_kill();
     }
 }
@@ -671,6 +688,53 @@ done
             .unwrap();
         let s = format_locations(&out, &dir);
         assert!(s.contains("a.rs:5:3"), "{s}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A header line past `HDR_LINE_MAX` errors instead of growing `header`
+    /// without bound — a newlineless stream would otherwise consume memory
+    /// for the whole RPC timeout (the body cap doesn't cover headers).
+    #[tokio::test]
+    async fn oversized_header_line_errors() {
+        let dir = std::env::temp_dir().join(format!("lightrs-lsp-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("big-header.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+while :; do
+  len=""
+  while IFS= read -r h; do
+    h=$(printf '%s' "$h" | tr -d '\r')
+    [ -z "$h" ] && break
+    case "$h" in
+      Content-Length:*) len=$(printf '%s' "$h" | cut -d: -f2 | tr -d ' ') ;;
+    esac
+  done
+  [ -z "$len" ] && exit 0
+  body=$(dd bs=1 count="$len" 2>/dev/null)
+  printf 'X-Big: '
+  head -c 9000 </dev/zero | tr '\0' 'a'
+  printf '\r\nContent-Length: 2\r\n\r\n{}'
+done
+"#,
+        )
+        .unwrap();
+        let mut mgr = LspManager::new(
+            BTreeMap::from([(
+                "rust".to_string(),
+                (format!("sh {}", script.display()), vec!["rs".to_string()]),
+            )]),
+            dir.clone(),
+            crate::tools::sandbox::SandboxCfg::default(),
+        );
+        let err = mgr
+            .ensure("rust")
+            .await
+            .err()
+            .expect("spawn must fail");
+        assert!(format!("{err:#}").contains("header line over"), "{err:#}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

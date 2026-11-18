@@ -144,6 +144,34 @@ async fn retry_after_header_is_honored() {
 }
 
 #[tokio::test]
+async fn insufficient_quota_is_not_retried() {
+    // A billing/quota failure is terminal — the same request would fail
+    // again, so no backoff is spent (codex #6340 parity).
+    let responses = vec![
+        http_resp(
+            "429 Too Many Requests",
+            "",
+            r#"{"error":{"type":"insufficient_quota","message":"quota exceeded"}}"#,
+        ),
+        http_resp(
+            "200 OK",
+            "content-type: text/event-stream\r\n",
+            &sse_text("ok"),
+        ),
+    ];
+    let (url, recorded) = serve_raw(responses);
+    let client = LlmClient::new(url, "k".into(), "m".into());
+    let (_tx, rx) = watch::channel(false);
+    let mut noop = |_a: StreamApply| {};
+    let err = client
+        .send(request(), &mut noop, rx)
+        .await
+        .expect_err("quota failure must surface, not retry");
+    assert!(format!("{err:#}").contains("insufficient_quota"), "{err:#}");
+    assert_eq!(recorded.lock().unwrap().len(), 1, "no retry on quota error");
+}
+
+#[tokio::test]
 async fn cancel_interrupts_retry_sleep() {
     // 429 + Retry-After: 30 — the capped sleep must not outlive cancel.
     let responses = vec![http_resp(

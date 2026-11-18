@@ -228,17 +228,31 @@ pub(crate) fn drain_stream(
 /// shell's children (sleep/build/server) keep running orphaned.
 pub(crate) fn kill_process_tree(child: &mut std::process::Child) {
     #[cfg(unix)]
-    {
-        // Child leads its own group (process_group(0) at spawn): negative
-        // pid targets the group. POSIX requires `--` before a negative pid
-        // operand; ignore failure and still signal the direct child below.
-        let pgid = child.id();
-        let _ = Command::new("kill")
-            .args(["-KILL", "--", &format!("-{pgid}")])
-            .status();
-    }
+    kill_process_group(child.id());
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// `kill -KILL -- -pgid` — child leads its own group (`process_group(0)` at
+/// spawn), so the negative pid targets the whole tree. POSIX requires `--`
+/// before a negative pid operand; failure is ignored by callers that also
+/// signal the direct child.
+#[cfg(unix)]
+pub(crate) fn kill_process_group(pgid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{pgid}")])
+        .status();
+}
+
+/// Render possibly-hostile text on a single-line surface (approval prompt,
+/// status bar): control bytes become visible `\xNN` escapes instead of
+/// reaching the terminal — CSI/OSC injection is stripped of its `ESC`, and a
+/// `\n` can no longer forge extra rows. Clean strings pass through verbatim.
+pub(crate) fn escape_controls(s: &str) -> String {
+    if !s.chars().any(char::is_control) {
+        return s.to_string();
+    }
+    s.chars().flat_map(char::escape_default).collect()
 }
 
 /// Strip ANSI escape sequences (CSI `ESC[…final`, OSC `ESC]…BEL`/`ESC\`,
@@ -289,6 +303,22 @@ mod tests {
         assert_eq!(strip_ansi("a\u{1b}[1;31mred\u{1b}[m b"), "ared b");
         assert_eq!(strip_ansi("x\u{1b}[2Jy"), "xy"); // clear-screen CSI
         assert_eq!(strip_ansi("t\u{1b}]0;title\u{7}z"), "tz"); // OSC…BEL
+    }
+
+    /// Single-line surfaces (approval prompt, status bar) must never emit a
+    /// control byte — `\x1b` would inject CSI/OSC, `\n` would forge rows.
+    /// Controls render visibly instead of being silently dropped.
+    #[test]
+    fn escape_controls_shows_but_never_emits() {
+        assert_eq!(escape_controls("cargo build"), "cargo build");
+        assert_eq!(escape_controls("it's.rs"), "it's.rs");
+        assert_eq!(escape_controls("a\u{1b}[2Jb"), "a\\u{1b}[2Jb");
+        assert_eq!(
+            escape_controls("rm x\nrm y"),
+            "rm x\\nrm y",
+            "newline stays visible, cannot forge a second row"
+        );
+        assert!(!escape_controls("a\tb\u{1b}c").contains('\u{1b}'));
         assert_eq!(strip_ansi("t\u{1b}]8;;u\u{1b}\\z"), "tz"); // OSC…ESC-backslash
         assert_eq!(strip_ansi("p\u{1b}cq"), "pq"); // two-char ESC c
         assert_eq!(strip_ansi("end\u{1b}"), "end"); // trailing lone ESC
