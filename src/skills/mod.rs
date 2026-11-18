@@ -119,8 +119,13 @@ pub fn system_appendix(catalog: &SkillCatalog) -> String {
 }
 
 /// API user text: composer + `@` file attachments + `$skill` bodies (UI transcript unchanged).
-pub fn api_user_content(workdir: &Path, composer: &str, catalog: &SkillCatalog) -> String {
-    let base = mentions::api_user_content(workdir, composer);
+pub fn api_user_content(
+    workdir: &Path,
+    composer: &str,
+    catalog: &SkillCatalog,
+    read_roots: &[std::path::PathBuf],
+) -> String {
+    let base = mentions::api_user_content(workdir, composer, read_roots);
     attach_skills(&base, catalog)
 }
 
@@ -512,7 +517,7 @@ mod tests {
             }],
             rules: String::new(),
         };
-        let api = api_user_content(Path::new("."), "run $foo", &catalog);
+        let api = api_user_content(Path::new("."), "run $foo", &catalog, &[]);
         assert!(api.contains("skill body"));
         assert!(api.contains("$skill:foo"));
     }
@@ -635,7 +640,7 @@ mod tests {
     #[test]
     fn attach_unknown_skill_leaves_composer_unchanged() {
         let cat = catalog(&["foo"]);
-        assert_eq!(api_user_content(Path::new("."), "use $zzz", &cat), "use $zzz");
+        assert_eq!(api_user_content(Path::new("."), "use $zzz", &cat, &[]), "use $zzz");
     }
 
     #[test]

@@ -26,8 +26,12 @@ impl Agent {
             .lock()
             .unwrap()
             .push(UiMessage::with_role(UiRole::User, user_text.clone()));
-        let api_full =
-            crate::skills::api_user_content(&self.workdir, &user_text, &self.skill_catalog);
+        let api_full = crate::skills::api_user_content(
+            &self.workdir,
+            &user_text,
+            &self.skill_catalog,
+            self.shell_policy.read_roots(),
+        );
         self.active_user_expansion =
             super::context::user_expansion_suffix(&api_full, &user_text);
         // `$id` tokens that resolved to catalog skills — the attach is silent
@@ -149,6 +153,7 @@ impl Agent {
 
     fn build_chat_request(&mut self) -> ChatRequest {
         self.auto_compact_context();
+        self.close_orphaned_tool_calls();
         let messages = self.messages_for_request();
         // One-time transparency note when the wire window first trims history.
         let wire_turns = super::context::user_turn_count(&messages);

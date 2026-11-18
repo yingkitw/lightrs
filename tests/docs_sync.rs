@@ -101,7 +101,7 @@ fn spec_and_readme_list_tools() {
 #[test]
 fn slash_commands_in_spec_and_slash_rs() {
     let spec = read("SPEC.md");
-    let slash = read("src/tui/slash.rs");
+    let slash = read("src/tui/slash/mod.rs");
     for cmd in SLASH {
         assert!(
             spec.contains(&format!("/{cmd}")),
@@ -109,7 +109,7 @@ fn slash_commands_in_spec_and_slash_rs() {
         );
         assert!(
             slash.contains(&format!("\"{cmd}\"")),
-            "slash.rs missing handler for {cmd}"
+            "slash/mod.rs missing handler for {cmd}"
         );
     }
 }

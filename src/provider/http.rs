@@ -20,11 +20,15 @@ impl Default for HttpRetryOptions {
 }
 
 pub fn build_http_client() -> reqwest::Client {
+    http_client_builder().build().expect("reqwest client")
+}
+
+/// Shared base (timeouts) — callers needing custom policies (`web_fetch`'s
+/// redirect deny-list) add them on top.
+pub(crate) fn http_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .connect_timeout(Duration::from_secs(30))
-        .build()
-        .expect("reqwest client")
 }
 
 pub fn auth_headers(api_key: &str) -> Result<HeaderMap> {

@@ -54,19 +54,22 @@ pub fn report(cfg: &AppConfig) -> Result<String> {
         out.push_str("  shell require_approval: yes (use TUI or `exec --approve-shell`)\n");
     }
     if cfg.shell_policy.sandbox().on {
-        let backend = if cfg!(target_os = "macos") {
-            "sandbox-exec"
+        // Presence isn't enough — bwrap exists on PATH but fails when the
+        // kernel denies unprivileged userns (Debian default); seatbelt could
+        // in principle be removed. Probe by actually running `true` confined.
+        let (backend, probe): (&str, &[&str]) = if cfg!(target_os = "macos") {
+            ("sandbox-exec", &["-p", "(version 1)(allow default)", "/usr/bin/true"])
         } else {
-            "bwrap"
+            ("bwrap", &["--ro-bind", "/", "/", "--dev", "/dev", "--", "true"])
         };
-        out.push_str(&format!(
-            "  sandbox: on — {backend} {}\n",
-            if have_bin(backend) {
-                "found"
-            } else {
-                "MISSING — spawns fail closed"
-            }
-        ));
+        let status = if !have_bin(backend) {
+            "MISSING — spawns fail closed"
+        } else if probe_backend(backend, probe) {
+            "found — live probe ok"
+        } else {
+            "found but probe FAILED (userns disabled?) — spawns fail closed"
+        };
+        out.push_str(&format!("  sandbox: on — {backend} {status}\n"));
     }
     let tools = scan_local_tools();
     out.push_str(&format!(
@@ -74,6 +77,18 @@ pub fn report(cfg: &AppConfig) -> Result<String> {
         format_scan_report(&tools)
     ));
     Ok(out)
+}
+
+/// Run `prog args` confined; true when the backend can actually spawn.
+fn probe_backend(prog: &str, args: &[&str]) -> bool {
+    std::process::Command::new(prog)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn have_bin(name: &str) -> bool {
@@ -122,5 +137,19 @@ mod tests {
         };
         run_check(&cfg).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The probe argv must actually confine a spawn — a drifted flag would
+    /// make doctor report "found" while every sandboxed command fails.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn seatbelt_probe_runs_confined_true() {
+        if !have_bin("sandbox-exec") {
+            return; // binary absent — nothing to probe
+        }
+        assert!(probe_backend(
+            "sandbox-exec",
+            &["-p", "(version 1)(allow default)", "/usr/bin/true"]
+        ));
     }
 }

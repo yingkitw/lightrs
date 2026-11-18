@@ -17,7 +17,7 @@ pub(crate) use tokens::*;
 pub(crate) use wire::*;
 
 use crate::agent::Agent;
-use crate::chat::TokenUsage;
+use crate::chat::{ApiMessage, ApiRole, TokenUsage};
 
 /// Raw-history estimate at which stored compaction stubs old tool data.
 pub(crate) const AUTO_COMPACT_TOKENS: u32 = 32_000;
@@ -51,6 +51,57 @@ impl Agent {
             ));
         }
         self.context_warned_above = self.context_warned_above.max(raw_est);
+    }
+
+    /// A turn interrupted mid-tool-batch leaves an assistant `tool_calls`
+    /// message whose later calls never produced results — OpenAI 400s on that
+    /// wire shape (every call needs a matching `tool` message directly
+    /// following it). Insert a stub result for each unanswered call right
+    /// after the batch's partial results; the model then sees the call was
+    /// interrupted instead of the next request failing opaquely. Runs before
+    /// every request so both live-session and restored orphans are repaired.
+    pub(crate) fn close_orphaned_tool_calls(&mut self) {
+        let Some(call_idx) = self.api_history.iter().rposition(|m| {
+            m.role == ApiRole::Assistant && m.tool_calls.as_ref().is_some_and(|t| !t.is_empty())
+        }) else {
+            return;
+        };
+        // A later assistant message means the batch closed normally.
+        if self.api_history[call_idx + 1..]
+            .iter()
+            .any(|m| m.role == ApiRole::Assistant)
+        {
+            return;
+        }
+        let answered: std::collections::HashSet<String> = self.api_history[call_idx + 1..]
+            .iter()
+            .filter_map(|m| m.tool_call_id.clone())
+            .collect();
+        let calls = self.api_history[call_idx]
+            .tool_calls
+            .clone()
+            .unwrap_or_default();
+        let mut insert_at = call_idx + 1;
+        while self
+            .api_history
+            .get(insert_at)
+            .is_some_and(|m| m.role == ApiRole::Tool)
+        {
+            insert_at += 1;
+        }
+        for call in calls {
+            if !answered.contains(&call.id) {
+                self.api_history.insert(
+                    insert_at,
+                    ApiMessage::tool_result(
+                        call.id,
+                        call.function.name,
+                        "[interrupted — no result recorded]",
+                    ),
+                );
+                insert_at += 1;
+            }
+        }
     }
 
     pub fn token_summary(&self) -> TokenSummary {
@@ -279,5 +330,88 @@ mod tests {
         assert_eq!(a.api_context_len(), base + 1);
         let s = a.token_summary();
         assert_eq!(s.stats, a.token_stats);
+    }
+
+    fn assistant_calls(ids: &[&str]) -> ApiMessage {
+        use crate::chat::{ApiRole, FunctionCall, ToolCall};
+        ApiMessage {
+            role: ApiRole::Assistant,
+            content: None,
+            tool_calls: Some(
+                ids.iter()
+                    .map(|id| ToolCall {
+                        id: (*id).into(),
+                        call_type: "function".into(),
+                        function: FunctionCall {
+                            name: "read_file".into(),
+                            arguments: "{}".into(),
+                        },
+                    })
+                    .collect(),
+            ),
+            tool_call_id: None,
+            name: None,
+            reasoning_content: None,
+        }
+    }
+
+    /// Interrupt mid-batch: call 2 answered, call 3 orphaned → stub inserted
+    /// after the partial results, before any later user message.
+    #[test]
+    fn close_orphaned_stubs_missing_results_in_position() {
+        let mut a = agent();
+        a.api_history.push(assistant_calls(&["c1", "c2", "c3"]));
+        a.api_history
+            .push(ApiMessage::tool_result("c1", "read_file", "ok"));
+        a.api_history
+            .push(ApiMessage::tool_result("c2", "read_file", "ok"));
+        a.api_history.push(ApiMessage::user("next question"));
+        let before = a.api_history.len();
+        a.close_orphaned_tool_calls();
+        assert_eq!(a.api_history.len(), before + 1);
+        // Stub sits between the last real result and the user message.
+        let stub = &a.api_history[before - 1];
+        assert_eq!(stub.tool_call_id.as_deref(), Some("c3"));
+        assert!(
+            stub.text_content()
+                .unwrap_or_default()
+                .contains("interrupted"),
+            "stub: {stub:?}"
+        );
+    }
+
+    #[test]
+    fn close_orphaned_noop_when_batch_complete() {
+        let mut a = agent();
+        a.api_history.push(assistant_calls(&["c1"]));
+        a.api_history
+            .push(ApiMessage::tool_result("c1", "read_file", "ok"));
+        a.api_history.push(ApiMessage {
+            role: crate::chat::ApiRole::Assistant,
+            content: Some(serde_json::Value::String("done".into())),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            reasoning_content: None,
+        });
+        let before = a.api_history.len();
+        a.close_orphaned_tool_calls();
+        assert_eq!(a.api_history.len(), before);
+    }
+
+    /// Restored-session orphan: call recorded, process killed before any
+    /// result — the next request must not 400 on the dangling tool_calls.
+    #[test]
+    fn close_orphaned_repairs_fully_unanswered_batch() {
+        let mut a = agent();
+        a.api_history.push(assistant_calls(&["c1", "c2"]));
+        let before = a.api_history.len();
+        a.close_orphaned_tool_calls();
+        assert_eq!(a.api_history.len(), before + 2);
+        assert_eq!(a.api_history[before].tool_call_id.as_deref(), Some("c1"));
+        assert_eq!(
+            a.api_history[before + 1].tool_call_id.as_deref(),
+            Some("c2")
+        );
     }
 }

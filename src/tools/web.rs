@@ -9,7 +9,6 @@ use serde::Deserialize;
 use tokio::sync::watch;
 
 use crate::provider::INTERRUPTED;
-use crate::provider::http::build_http_client;
 
 use super::{ToolOutcome, truncate_bytes};
 
@@ -21,12 +20,47 @@ pub struct FetchArgs {
 /// Body cap — same order of magnitude as the read_file tool cap.
 pub(crate) const MAX_BYTES: usize = 64 * 1024;
 
+/// Cloud instance-metadata endpoints — fetching them leaks credentials, and a
+/// model-initiated GET bypasses the shell allowlist entirely (worst in plan
+/// mode, where `web_fetch` is deliberately allowed). Redirect hops are checked
+/// too — an allowed URL bouncing to a metadata host is the same leak.
+/// Residual: a hostile hostname resolving to the link-local IP (DNS rebind)
+/// needs resolved-IP checks — deeper machinery, documented limit.
+const DENIED_HOSTS: &[&str] = &[
+    "169.254.169.254",          // AWS / Azure / GCP / DigitalOcean link-local
+    "fd00:ec2::254",            // AWS IPv6 metadata
+    "metadata.google.internal", // GCP
+    "100.100.100.200",          // Alibaba
+];
+
+fn denied_host(url: &reqwest::Url) -> bool {
+    url.host_str().is_some_and(|h| {
+        // IPv6 hosts come back bracketed (`[fd00:ec2::254]`).
+        let h = h.trim_start_matches('[').trim_end_matches(']');
+        DENIED_HOSTS.contains(&h)
+    })
+}
+
+/// Shared timeouts + a redirect policy that refuses hops to denied hosts.
+fn web_client() -> reqwest::Client {
+    crate::provider::http::http_client_builder()
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if denied_host(attempt.url()) {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }))
+        .build()
+        .expect("reqwest client")
+}
+
 /// Parse args then GET, honoring the turn cancel token. Always returns
 /// `ToolOutcome::ok` — errors go to the model as text like other tools.
 pub async fn run(_workdir: &Path, args: &str, cancel: Option<&watch::Receiver<bool>>) -> ToolOutcome {
     let fut = async {
         match parse_args(args) {
-            Ok(a) => match fetch(&build_http_client(), a).await {
+            Ok(a) => match fetch(&web_client(), a).await {
                 Ok(s) => ToolOutcome::ok(s),
                 Err(e) => ToolOutcome::ok(format!("error: {e:#}")),
             },
@@ -59,6 +93,14 @@ async fn fetch(client: &reqwest::Client, a: FetchArgs) -> Result<String> {
     let url = a.url.trim();
     if !url.starts_with("http://") && !url.starts_with("https://") {
         bail!("only http:// and https:// URLs are supported");
+    }
+    if let Ok(parsed) = reqwest::Url::parse(url)
+        && denied_host(&parsed)
+    {
+        bail!(
+            "fetching instance-metadata endpoints is not allowed ({})",
+            parsed.host_str().unwrap_or_default()
+        );
     }
     let mut resp = client.get(url).send().await.context("request")?;
     let status = resp.status();
@@ -154,6 +196,7 @@ fn collapse_blank_lines(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::http::build_http_client;
 
     #[test]
     fn strip_html_drops_scripts_and_keeps_text() {
@@ -208,6 +251,49 @@ mod tests {
         assert!(out.contains("Doc & Guide"));
         assert!(!out.contains("<h1>"));
         assert!(!out.contains("x()"));
+    }
+
+    #[test]
+    fn denied_hosts_cover_metadata_endpoints() {
+        for u in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[fd00:ec2::254]/latest/meta-data/",
+            "http://metadata.google.internal/computeMetadata/v1/",
+            "http://100.100.100.200/latest/meta-data/",
+        ] {
+            let url = reqwest::Url::parse(u).unwrap();
+            assert!(denied_host(&url), "{u} must be denied");
+        }
+        // localhost dev servers stay fetchable — that's a real use case.
+        for u in ["http://127.0.0.1:3000", "http://localhost:8080/docs"] {
+            assert!(!denied_host(&reqwest::Url::parse(u).unwrap()), "{u}");
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_denies_metadata_host() {
+        let err = fetch(
+            &web_client(),
+            FetchArgs {
+                url: "http://169.254.169.254/latest/meta-data/".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("instance-metadata"), "{err:#}");
+    }
+
+    /// A 302 bounce to a denied host is the same leak — the redirect policy
+    /// stops the hop; the 302 surfaces as a non-success status error.
+    #[tokio::test]
+    async fn redirect_to_metadata_host_is_stopped() {
+        let resp: &'static str =
+            "HTTP/1.1 302 Found\r\nlocation: http://169.254.169.254/x\r\ncontent-length: 0\r\n\r\n";
+        let base = serve_once(resp).await;
+        let err = fetch(&web_client(), FetchArgs { url: base })
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("302"), "{err:#}");
     }
 
     #[tokio::test]

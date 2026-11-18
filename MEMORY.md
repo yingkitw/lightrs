@@ -534,3 +534,33 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Ephemeral runtime state in a config struct → manual `PartialEq`**: `Mutex` has no `PartialEq`/`Eq` impls (self-compare deadlocks). `ShellPolicy`'s `session_cwd` cell excluded from `eq` — policy identity is configuration, not runtime state. Dropping derives broke `config/mod.rs`'s `shell_policy_from_parts` test — the one caller.
 - **Shared cell semantics need explicit reset points**: policy `Clone` shares the `Arc<Mutex>` — `/cd` (`set_workdir`) and `spawn_agent` (`new_shared`) call `reset_session_cwd` to detach a fresh cell, else the child's `cd` leaks into the parent's session.
 - **Session state belongs to model+user commands, not hooks**: `run_heal_command` keeps plain `run_command` — a `cd` inside a format/test hook moving the session cwd would be invisible to the model.
+
+## File→dir split (2026-11-18)
+
+- **`foo.rs` → `foo/mod.rs` + `foo/domain.rs` keeps every caller**: `git mv` preserves history; `mod.rs` adds `mod domain;` + `pub(crate) use domain::{pub_items}` — `crate::tui::slash::model_choices_from` resolves unchanged. `pub(super)` on struct/fields gives sibling access without widening the crate-visible surface.
+- **Field access doesn't need the type in scope**: moving `ModelSwitch` out left `use model::ModelSwitch` unnecessary in mod.rs — the arm binds `sw` and touches `.provider` etc. Clean the orphaned imports the move creates (`ValueEnum`, `AppConfig`, `AgentEvent` all went unused when the domain moved).
+- **Update `docs_sync` + AGENTS.md tree in the same pass** — `read("src/tui/slash.rs")` silently breaks on file→dir moves; the drift guard can't guard itself.
+
+## Orphaned tool_call repair (2026-11-18)
+
+- **Interrupt mid-tool-batch leaves dangling `tool_calls`**: `record_tool_call_step` pushes the assistant msg before the per-call loop; `?` propagation skips remaining calls → call_ids without `tool` messages → the NEXT request 400s (OpenAI requires every tool_call answered). Live session AND restored sessions both hit it — codex 0.73 #8048 hit the same class as a panic.
+- **Repair at the request choke point, not the error site**: `close_orphaned_tool_calls` in `build_chat_request` covers live orphans + `/resume` orphans with one call — don't chase every `Err` path that can orphan.
+- **Stub position matters**: tool messages must directly follow their call — appending after a later user msg is still an invalid order. Scan forward past the batch's existing `tool` rows and insert there.
+- **Stub body is honest, not silent**: `[interrupted — no result recorded]` tells the model the call was cut — better than fabricating success or dropping the assistant message (transcript still shows the attempt).
+
+## Doctor live probe (2026-11-18)
+
+- **Presence checks lie for sandbox backends**: `bwrap` on PATH fails on Debian's `kernel.unprivileged_userns_clone=0` — the #1 Linux sandbox failure is a *runtime* denial, not a missing binary. `probe_backend` spawns `true` inside the actual confinement (seatbelt profile / bwrap argv) — a ~10-line check that catches the real failure class.
+- **Write-blind code gets static-verified, not hoped-for**: the bwrap argv was written on macOS untested; order review (`--ro-bind / /` then `--bind wd`) + flag coverage vs seatbelt (`--dev`≈file-write-data /dev, `--unshare-net`≈network=false, `--die-with-parent`≈our spawn model) confirmed it correct without a Linux box.
+
+## web_fetch SSRF guard (2026-11-18)
+
+- **`web_fetch` bypasses the shell allowlist** — the allowlist gates `curl`, not the tool. A model GET to `169.254.169.254` leaks cloud credentials; plan mode allows it *by design* as a "safe" read. Any tool that reaches the network needs its own deny list — don't assume the shell gate covers it.
+- **Redirect hops need the same check as the initial URL**: `redirect::Policy::custom` per-hop — `attempt.stop()` returns the 302 response itself (not an error) → surfaces as a non-success status to the model. Blocking only the first URL leaves a one-line bypass.
+- **IPv6 `host_str` returns brackets** — `[fd00:ec2::254]`, not `fd00:ec2::254`. Normalize before comparing or the IPv6 deny entry silently never matches.
+- **Don't restrict the shared HTTP client**: `build_http_client` serves provider API calls where internal base_urls are legit — `http_client_builder()` exposes the base so callers add their own policies.
+
+## Scope consistency audit (2026-11-18)
+
+- **Every path-taking surface must use the SAME resolver**: `read_roots` widened `read_file`/`grep`/`glob`/`lsp` but `mentions.rs` kept `validate_work_path` — `@`-mentions under user-declared roots silently skipped. When widening a scope boundary, grep for the OLD validator — the sites that didn't migrate are the bugs.
+- **Dead pub fn → delegation, not deletion**: once all reads moved to `validate_read_path`, `validate_work_path` was dead — refactoring `validate_read_path` to delegate to it deduped the canonicalize+prefix logic AND kept the primitive alive. Two near-identical validators > one canonicalize path.

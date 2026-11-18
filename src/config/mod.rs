@@ -321,27 +321,29 @@ pub fn validate_read_path(
     extra_roots: &[PathBuf],
     user_path: &Path,
 ) -> Result<PathBuf> {
-    let joined = if user_path.is_absolute() {
-        user_path.to_path_buf()
-    } else {
-        workdir.join(user_path)
-    };
-    let canonical = joined
-        .canonicalize()
-        .with_context(|| format!("path not found: {}", user_path.display()))?;
-    let work = workdir
-        .canonicalize()
-        .unwrap_or_else(|_| workdir.to_path_buf());
-    if canonical.starts_with(&work) {
-        return Ok(canonical);
-    }
-    for root in extra_roots {
-        let root = root.canonicalize().unwrap_or_else(|_| root.clone());
-        if canonical.starts_with(&root) {
-            return Ok(canonical);
+    match validate_work_path(workdir, user_path) {
+        Ok(p) => Ok(p),
+        Err(work_err) => {
+            if extra_roots.is_empty() {
+                return Err(work_err);
+            }
+            let joined = if user_path.is_absolute() {
+                user_path.to_path_buf()
+            } else {
+                workdir.join(user_path)
+            };
+            let canonical = joined
+                .canonicalize()
+                .with_context(|| format!("path not found: {}", user_path.display()))?;
+            for root in extra_roots {
+                let root = root.canonicalize().unwrap_or_else(|_| root.clone());
+                if canonical.starts_with(&root) {
+                    return Ok(canonical);
+                }
+            }
+            Err(work_err)
         }
     }
-    bail!("path escapes workdir: {}", user_path.display());
 }
 
 /// Resolve a path for reading or listing (target must exist on disk).

@@ -2,8 +2,6 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use crate::config::validate_work_path;
-
 /// Per-file cap when attaching `@path` to the API user message (UI stays unchanged).
 const MENTION_ATTACH_FILE_MAX: usize = 12 * 1024;
 /// Total attachment budget per send.
@@ -34,7 +32,9 @@ pub fn collect_file_mentions(text: &str) -> Vec<String> {
 }
 
 /// Lean API payload: composer text plus capped file bodies for `@` mentions.
-pub fn api_user_content(workdir: &Path, composer: &str) -> String {
+/// `roots` = `ShellPolicy.read_roots` — files under `--add-dir`/`extra_read_dirs`
+/// are mentionable too (same consent boundary as `read_file`).
+pub fn api_user_content(workdir: &Path, composer: &str, roots: &[std::path::PathBuf]) -> String {
     let mentions = collect_file_mentions(composer);
     if mentions.is_empty() {
         return composer.to_string();
@@ -47,7 +47,7 @@ pub fn api_user_content(workdir: &Path, composer: &str) -> String {
             extra.push_str("\n[attachments truncated: total budget]");
             break;
         }
-        let Ok(full) = validate_work_path(workdir, Path::new(&rel)) else {
+        let Ok(full) = crate::config::validate_read_path(workdir, roots, Path::new(&rel)) else {
             continue;
         };
         if !full.is_file() {
@@ -92,9 +92,40 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("a.txt"), "hello").unwrap();
-        let api = api_user_content(&dir, "see @a.txt");
+        let api = api_user_content(&dir, "see @a.txt", &[]);
         assert!(api.contains("hello"));
         assert!(api.contains("--- @a.txt"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `@` mentions honor `read_roots` (`--add-dir`) — same consent boundary
+    /// as `read_file`; outside workdir AND outside roots stays silent.
+    #[test]
+    fn api_attach_reaches_extra_root() {
+        let tag = std::process::id();
+        let dir = std::env::temp_dir().join(format!("lightrs-att-{tag}"));
+        let root = std::env::temp_dir().join(format!("lightrs-att-root-{tag}"));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("shared.rs"), "pub fn s(){}").unwrap();
+        let roots = vec![root.canonicalize().unwrap()];
+        // By absolute path under the extra root.
+        let api = api_user_content(
+            &dir,
+            &format!("check @{}", root.join("shared.rs").display()),
+            &roots,
+        );
+        assert!(api.contains("pub fn s()"), "extra-root mention: {api}");
+        // Without the root the same mention is silently skipped.
+        let api = api_user_content(
+            &dir,
+            &format!("check @{}", root.join("shared.rs").display()),
+            &[],
+        );
+        assert!(!api.contains("pub fn s"), "no-root mention must skip: {api}");
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&root);
     }
 }
