@@ -246,6 +246,43 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                                         }
                                     };
                                     let _ = tool_update(update);
+                                    // Same as v1: a `todo_write` call IS the
+                                    // plan — emit a native plan update after
+                                    // the tool call so the list panel tracks.
+                                    if let ObserveEvent::ToolStart {
+                                        name: "todo_write",
+                                        arguments,
+                                    } = ev
+                                        && let Some(items) =
+                                            crate::acp::engine::todo_items(arguments)
+                                    {
+                                        let entries = items
+                                            .iter()
+                                            .map(|it| {
+                                                schema::PlanEntry::new(
+                                                    it.content.clone(),
+                                                    schema::PlanEntryPriority::Medium,
+                                                    match it.status.as_str() {
+                                                        "in_progress" => {
+                                                            schema::PlanEntryStatus::InProgress
+                                                        }
+                                                        "completed" => {
+                                                            schema::PlanEntryStatus::Completed
+                                                        }
+                                                        _ => schema::PlanEntryStatus::Pending,
+                                                    },
+                                                )
+                                            })
+                                            .collect();
+                                        let _ = tool_update(schema::SessionUpdate::PlanUpdate(
+                                            schema::PlanUpdate::new(
+                                                schema::PlanUpdateContent::items(
+                                                    "lightrs-todo",
+                                                    entries,
+                                                ),
+                                            ),
+                                        ));
+                                    }
                                 },
                                 cancel_rx,
                                 None,

@@ -114,15 +114,22 @@ pub async fn run_turn_v1(
     Ok(reply)
 }
 
-/// `todo_write` arguments → a `session/update` plan notification, when the
-/// args parse. lightrs keeps no priority — entries all map to `Medium`.
-pub fn plan_update(arguments: &str) -> Option<SessionUpdate> {
+/// Parse `todo_write` arguments into items, for plan emission in both
+/// dialects. Empty lists and junk args yield `None`.
+pub(crate) fn todo_items(
+    arguments: &str,
+) -> Option<Vec<crate::tools::todo::TodoItem>> {
     let args = serde_json::from_str::<crate::tools::todo::TodoArgs>(arguments).ok()?;
     if args.items.is_empty() {
         return None;
     }
-    let entries = args
-        .items
+    Some(args.items)
+}
+
+/// `todo_write` arguments → a `session/update` plan notification, when the
+/// args parse. lightrs keeps no priority — entries all map to `Medium`.
+pub fn plan_update(arguments: &str) -> Option<SessionUpdate> {
+    let entries = todo_items(arguments)?
         .iter()
         .map(|it| {
             PlanEntry::new(
