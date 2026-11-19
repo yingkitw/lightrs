@@ -402,6 +402,7 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Tool status**: `ToolStart` → `ToolCall`/`ToolCallUpdate(InProgress)`, `ToolEnd` → same id with `Completed`/`Failed` (`error`-prefixed bodies map to Failed). Sequential tool execution means a single `tool_index` counter stays correct.
 - **Errors**: v1 has no `error` stop reason → `responder.respond_with_error(Error::into_internal_error(&*e))`; v2 → `Idle(ErrorStopReason::new().error(schema::Error::internal_error().data(msg)))` plus a message chunk so the failure text stays visible.
 - **Commands**: `AvailableCommandsUpdate` sent on `session/new` (project + `~/.claude/commands`, project shadows); `engine::expand_slash` rewrites `/name args` prompts through `commands::load` before the turn — built-ins stay TUI-local.
+- **Modes** (2026-11-19): `session/new` carries `modes` (`build`/`plan` ↔ `agent.read_only()`); `session/set_mode` → `set_read_only` + `current_mode_update` notification — spec wants the change surfaced via notification, the response body is empty. `set_mode` blocks on `agent.lock()` while a turn holds it — switching mid-turn applies after the turn finishes (same as client UX expectations).
 
 ## No hosted CI (owner decision, 2026-11-16)
 

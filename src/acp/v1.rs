@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use agent_client_protocol::v1::schema::{
     AgentCapabilities, AuthenticateRequest, AuthenticateResponse, CancelNotification,
-    InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, SessionId, StopReason,
+    CurrentModeUpdate, InitializeRequest, InitializeResponse, NewSessionRequest,
+    NewSessionResponse, PromptRequest, PromptResponse, SessionId, SessionMode, SessionModeState,
+    SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModeResponse, StopReason,
 };
 use agent_client_protocol::v1::schema::Implementation;
 use agent_client_protocol::{Agent, Client, Error, Result, Stdio};
@@ -17,6 +18,20 @@ use crate::acp::engine::{
 };
 use crate::agent::Agent as LightAgent;
 use crate::config::AppConfig;
+
+/// ACP session modes map the agent's read-only flag: `plan` is the
+/// read-only gate (`/plan` in the TUI), `build` is full tool access.
+fn mode_state(read_only: bool) -> SessionModeState {
+    SessionModeState::new(
+        if read_only { "plan" } else { "build" },
+        vec![
+            SessionMode::new("build", "Build")
+                .description("Full tool access — read, write and run commands"),
+            SessionMode::new("plan", "Plan")
+                .description("Read-only — inspect and plan, no file changes"),
+        ],
+    )
+}
 
 struct SessionEntry {
     agent: Arc<Mutex<LightAgent>>,
@@ -46,8 +61,9 @@ impl AcpV1State {
         SessionId::new(format!("lightrs-{n}"))
     }
 
-    async fn insert_session(&self, cwd: PathBuf) -> anyhow::Result<SessionId> {
+    async fn insert_session(&self, cwd: PathBuf) -> anyhow::Result<(SessionId, bool)> {
         let agent = make_agent(&self.defaults, cwd.clone())?;
+        let read_only = agent.read_only();
         let id = self.alloc_session_id().await;
         self.sessions.lock().await.insert(
             id.clone(),
@@ -57,7 +73,26 @@ impl AcpV1State {
                 cancel_tx: Mutex::new(None),
             },
         );
-        Ok(id)
+        Ok((id, read_only))
+    }
+
+    /// `session/set_mode` → `set_read_only` on the session's agent.
+    async fn set_mode(&self, id: &SessionId, mode: &str) -> anyhow::Result<()> {
+        let read_only = match mode {
+            "plan" => true,
+            "build" => false,
+            other => anyhow::bail!("unknown mode {other}"),
+        };
+        let agent = {
+            let sessions = self.sessions.lock().await;
+            sessions.get(id).map(|e| Arc::clone(&e.agent))
+        };
+        agent
+            .ok_or_else(|| anyhow::anyhow!("unknown session {id}"))?
+            .lock()
+            .await
+            .set_read_only(read_only);
+        Ok(())
     }
 
     /// `session/cancel` interrupts the in-flight turn — it must NOT remove the
@@ -101,8 +136,11 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                             connection: ConnectionTo<Client>| {
                     let cwd = workdir_from_cwd(&request.cwd);
                     match state.insert_session(cwd.clone()).await {
-                        Ok(id) => {
-                            responder.respond(NewSessionResponse::new(id.clone()))?;
+                        Ok((id, read_only)) => {
+                            responder.respond(
+                                NewSessionResponse::new(id.clone())
+                                    .modes(mode_state(read_only)),
+                            )?;
                             // Surface project + user-global slash commands so
                             // clients can offer them (invoked as `/name args`).
                             let commands: Vec<_> = crate::commands::load(&cwd)
@@ -132,6 +170,37 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                         }
                         Err(error) => responder.respond_with_error(
                             Error::internal_error().data(format!("{error:#}")),
+                        ),
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |request: SetSessionModeRequest,
+                            responder,
+                            connection: ConnectionTo<Client>| {
+                    match state
+                        .set_mode(&request.session_id, &request.mode_id.0)
+                        .await
+                    {
+                        Ok(()) => {
+                            // Spec: clients learn the new mode via
+                            // `current_mode_update`, not the response.
+                            let _ = connection.send_notification(
+                                SessionNotification::new(
+                                    request.session_id.clone(),
+                                    SessionUpdate::CurrentModeUpdate(
+                                        CurrentModeUpdate::new(request.mode_id.clone()),
+                                    ),
+                                ),
+                            );
+                            responder.respond(SetSessionModeResponse::new())
+                        }
+                        Err(error) => responder.respond_with_error(
+                            Error::invalid_params().data(format!("{error:#}")),
                         ),
                     }
                 }
@@ -264,17 +333,42 @@ mod tests {
         let state = AcpV1State::new(cfg());
         let dir = std::env::temp_dir();
 
-        let id1 = state.insert_session(dir.clone()).await.unwrap();
-        let id2 = state.insert_session(dir).await.unwrap();
+        let id1 = state.insert_session(dir.clone()).await.unwrap().0;
+        let id2 = state.insert_session(dir).await.unwrap().0;
         // Monotonic allocation — each session gets a distinct id.
         assert_ne!(id1, id2);
         assert_eq!(state.sessions.lock().await.len(), 2);
     }
 
     #[tokio::test]
+    async fn set_mode_toggles_read_only() {
+        let state = AcpV1State::new(cfg());
+        let (id, read_only) = state.insert_session(std::env::temp_dir()).await.unwrap();
+        assert!(!read_only);
+
+        state.set_mode(&id, "plan").await.unwrap();
+        {
+            let sessions = state.sessions.lock().await;
+            assert!(sessions.get(&id).unwrap().agent.lock().await.read_only());
+        }
+        state.set_mode(&id, "build").await.unwrap();
+        {
+            let sessions = state.sessions.lock().await;
+            assert!(!sessions.get(&id).unwrap().agent.lock().await.read_only());
+        }
+        assert!(state.set_mode(&id, "bogus").await.is_err());
+        assert!(
+            state
+                .set_mode(&SessionId::new("lightrs-999"), "plan")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn cancel_trips_armed_token_and_keeps_session() {
         let state = AcpV1State::new(cfg());
-        let id = state.insert_session(std::env::temp_dir()).await.unwrap();
+        let id = state.insert_session(std::env::temp_dir()).await.unwrap().0;
         let (tx, mut rx) = tokio::sync::watch::channel(false);
         {
             let sessions = state.sessions.lock().await;

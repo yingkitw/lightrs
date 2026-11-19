@@ -133,6 +133,15 @@ fn acp_v1_full_session_lifecycle() {
     let new = acp.wait(|m| m["id"] == 1);
     let sid = new["result"]["sessionId"].as_str().unwrap().to_string();
     assert!(!sid.is_empty(), "new: {new}");
+    // Session modes are advertised: build (current) + plan (read-only).
+    let modes = &new["result"]["modes"];
+    assert_eq!(modes["currentModeId"], "build", "modes: {modes}");
+    assert!(
+        modes["availableModes"]
+            .as_array()
+            .is_some_and(|ms| ms.iter().any(|m| m["id"] == "plan")),
+        "modes: {modes}"
+    );
 
     // Prompt: streamed agent_message_chunk updates + end_turn response.
     acp.send(serde_json::json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
@@ -155,6 +164,25 @@ fn acp_v1_full_session_lifecycle() {
         "params":{"sessionId":sid}}));
     let resp = acp.wait(|m| m["id"] == 3);
     assert_eq!(resp["result"]["stopReason"], "cancelled", "resp: {resp}");
+
+    // session/set_mode flips the read-only flag; the client learns it via
+    // a current_mode_update notification, not the response body.
+    acp.send(serde_json::json!({"jsonrpc":"2.0","id":4,"method":"session/set_mode",
+        "params":{"sessionId":sid,"modeId":"plan"}}));
+    let frames = acp.drain_until(|m| m["id"] == 4);
+    assert!(
+        frames.iter().any(|m| m["params"]["update"]["sessionUpdate"]
+            == "current_mode_update"
+            && m["params"]["update"]["currentModeId"] == "plan"),
+        "frames: {frames:?}"
+    );
+    assert!(frames.last().unwrap()["result"].is_object(), "set_mode: {frames:?}");
+
+    // An unadvertised mode is an error, not a silent accept.
+    acp.send(serde_json::json!({"jsonrpc":"2.0","id":5,"method":"session/set_mode",
+        "params":{"sessionId":sid,"modeId":"bogus"}}));
+    let resp = acp.wait(|m| m["id"] == 5);
+    assert!(resp["error"].is_object(), "bogus mode: {resp}");
 
     let _ = acp.child.kill();
     let _ = std::fs::remove_dir_all(&home);
