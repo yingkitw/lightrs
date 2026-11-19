@@ -188,6 +188,75 @@ fn acp_v1_full_session_lifecycle() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
+#[test]
+fn acp_v1_session_load_replays_and_restores_context() {
+    let home = tmp("v1-load");
+    // Two turns: "acp hello" then, post-load, "reloaded".
+    let (base, recorded) =
+        support::serve_bodies(vec![sse_text("acp hello"), sse_text("reloaded")]);
+    let mut acp = Acp::spawn(&home, &base, &[]);
+
+    acp.send(serde_json::json!({"jsonrpc":"2.0","id":0,"method":"initialize",
+        "params":{"protocolVersion":1,"clientCapabilities":{}}}));
+    acp.wait(|m| m["id"] == 0);
+    acp.send(serde_json::json!({"jsonrpc":"2.0","id":1,"method":"session/new",
+        "params":{"cwd":home,"mcpServers":[]}}));
+    let new = acp.wait(|m| m["id"] == 1);
+    let sid = new["result"]["sessionId"].as_str().unwrap().to_string();
+
+    // One completed turn → session is persisted under the workdir key.
+    acp.send(serde_json::json!({"jsonrpc":"2.0","id":2,"method":"session/prompt",
+        "params":{"sessionId":sid,"prompt":[{"type":"text","text":"hi"}]}}));
+    acp.wait(|m| m["id"] == 2);
+
+    // session/load: replayed transcript chunks arrive before the response,
+    // and the client-supplied session id is honored.
+    acp.send(serde_json::json!({"jsonrpc":"2.0","id":3,"method":"session/load",
+        "params":{"cwd":home,"sessionId":"load-1","mcpServers":[]}}));
+    let frames = acp.drain_until(|m| m["id"] == 3);
+    let kinds: Vec<String> = frames
+        .iter()
+        .filter(|m| m["method"] == "session/update")
+        .filter_map(|m| {
+            m["params"]["update"]["sessionUpdate"].as_str().map(str::to_string)
+        })
+        .collect();
+    assert!(
+        kinds.iter().any(|k| k == "user_message_chunk"),
+        "replay should include the user turn: {kinds:?}"
+    );
+    assert!(
+        kinds.iter().any(|k| k == "agent_message_chunk"),
+        "replay should include the agent reply: {kinds:?}"
+    );
+    let load = frames.last().unwrap();
+    assert!(load["result"].is_object(), "load: {load}");
+    assert_eq!(
+        load["result"]["modes"]["currentModeId"], "build",
+        "load carries mode state: {load}"
+    );
+
+    // The loaded session answers under its new id — and the provider
+    // request proves the restored api_history reached the wire.
+    acp.send(serde_json::json!({"jsonrpc":"2.0","id":4,"method":"session/prompt",
+        "params":{"sessionId":"load-1","prompt":[{"type":"text","text":"again"}]}}));
+    let frames = acp.drain_until(|m| m["id"] == 4);
+    let streamed: String = frames
+        .iter()
+        .filter_map(|m| m["params"]["update"]["content"]["text"].as_str())
+        .collect();
+    assert!(streamed.contains("reloaded"), "streamed: {streamed}");
+    assert_eq!(frames.last().unwrap()["result"]["stopReason"], "end_turn");
+    let body = &recorded.lock().unwrap()[1];
+    assert!(
+        body.contains("acp hello") && body.contains("again"),
+        "loaded context + new prompt on the wire: {body}"
+    );
+
+    let _ = acp.child.kill();
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 #[cfg(feature = "acp-v2")]
 #[test]
 fn acp_v2_full_session_lifecycle() {

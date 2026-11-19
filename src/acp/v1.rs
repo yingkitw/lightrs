@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use agent_client_protocol::v1::schema::{
     AgentCapabilities, AuthenticateRequest, AuthenticateResponse, CancelNotification,
-    CurrentModeUpdate, InitializeRequest, InitializeResponse, NewSessionRequest,
-    NewSessionResponse, PromptRequest, PromptResponse, SessionId, SessionMode, SessionModeState,
-    SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModeResponse, StopReason,
+    ContentBlock, ContentChunk, CurrentModeUpdate, InitializeRequest, InitializeResponse,
+    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,
+    PromptRequest, PromptResponse, SessionId, SessionMode, SessionModeState,
+    SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModeResponse,
+    StopReason, TextContent,
 };
 use agent_client_protocol::v1::schema::Implementation;
 use agent_client_protocol::{Agent, Client, Error, Result, Stdio};
@@ -17,6 +19,7 @@ use crate::acp::engine::{
     expand_slash, make_agent, prompt_text, run_turn_v1, workdir_from_cwd,
 };
 use crate::agent::Agent as LightAgent;
+use crate::chat::{UiMessage, UiRole};
 use crate::config::AppConfig;
 
 /// ACP session modes map the agent's read-only flag: `plan` is the
@@ -31,6 +34,22 @@ fn mode_state(read_only: bool) -> SessionModeState {
                 .description("Read-only — inspect and plan, no file changes"),
         ],
     )
+}
+
+/// A persisted `ui_history` row → its `session/update` replay chunk, for
+/// `session/load`. User/assistant/thought rows map to their chunk types;
+/// tool/system/error rows have no chunk equivalent and are skipped (the
+/// client keeps its own transcript items anyway).
+fn replay_update(m: &UiMessage) -> Option<SessionUpdate> {
+    let chunk = || {
+        ContentChunk::new(ContentBlock::Text(TextContent::new(m.content.clone())))
+    };
+    match m.role {
+        UiRole::User => Some(SessionUpdate::UserMessageChunk(chunk())),
+        UiRole::Assistant => Some(SessionUpdate::AgentMessageChunk(chunk())),
+        UiRole::Thinking => Some(SessionUpdate::AgentThoughtChunk(chunk())),
+        _ => None,
+    }
 }
 
 struct SessionEntry {
@@ -93,6 +112,32 @@ impl AcpV1State {
             .await
             .set_read_only(read_only);
         Ok(())
+    }
+
+    /// `session/load`: restore the workdir's saved session under the id the
+    /// client asked for (sessions are per-workdir — the id is advisory).
+    /// Returns the persisted `ui_history` for replay + the agent's read_only.
+    async fn load_session(
+        &self,
+        request: &LoadSessionRequest,
+    ) -> anyhow::Result<(Vec<UiMessage>, bool)> {
+        let cwd = workdir_from_cwd(&request.cwd);
+        let Some(saved) = crate::session::load(&cwd)? else {
+            anyhow::bail!("no saved session for {}", cwd.display());
+        };
+        let ui = saved.ui_history.clone();
+        let mut agent = make_agent(&self.defaults, cwd.clone())?;
+        agent.restore_session(saved);
+        let read_only = agent.read_only();
+        self.sessions.lock().await.insert(
+            request.session_id.clone(),
+            SessionEntry {
+                agent: Arc::new(Mutex::new(agent)),
+                workdir: cwd,
+                cancel_tx: Mutex::new(None),
+            },
+        );
+        Ok((ui, read_only))
     }
 
     /// `session/cancel` interrupts the in-flight turn — it must NOT remove the
@@ -168,6 +213,40 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                             }
                             Ok(())
                         }
+                        Err(error) => responder.respond_with_error(
+                            Error::internal_error().data(format!("{error:#}")),
+                        ),
+                    }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |request: LoadSessionRequest,
+                            responder,
+                            connection: ConnectionTo<Client>| {
+                    match state.load_session(&request).await {
+                        Ok((ui_history, read_only)) => {
+                            // Replay the transcript before responding —
+                            // clients rebuild items from these updates.
+                            for m in &ui_history {
+                                if let Some(update) = replay_update(m) {
+                                    let _ = connection.send_notification(
+                                        SessionNotification::new(
+                                            request.session_id.clone(),
+                                            update,
+                                        ),
+                                    );
+                                }
+                            }
+                            responder.respond(
+                                LoadSessionResponse::new()
+                                    .modes(mode_state(read_only)),
+                            )
+                        }
+                        // Clients fall back to `session/new` on any error.
                         Err(error) => responder.respond_with_error(
                             Error::internal_error().data(format!("{error:#}")),
                         ),
@@ -255,7 +334,7 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                             }
 
                             let turn = run_turn_v1(
-                                agent,
+                                Arc::clone(&agent),
                                 user_text,
                                 &task_conn,
                                 &session_id,
@@ -274,6 +353,10 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                                 // Deltas (live or the post-hoc emit on the
                                 // non-stream path) already delivered the reply.
                                 Ok(_) => {
+                                    // Persist so `session/load` (and the TUI)
+                                    // resume with the agent's full context.
+                                    let guard = agent.lock().await;
+                                    let _ = crate::session::save(&guard, &workdir);
                                     let _ = responder
                                         .respond(PromptResponse::new(StopReason::EndTurn));
                                 }
@@ -363,6 +446,28 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn replay_update_maps_roles_to_chunks() {
+        let cases = [
+            (UiRole::User, "user_message_chunk"),
+            (UiRole::Assistant, "agent_message_chunk"),
+            (UiRole::Thinking, "agent_thought_chunk"),
+        ];
+        for (role, want) in cases {
+            let m = UiMessage::with_role(role, "body");
+            let upd = replay_update(&m).expect("chunk variant expected");
+            let tag = serde_json::to_value(&upd).unwrap()["sessionUpdate"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            assert_eq!(tag, want, "role {role:?}");
+        }
+        // Tool/system/error rows have no chunk equivalent.
+        for role in [UiRole::Tool, UiRole::System, UiRole::Error] {
+            assert!(replay_update(&UiMessage::with_role(role, "x")).is_none());
+        }
     }
 
     #[tokio::test]
