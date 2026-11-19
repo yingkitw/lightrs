@@ -194,11 +194,7 @@ impl AppConfig {
             )
         })?;
 
-        let base_url = flags
-            .base_url
-            .clone()
-            .or_else(|| file.as_ref().and_then(|f| f.base_url.clone()))
-            .unwrap_or_else(|| provider.default_base_url().to_string());
+        let base_url = resolve_base_url(flags, file.as_ref(), provider);
 
         let api_key = file::resolve_api_key(flags, file.as_ref(), provider)?;
 
