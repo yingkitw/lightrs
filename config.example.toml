@@ -19,8 +19,9 @@ workdir = "."               # agent file/shell scope
 # minimax = "..."
 
 # Optional: per-provider base-url overrides when a key targets a non-default
-# endpoint (e.g. Kimi Code plan vs pay-as-you-go Moonshot). Applies to
-# `/model <provider>` switches and the `/model` list fetch.
+# endpoint (e.g. Kimi Code plan vs pay-as-you-go Moonshot). Applies to the
+# startup provider's base_url, `/model <provider>` switches, and the `/model`
+# list fetch.
 # [endpoints]
 # kimi = "https://api.kimi.ai/coding/v1"   # Kimi Code (global)
 # kimi = "https://api.kimi.com/coding/v1"  # Kimi Code (China)

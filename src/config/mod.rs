@@ -136,6 +136,27 @@ pub struct AppConfig {
     pub trust_project: bool,
 }
 
+/// Startup `base_url` precedence: `--base-url` flag > file `base_url` >
+/// `[endpoints]` override for the resolved provider > provider default.
+/// Mirrors `endpoint_for` — without the `endpoints` leg a key that only
+/// works on a custom endpoint (e.g. Kimi-for-Coding) hits the provider
+/// default and fails auth.
+fn resolve_base_url(
+    flags: &ModelFlags,
+    file: Option<&file::FileConfig>,
+    provider: Provider,
+) -> String {
+    flags
+        .base_url
+        .clone()
+        .or_else(|| file.and_then(|f| f.base_url.clone()))
+        .or_else(|| {
+            file.and_then(|f| f.endpoints.as_ref())
+                .and_then(|m| m.get(provider.id()).cloned())
+        })
+        .unwrap_or_else(|| provider.default_base_url().to_string())
+}
+
 impl AppConfig {
     /// Base URL to reach `provider` — the active provider's explicit
     /// `base_url` wins, then a `[endpoints]` override, then the provider
@@ -568,6 +589,42 @@ mod endpoint_tests {
         assert_eq!(
             c.endpoint_for(Provider::Minimax),
             Provider::Minimax.default_base_url()
+        );
+    }
+
+    #[test]
+    fn startup_base_url_honors_endpoints_for_active_provider() {
+        // Regression: `load` used to ignore `[endpoints]` for the startup
+        // provider, so `--provider kimi` hit api.moonshot.ai even when the
+        // file pinned api.kimi.ai/coding — a valid coding key then 401s.
+        let file = file::FileConfig {
+            endpoints: Some(BTreeMap::from([(
+                "kimi".into(),
+                "https://api.kimi.ai/coding/v1".into(),
+            )])),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_base_url(&ModelFlags::default(), Some(&file), Provider::Kimi),
+            "https://api.kimi.ai/coding/v1"
+        );
+        // Explicit file base_url still wins for the active provider.
+        let file = file::FileConfig {
+            base_url: Some("https://custom.example/v1".into()),
+            endpoints: Some(BTreeMap::from([(
+                "kimi".into(),
+                "https://api.kimi.ai/coding/v1".into(),
+            )])),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_base_url(&ModelFlags::default(), Some(&file), Provider::Kimi),
+            "https://custom.example/v1"
+        );
+        // No override anywhere → provider default.
+        assert_eq!(
+            resolve_base_url(&ModelFlags::default(), None, Provider::Kimi),
+            Provider::Kimi.default_base_url()
         );
     }
 
