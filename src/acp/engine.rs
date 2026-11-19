@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agent_client_protocol::v1::schema::{
-    ContentBlock, SessionId, SessionNotification, SessionUpdate, TextContent, ToolCall,
-    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ContentBlock, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, SessionId,
+    SessionNotification, SessionUpdate, TextContent, ToolCall, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields,
 };
 use agent_client_protocol::{Client, v1::ConnectionTo};
 use anyhow::{Result, anyhow};
@@ -70,6 +71,16 @@ pub async fn run_turn_v1(
                             session_id.clone(),
                             SessionUpdate::ToolCall(call),
                         ))?;
+                        // A `todo_write` call IS the plan — surface it as a
+                        // native plan update so clients render the task list
+                        // instead of only a tool card.
+                        if name == "todo_write"
+                            && let Some(update) = plan_update(arguments)
+                        {
+                            connection.send_notification(
+                                SessionNotification::new(session_id.clone(), update),
+                            )?;
+                        }
                     }
                     ObserveEvent::ToolEnd { body } => {
                         let id = format!("lightrs-tool-{tool_index}");
@@ -101,6 +112,31 @@ pub async fn run_turn_v1(
         .await?;
 
     Ok(reply)
+}
+
+/// `todo_write` arguments → a `session/update` plan notification, when the
+/// args parse. lightrs keeps no priority — entries all map to `Medium`.
+pub fn plan_update(arguments: &str) -> Option<SessionUpdate> {
+    let args = serde_json::from_str::<crate::tools::todo::TodoArgs>(arguments).ok()?;
+    if args.items.is_empty() {
+        return None;
+    }
+    let entries = args
+        .items
+        .iter()
+        .map(|it| {
+            PlanEntry::new(
+                it.content.clone(),
+                PlanEntryPriority::Medium,
+                match it.status.as_str() {
+                    "in_progress" => PlanEntryStatus::InProgress,
+                    "completed" => PlanEntryStatus::Completed,
+                    _ => PlanEntryStatus::Pending,
+                },
+            )
+        })
+        .collect();
+    Some(SessionUpdate::Plan(Plan::new(entries)))
 }
 
 /// `thought = true` emits `AgentThoughtChunk` (reasoning), false emits
@@ -190,6 +226,24 @@ mod tests {
     fn truncate_bounds_chars() {
         assert_eq!(truncate("short", 10), "short");
         assert_eq!(truncate("abcdefghij", 4), "abcd…");
+    }
+
+    #[test]
+    fn todo_write_args_become_plan_update() {
+        let args = r#"{"items":[
+            {"content":"Read the diff","status":"in_progress"},
+            {"content":"Summarize","status":"pending"}
+        ]}"#;
+        let Some(SessionUpdate::Plan(plan)) = plan_update(args) else {
+            panic!("expected a plan update");
+        };
+        assert_eq!(plan.entries.len(), 2);
+        assert_eq!(plan.entries[0].status, PlanEntryStatus::InProgress);
+        assert_eq!(plan.entries[1].status, PlanEntryStatus::Pending);
+        // Junk args and empty lists emit nothing.
+        assert!(plan_update("{}").is_none());
+        assert!(plan_update(r#"{"items":[]}"#).is_none());
+        assert!(plan_update("not json").is_none());
     }
 
     #[test]
