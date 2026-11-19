@@ -230,9 +230,7 @@ pub fn run(cfg: AppConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
-    use crate::config::Provider;
     use crate::provider::LlmClient;
     use crate::tools::ShellPolicy;
 
@@ -246,26 +244,7 @@ mod tests {
     }
 
     fn test_app() -> App {
-        App::new(AppConfig {
-            provider: Provider::Kimi,
-            model: "test".into(),
-            fallback_model: None,
-            weak_model: None,
-            thinking: None,
-            base_url: "http://localhost".into(),
-            api_key: String::new(),
-            workdir: PathBuf::from("."),
-            shell_policy: ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
-            endpoints: Default::default(),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
-        })
+        App::new(AppConfig::test())
     }
 
     #[test]

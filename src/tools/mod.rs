@@ -65,14 +65,7 @@ pub(crate) fn ensure_lightrs_dir(workdir: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn truncate_bytes(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
-    }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
+    &s[..s.floor_char_boundary(max)]
 }
 
 pub fn execute_tool(

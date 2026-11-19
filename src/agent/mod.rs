@@ -589,25 +589,14 @@ mod streaming_tests {
     #[test]
     fn from_config_wires_fallback_and_weak() {
         let cfg = crate::config::AppConfig {
-            provider: crate::config::Provider::Kimi,
-            model: "main".into(),
-            fallback_model: Some("fb".into()),
-            weak_model: Some("weak".into()),
-            thinking: Some("high".into()),
-            base_url: "http://x".into(),
-            api_key: "k".into(),
-            workdir: std::path::PathBuf::from("."),
-            shell_policy: ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
-            endpoints: Default::default(),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
-        };
+                                     model: "main".into(),
+                                     fallback_model: Some("fb".into()),
+                                     weak_model: Some("weak".into()),
+                                     thinking: Some("high".into()),
+                                     base_url: "http://x".into(),
+                                     api_key: "k".into(),
+                                     ..crate::config::AppConfig::test()
+                                 };
         let agent = Agent::from_config(&cfg, Arc::from(Path::new(".")));
         assert_eq!(agent.client.model(), "main");
         assert!(agent.fallback_client.is_some());

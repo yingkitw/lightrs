@@ -95,13 +95,9 @@ pub(crate) fn truncate_tool_api(body: &str) -> String {
     if body.len() <= TOOL_API_MAX {
         return body;
     }
-    let mut end = TOOL_API_MAX;
-    while !body.is_char_boundary(end) && end > 0 {
-        end -= 1;
-    }
     format!(
         "{}\n\n[tool result truncated at {TOOL_API_MAX} chars]",
-        &body[..end]
+        crate::tools::truncate_bytes(&body, TOOL_API_MAX)
     )
 }
 

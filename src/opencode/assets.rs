@@ -62,10 +62,7 @@ pub fn import_skills(doc: &Value, dest: &Path) -> Result<()> {
         }
     }
 
-    let default_agents = PathBuf::from(format!(
-        "{}/.agents/skills",
-        std::env::var("HOME").unwrap_or_else(|_| ".".into())
-    ));
+    let default_agents = crate::paths::home_dir().join(".agents/skills");
     if default_agents.is_dir() && linked == 0 {
         symlink_or_copy_dir(&default_agents, &skills_root.join("opencode-agents"))?;
         linked += 1;
@@ -136,11 +133,10 @@ pub fn import_hooks(doc: &Value, dest: &Path) -> Result<()> {
 }
 
 fn shellexpand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/")
-        && let Ok(home) = std::env::var("HOME") {
-            return format!("{home}/{rest}");
-        }
-    path.to_string()
+    path.strip_prefix("~/").map_or_else(
+        || path.to_string(),
+        |rest| crate::paths::home_dir().join(rest).display().to_string(),
+    )
 }
 
 #[cfg(unix)]

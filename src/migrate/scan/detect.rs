@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 
 use serde_json::Value;
 
@@ -17,7 +16,7 @@ pub(crate) fn push_all(out: &mut Vec<DetectedTool>) {
 }
 
 fn push_codex(out: &mut Vec<DetectedTool>) {
-    let home = home_dir();
+    let home = crate::paths::home_dir();
     let path = home.join(".codex/config.toml");
     let installed = has_binary("codex") || home.join(".codex").is_dir();
     if !installed && !path.is_file() {
@@ -95,7 +94,7 @@ fn push_opencode(out: &mut Vec<DetectedTool>) {
 }
 
 fn push_claude_code(out: &mut Vec<DetectedTool>) {
-    let home = home_dir();
+    let home = crate::paths::home_dir();
     let path = home.join(".claude/settings.json");
     let installed = has_binary("claude") || has_binary("claude-code");
     if !path.is_file() && !installed {
@@ -140,7 +139,7 @@ fn push_claude_code(out: &mut Vec<DetectedTool>) {
 }
 
 fn push_aider(out: &mut Vec<DetectedTool>) {
-    let home = home_dir();
+    let home = crate::paths::home_dir();
     let candidates = [
         home.join(".aider.conf.yml"),
         home.join(".aider.conf"),
@@ -169,7 +168,7 @@ fn push_aider(out: &mut Vec<DetectedTool>) {
 }
 
 fn push_pi(out: &mut Vec<DetectedTool>) {
-    let home = home_dir();
+    let home = crate::paths::home_dir();
     let path = home.join(".pi/agent/settings.json");
     let installed = has_binary("pi") || home.join(".pi/agent").is_dir();
     if !installed && !path.is_file() {
@@ -185,7 +184,7 @@ fn push_pi(out: &mut Vec<DetectedTool>) {
 }
 
 fn push_cursor_mcp(out: &mut Vec<DetectedTool>) {
-    let home = home_dir();
+    let home = crate::paths::home_dir();
     let path = home.join(".cursor/mcp.json");
     let installed = home.join(".cursor").is_dir();
     let mcp = path
@@ -277,9 +276,6 @@ fn has_binary(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn home_dir() -> PathBuf {
-    crate::paths::home_dir()
-}
 #[cfg(test)]
 mod tests {
     use super::*;

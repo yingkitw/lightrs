@@ -387,26 +387,7 @@ mod tests {
     use super::*;
 
     fn minimal_app() -> App {
-        App::new(AppConfig {
-            provider: crate::config::Provider::Kimi,
-            model: "test".into(),
-            fallback_model: None,
-            weak_model: None,
-            thinking: None,
-            base_url: "http://localhost".into(),
-            api_key: String::new(),
-            workdir: PathBuf::from("."),
-            shell_policy: crate::tools::ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
-            endpoints: Default::default(),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
-        })
+        App::new(AppConfig::test())
     }
 
     #[test]
@@ -448,25 +429,12 @@ mod tests {
     #[test]
     fn resolve_ask_sends_answer_or_decline() {
         let mut app = App::new(crate::config::AppConfig {
-            provider: crate::config::Provider::Glm,
-            model: "m".into(),
-            fallback_model: None,
-            weak_model: None,
-            thinking: None,
-            base_url: "http://x".into(),
-            api_key: "k".into(),
-            workdir: std::path::PathBuf::from("."),
-            shell_policy: crate::tools::ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
-            endpoints: Default::default(),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
-        });
+                                                  provider: crate::config::Provider::Glm,
+                                                  model: "m".into(),
+                                                  base_url: "http://x".into(),
+                                                  api_key: "k".into(),
+                                                  ..AppConfig::test()
+                                              });
         let (tx, rx) = tokio::sync::oneshot::channel();
         app.pending_ask = Some(AskUserRequest {
             question: "which file?".into(),

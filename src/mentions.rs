@@ -7,6 +7,17 @@ const MENTION_ATTACH_FILE_MAX: usize = 12 * 1024;
 /// Total attachment budget per send.
 const MENTION_ATTACH_TOTAL_MAX: usize = 36 * 1024;
 
+/// Active trigger-token at end of input: `@file`/`$skill` completion sees a
+/// trailing `trigger + non-space run`. Returns (token_text, trigger_offset).
+pub(crate) fn active_token(input: &str, trigger: char) -> Option<(&str, usize)> {
+    let pos = input.rfind(trigger)?;
+    let tail = &input[pos + 1..];
+    if tail.contains(char::is_whitespace) {
+        return None;
+    }
+    Some((tail, pos))
+}
+
 /// Paths from `@token` in the composer (deduped, order preserved).
 pub fn collect_file_mentions(text: &str) -> Vec<String> {
     let mut out = Vec::new();

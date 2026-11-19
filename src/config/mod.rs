@@ -170,6 +170,33 @@ impl AppConfig {
             .cloned()
             .unwrap_or_else(|| provider.default_base_url().to_string())
     }
+
+    /// Shared fixture: every field defaults sanely; tests override via
+    /// `AppConfig { provider: Glm, ..AppConfig::test() }` so a new field
+    /// never breaks a dozen literals again.
+    #[cfg(test)]
+    pub(crate) fn test() -> Self {
+        Self {
+            provider: Provider::Kimi,
+            model: "test".into(),
+            fallback_model: None,
+            weak_model: None,
+            thinking: None,
+            base_url: "http://localhost".into(),
+            api_key: String::new(),
+            workdir: PathBuf::from("."),
+            shell_policy: ShellPolicy::default(),
+            test_command: None,
+            format_command: None,
+            read_only: false,
+            heal_steps: 3,
+            endpoints: Default::default(),
+            mcp: Default::default(),
+            lsp: Default::default(),
+            untrusted_project: false,
+            trust_project: false,
+        }
+    }
 }
 
 impl AppConfig {
@@ -553,25 +580,13 @@ mod endpoint_tests {
         AppConfig {
             provider: Provider::Glm,
             model: "glm-4.6".into(),
-            fallback_model: None,
-            weak_model: None,
-            thinking: None,
             base_url: "https://custom.example/v1".into(),
             api_key: "k".into(),
-            workdir: PathBuf::from("."),
-            shell_policy: ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
             endpoints: BTreeMap::from([(
                 Provider::Kimi,
                 "https://api.kimi.ai/coding/v1".into(),
             )]),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
+            ..AppConfig::test()
         }
     }
 

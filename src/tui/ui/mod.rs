@@ -43,32 +43,17 @@ mod tests {
 
     use crate::agent::Agent;
     use crate::chat::{FileDiffUi, UiMessage, UiRole};
-    use crate::config::{AppConfig, Provider};
+    use crate::config::AppConfig;
     use crate::provider::LlmClient;
     use crate::tools::ShellPolicy;
     use crate::tui::App;
 
     fn fixture() -> (App, Agent) {
         let app = App::new(AppConfig {
-            provider: Provider::Kimi,
-            model: "m".into(),
-            fallback_model: None,
-            weak_model: None,
-            thinking: None,
-            base_url: "http://localhost".into(),
-            api_key: String::new(),
-            workdir: PathBuf::from("/tmp/myproj"),
-            shell_policy: ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
-            endpoints: Default::default(),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
-        });
+                               model: "m".into(),
+                               workdir: PathBuf::from("/tmp/myproj"),
+                               ..AppConfig::test()
+                           });
         let agent = Agent::new(
             LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),
             Arc::from(PathBuf::from("/tmp/myproj").as_path()),

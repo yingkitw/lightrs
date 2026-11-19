@@ -78,7 +78,7 @@ pub fn load(settings: &SkillsSettings) -> SkillCatalog {
 }
 
 pub fn default_skill_roots() -> Vec<PathBuf> {
-    let home = home_dir();
+    let home = crate::paths::home_dir();
     let lightrs = config_dir("lightrs");
     vec![
         lightrs.join("skills"),
@@ -358,20 +358,10 @@ fn first_nonempty_line(body: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-}
 
 /// Active `$skill-id` token at end of input (no spaces).
 pub fn active_skill_token(input: &str) -> Option<(&str, usize)> {
-    let dollar = input.rfind('$')?;
-    let tail = &input[dollar + 1..];
-    if tail.contains(char::is_whitespace) {
-        return None;
-    }
-    Some((tail, dollar))
+    crate::mentions::active_token(input, '$')
 }
 
 pub fn skill_hint(input: &str, catalog: &SkillCatalog) -> Option<String> {

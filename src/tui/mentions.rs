@@ -7,12 +7,7 @@ const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", ".cursor"];
 
 /// Active `@path` token at end of input (no spaces in the path fragment).
 pub fn active_mention(input: &str) -> Option<(&str, usize)> {
-    let at = input.rfind('@')?;
-    let tail = &input[at + 1..];
-    if tail.contains(char::is_whitespace) {
-        return None;
-    }
-    Some((tail, at))
+    crate::mentions::active_token(input, '@')
 }
 
 pub fn mention_hint(input: &str, workdir: &Path) -> Option<String> {

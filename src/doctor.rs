@@ -119,25 +119,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let cfg = AppConfig {
-            provider: config::Provider::Kimi,
-            model: "test".into(),
-            fallback_model: None,
-            weak_model: None,
-            thinking: None,
-            base_url: "https://example.invalid".into(),
-            api_key: String::new(),
-            workdir: dir.clone(),
-            shell_policy: crate::tools::ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
-            endpoints: Default::default(),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
-        };
+                      provider: config::Provider::Kimi,
+                      base_url: "https://example.invalid".into(),
+                      workdir: dir.clone(),
+                      ..AppConfig::test()
+                  };
         run_check(&cfg).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -141,12 +141,11 @@ pub(crate) fn request_interrupt(cancel_tx: &watch::Sender<bool>) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::sync::Arc;
 
     use tokio::sync::Mutex;
 
-    use crate::config::{AppConfig, Provider};
+    use crate::config::AppConfig;
     use crate::provider::LlmClient;
     use crate::tools::ShellPolicy;
     use crate::tui::{AgentEvent, App, AskUserRequest, CommandApproval, RunState};
@@ -154,26 +153,7 @@ mod tests {
     use super::{apply_stream_progress, apply_stream_refresh, handle_agent_event};
 
     fn test_app(status: &str) -> App {
-        let mut app = App::new(AppConfig {
-            provider: Provider::Kimi,
-            model: "test".into(),
-            fallback_model: None,
-            weak_model: None,
-            thinking: None,
-            base_url: "http://localhost".into(),
-            api_key: String::new(),
-            workdir: PathBuf::from("."),
-            shell_policy: ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
-            endpoints: Default::default(),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
-        });
+        let mut app = App::new(AppConfig::test());
         app.set_busy();
         app.status = status.into();
         app

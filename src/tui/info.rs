@@ -195,28 +195,13 @@ pub fn git_branch_label(dir: &std::path::Path) -> Option<String> {
 mod tests {
     use super::*;
     use crate::config::AppConfig;
-    use crate::tools::ShellPolicy;
 
     fn cfg() -> AppConfig {
         AppConfig {
-            provider: Provider::Kimi,
             model: "k2".into(),
-            fallback_model: None,
-            weak_model: None,
-            thinking: None,
             base_url: "https://api.moonshot.ai/v1".into(),
-            api_key: String::new(),
             workdir: std::path::PathBuf::from("/work/proj"),
-            shell_policy: ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
-            endpoints: Default::default(),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
+            ..AppConfig::test()
         }
     }
 

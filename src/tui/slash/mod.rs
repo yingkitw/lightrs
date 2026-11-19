@@ -747,7 +747,7 @@ mod tests {
     fn project_command_expands_to_prompt() {
         use std::sync::Arc;
 
-        use crate::config::{AppConfig, Provider};
+        use crate::config::AppConfig;
         use crate::provider::LlmClient;
         use crate::tools::ShellPolicy;
 
@@ -757,25 +757,10 @@ mod tests {
         std::fs::write(cmd_dir.join("review.md"), "Review the diff.").unwrap();
 
         let mut app = App::new(AppConfig {
-            provider: Provider::Kimi,
-            model: "m".into(),
-            fallback_model: None,
-            weak_model: None,
-            thinking: None,
-            base_url: "http://localhost".into(),
-            api_key: String::new(),
-            workdir: dir.clone(),
-            shell_policy: ShellPolicy::default(),
-            test_command: None,
-            format_command: None,
-            read_only: false,
-            heal_steps: 3,
-            endpoints: Default::default(),
-            mcp: Default::default(),
-            lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
-        });
+                                   model: "m".into(),
+                                   workdir: dir.clone(),
+                                   ..AppConfig::test()
+                               });
         let client = LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into());
         let mut agent = Agent::new(
             client,
@@ -899,7 +884,7 @@ mod tests {
         use std::sync::Arc;
 
         use crate::agent::Agent;
-        use crate::config::{AppConfig, Provider};
+        use crate::config::AppConfig;
         use crate::provider::LlmClient;
         use crate::tools::ShellPolicy;
         use crate::tui::App;
@@ -910,25 +895,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             let app = App::new(AppConfig {
-                provider: Provider::Kimi,
-                model: "m".into(),
-                fallback_model: None,
-                weak_model: None,
-                thinking: None,
-                base_url: "http://localhost".into(),
-                api_key: String::new(),
-                workdir: dir.clone(),
-                shell_policy: ShellPolicy::default(),
-                test_command: None,
-                format_command: None,
-                read_only: false,
-                heal_steps: 3,
-                endpoints: Default::default(),
-                mcp: Default::default(),
-                lsp: Default::default(),
-            untrusted_project: false,
-            trust_project: false,
-            });
+                                   model: "m".into(),
+                                   workdir: dir.clone(),
+                                   ..AppConfig::test()
+                               });
             let agent = Agent::new(
                 LlmClient::new("http://127.0.0.1".into(), "k".into(), "m".into()),
                 Arc::from(dir.as_path()),
