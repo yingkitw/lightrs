@@ -259,18 +259,7 @@ impl ModelClient for LlmClient {
                     let mut cancel_wait = cancel.clone();
                     let response = tokio::select! {
                         res = self.chat(request) => res?,
-                        _ = async {
-                            loop {
-                                if *cancel_wait.borrow() {
-                                    break;
-                                }
-                                // Sender dropped without cancelling → park
-                                // forever, let the request decide.
-                                if cancel_wait.changed().await.is_err() {
-                                    std::future::pending::<()>().await;
-                                }
-                            }
-                        } => anyhow::bail!(INTERRUPTED),
+                        _ = http::cancel_wakeup(&mut cancel_wait) => anyhow::bail!(INTERRUPTED),
                     };
                     let choice = response
                         .choices

@@ -67,6 +67,19 @@ fn retry_after_delay(resp: &reqwest::Response) -> Option<Duration> {
     Some(Duration::from_secs(secs))
 }
 
+/// Resolves when the watch flag flips to true; parks forever if the sender
+/// drops without cancelling (nothing left to interrupt).
+pub(crate) async fn cancel_wakeup(rx: &mut tokio::sync::watch::Receiver<bool>) {
+    loop {
+        if *rx.borrow() {
+            return;
+        }
+        if rx.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
 /// Sleep that aborts on cancel — retry backoff must not outlive an interrupt.
 async fn interruptible_sleep(
     delay: Duration,
@@ -107,7 +120,22 @@ pub async fn post_json_with_retry<T: serde::Serialize + ?Sized>(
     let mut last_err: Option<anyhow::Error> = None;
 
     for attempt in 0..max_attempts {
-        match client.post(url).headers(headers.clone()).json(body).send().await {
+        // `send()` waits on connect + response headers — the one phase with no
+        // other cancel check (the stream loop only polls per-chunk). A hung
+        // endpoint would park the turn for the full 120s client timeout.
+        let sent = match cancel {
+            Some(rx) => {
+                let mut rx = rx.clone();
+                tokio::select! {
+                    res = client.post(url).headers(headers.clone()).json(body).send() => res,
+                    _ = cancel_wakeup(&mut rx) => {
+                        anyhow::bail!(crate::provider::INTERRUPTED)
+                    }
+                }
+            }
+            None => client.post(url).headers(headers.clone()).json(body).send().await,
+        };
+        match sent {
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_success() || !retriable_status(status) || attempt + 1 >= max_attempts
@@ -285,5 +313,42 @@ mod tests {
         let url = serve_once("200 OK", body.as_bytes());
         let resp = reqwest::get(format!("{url}/ok")).await.unwrap();
         assert_eq!(body_capped(resp, 2048).await.unwrap().len(), 1024);
+    }
+
+    /// Accept and hold the request open without ever responding.
+    fn serve_hang() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(300));
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    #[tokio::test]
+    async fn cancel_interrupts_response_head_wait() {
+        let url = serve_hang();
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let client = build_http_client();
+        let body = serde_json::json!({});
+        let url = format!("{url}/x");
+        let mut post = Box::pin(post_json_with_retry(
+            &client,
+            &url,
+            HeaderMap::new(),
+            &body,
+            HttpRetryOptions::default(),
+            Some(&rx),
+        ));
+        // Let the request reach the listener, then cancel — pre-fix this
+        // hung for the full 120s client timeout.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tx.send(true).unwrap();
+        let err = tokio::time::timeout(std::time::Duration::from_secs(5), &mut post)
+            .await
+            .expect("post did not return after cancel")
+            .unwrap_err();
+        assert!(crate::provider::is_interrupted(&err), "got {err:#}");
     }
 }
