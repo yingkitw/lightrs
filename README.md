@@ -115,7 +115,7 @@ lightrs acp --provider kimi
 lightrs acp --protocol v2   # draft ACP v2 session lifecycle
 ```
 
-Wire the binary in your client’s agent settings (command + same env vars as the TUI). Logs go to **stderr**; **stdout** is JSON-RPC only.
+Wire the binary in your client’s agent settings (command + same env vars as the TUI). Logs go to **stderr**; **stdout** is JSON-RPC only. Clients get the same `/` surface as the TUI minus terminal-only commands: the agent advertises its built-ins (`/clear /compact /context /cwd /diff /doctor /fork /init /model /skills /status /todo /undo`) plus `.claude/commands` files in an `available_commands_update` right after `session/new` — handled ones run agent-side with no model turn, `/init` expands into a turn, and built-ins shadow same-name project files.
 
 ### Import from OpenCode
 
