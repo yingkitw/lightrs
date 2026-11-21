@@ -46,9 +46,9 @@ const COMMANDS: &[(&str, &str)] = &[
     ("init", "draft AGENTS.md for this project"),
 ];
 
-/// `/init` — canned prompt; the model explores the workdir and writes
-/// AGENTS.md with its normal write tools (approval/deny rules apply).
-const INIT_PROMPT: &str = "Analyze this project — read the manifest and README, skim the module layout — then write a concise AGENTS.md in the repo root. Include: project overview, structure map, build/test/lint commands, code conventions, and known pitfalls. If AGENTS.md already exists, read it first and improve it rather than overwriting blindly.";
+/// `/init` — canned prompt, defined in `crate::commands` so the TUI and
+/// the ACP prompt-expansion seam share one source of truth.
+use crate::commands::INIT_PROMPT;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashAction {

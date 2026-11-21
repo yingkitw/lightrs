@@ -1,4 +1,5 @@
 mod engine;
+pub mod builtins;
 pub mod v1;
 
 #[cfg(feature = "acp-v2")]

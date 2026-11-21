@@ -48,6 +48,11 @@ fn scan_dir(dir: &Path) -> Vec<SlashDef> {
         .collect()
 }
 
+/// `/init` — canned prompt; the model explores the workdir and writes
+/// AGENTS.md with its normal write tools (approval/deny rules apply).
+/// Shared by the TUI and the ACP prompt-expansion seam (a carried built-in).
+pub const INIT_PROMPT: &str = "Analyze this project — read the manifest and README, skim the module layout — then write a concise AGENTS.md in the repo root. Include: project overview, structure map, build/test/lint commands, code conventions, and known pitfalls. If AGENTS.md already exists, read it first and improve it rather than overwriting blindly.";
+
 fn parse(path: &Path) -> std::io::Result<SlashDef> {
     let text = crate::tools::read_to_string_capped(path, 64 * 1024).ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, path.display().to_string())

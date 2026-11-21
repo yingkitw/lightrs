@@ -186,6 +186,11 @@ pub fn expand_slash(text: &str, workdir: &Path) -> String {
         Some((n, a)) => (n, a.trim()),
         None => (rest, ""),
     };
+    // Built-in prompt expansions shadow project commands of the same name,
+    // matching the TUI's precedence (`/init` drafts AGENTS.md).
+    if name == "init" {
+        return crate::commands::INIT_PROMPT.to_string();
+    }
     crate::commands::load(workdir)
         .into_iter()
         .find(|d| d.name == name)

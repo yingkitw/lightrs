@@ -8,6 +8,7 @@ use agent_client_protocol::v2::{ConnectionTo, Responder, schema};
 use agent_client_protocol::{Agent, Client, Error, Result, Stdio};
 use tokio::sync::Mutex;
 
+use crate::acp::builtins;
 use crate::acp::engine::{expand_slash, make_agent, workdir_from_cwd};
 use crate::agent::{Agent as LightAgent, ObserveEvent};
 use crate::config::AppConfig;
@@ -16,6 +17,9 @@ struct Session {
     agent: Arc<Mutex<LightAgent>>,
     workdir: PathBuf,
     cancel_tx: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    /// Session-local config view — carried `/model` mutates this, not the
+    /// global config other sessions see.
+    config: Arc<Mutex<AppConfig>>,
 }
 
 struct V2State {
@@ -45,6 +49,7 @@ impl V2State {
                 agent: Arc::new(Mutex::new(agent)),
                 workdir: cwd,
                 cancel_tx: Mutex::new(None),
+                config: Arc::new(Mutex::new(self.defaults.clone())),
             },
         );
         Ok(id)
@@ -95,8 +100,14 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                         Err(e) => return responder.respond_with_error(e),
                     };
                     responder.respond(schema::NewSessionResponse::new(session_id.clone()))?;
-                    let commands: Vec<_> = crate::commands::load(&cwd)
+                    // Project/user-global commands plus carried built-ins —
+                    // same surface as v1 (see acp/builtins.rs). Built-ins
+                    // shadow same-name project files, matching the TUI.
+                    let builtin_names: std::collections::HashSet<&str> =
+                        builtins::BUILTINS.iter().map(|b| b.name).collect();
+                    let mut commands: Vec<_> = crate::commands::load(&cwd)
                         .into_iter()
+                        .filter(|d| !builtin_names.contains(d.name.as_str()))
                         .map(|d| {
                             let desc = if d.description.is_empty() {
                                 d.name.clone()
@@ -106,6 +117,12 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                             schema::AvailableCommand::Command(schema::Command::new(d.name, desc))
                         })
                         .collect();
+                    commands.extend(builtins::BUILTINS.iter().map(|b| {
+                        schema::AvailableCommand::Command(schema::Command::new(
+                            b.name,
+                            b.description,
+                        ))
+                    }));
                     if !commands.is_empty() {
                         let _ = send_update(
                             &connection,
@@ -166,12 +183,90 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                             let session = {
                                 let sessions = state.sessions.lock().await;
                                 sessions.get(&session_id).map(|s| {
-                                    (Arc::clone(&s.agent), s.workdir.clone())
+                                    (
+                                        Arc::clone(&s.agent),
+                                        s.workdir.clone(),
+                                        Arc::clone(&s.config),
+                                    )
                                 })
                             };
-                            let Some((agent, workdir)) = session else {
+                            let Some((agent, workdir, config)) = session else {
                                 return Ok(());
                             };
+                            let message_id = schema::MessageId::new("agent-1");
+
+                            // Carried built-ins run against agent state only —
+                            // no model turn: reply as one chunk and end the
+                            // round early (the tail below stays turn-only).
+                            if let Some((cmd, args)) = builtins::dispatch(&prompt) {
+                                match builtins::run(
+                                    cmd,
+                                    &args,
+                                    builtins::Ctx {
+                                        agent: &agent,
+                                        workdir: &workdir,
+                                        cfg: &config,
+                                    },
+                                )
+                                .await
+                                {
+                                    Ok(text) => {
+                                        let _ = send_update(
+                                            &task_conn,
+                                            &session_id,
+                                            schema::SessionUpdate::AgentMessageChunk(
+                                                schema::ContentChunk::new(
+                                                    text.into(),
+                                                    message_id.clone(),
+                                                ),
+                                            ),
+                                        );
+                                        let guard = agent.lock().await;
+                                        let _ = crate::session::save(&guard, &workdir);
+                                        let _ = send_update(
+                                            &task_conn,
+                                            &session_id,
+                                            schema::SessionUpdate::StateUpdate(
+                                                schema::StateUpdate::Idle(
+                                                    schema::IdleStateUpdate::new()
+                                                        .stop_reason(schema::StopReason::EndTurn),
+                                                ),
+                                            ),
+                                        );
+                                    }
+                                    Err(error) => {
+                                        // v1-tail parity: error chunk + Idle(Error).
+                                        let msg = format!("{error:#}");
+                                        let _ = send_update(
+                                            &task_conn,
+                                            &session_id,
+                                            schema::SessionUpdate::AgentMessageChunk(
+                                                schema::ContentChunk::new(
+                                                    format!("error: {msg}").into(),
+                                                    message_id.clone(),
+                                                ),
+                                            ),
+                                        );
+                                        let _ = send_update(
+                                            &task_conn,
+                                            &session_id,
+                                            schema::SessionUpdate::StateUpdate(
+                                                schema::StateUpdate::Idle(
+                                                    schema::IdleStateUpdate::new().stop_reason(
+                                                        schema::StopReason::Error(
+                                                            schema::ErrorStopReason::new().error(
+                                                                schema::Error::internal_error()
+                                                                    .data(serde_json::json!(msg)),
+                                                            ),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        );
+                                    }
+                                }
+                                return Ok(());
+                            }
                             let prompt = expand_slash(&prompt, &workdir);
                             let (cancel_tx, cancel_rx) =
                                 tokio::sync::watch::channel(false);
@@ -182,7 +277,6 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                                 }
                             }
 
-                            let message_id = schema::MessageId::new("agent-1");
                             let think_id = schema::MessageId::new("think-1");
                             let mut tool_index = 0u64;
                             let tool_update =

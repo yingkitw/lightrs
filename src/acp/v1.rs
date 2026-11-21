@@ -15,8 +15,9 @@ use agent_client_protocol::{Agent, Client, Error, Result, Stdio};
 use agent_client_protocol::v1::ConnectionTo;
 use tokio::sync::Mutex;
 
+use crate::acp::builtins;
 use crate::acp::engine::{
-    expand_slash, make_agent, prompt_text, run_turn_v1, workdir_from_cwd,
+    expand_slash, make_agent, prompt_text, run_turn_v1, send_chunk, workdir_from_cwd,
 };
 use crate::agent::Agent as LightAgent;
 use crate::chat::{UiMessage, UiRole};
@@ -57,6 +58,9 @@ struct SessionEntry {
     workdir: PathBuf,
     /// Sender for the in-flight turn's cancel token; `session/cancel` trips it.
     cancel_tx: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    /// Session-local config view — carried `/model` mutates this, not the
+    /// global config other sessions (and the TUI) see.
+    config: Arc<Mutex<AppConfig>>,
 }
 
 struct AcpV1State {
@@ -90,6 +94,7 @@ impl AcpV1State {
                 agent: Arc::new(Mutex::new(agent)),
                 workdir: cwd,
                 cancel_tx: Mutex::new(None),
+                config: Arc::new(Mutex::new(self.defaults.clone())),
             },
         );
         Ok((id, read_only))
@@ -135,6 +140,7 @@ impl AcpV1State {
                 agent: Arc::new(Mutex::new(agent)),
                 workdir: cwd,
                 cancel_tx: Mutex::new(None),
+                config: Arc::new(Mutex::new(self.defaults.clone())),
             },
         );
         Ok((ui, read_only))
@@ -187,9 +193,15 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                                     .modes(mode_state(read_only)),
                             )?;
                             // Surface project + user-global slash commands so
-                            // clients can offer them (invoked as `/name args`).
-                            let commands: Vec<_> = crate::commands::load(&cwd)
+                            // clients can offer them (invoked as `/name args`),
+                            // plus the carried built-ins (see acp/builtins.rs).
+                            // Built-ins shadow same-name project files — TUI
+                            // precedence.
+                            let builtin_names: std::collections::HashSet<&str> =
+                                builtins::BUILTINS.iter().map(|b| b.name).collect();
+                            let mut commands: Vec<_> = crate::commands::load(&cwd)
                                 .into_iter()
+                                .filter(|d| !builtin_names.contains(d.name.as_str()))
                                 .map(|d| {
                                     let desc = if d.description.is_empty() {
                                         d.name.clone()
@@ -201,6 +213,11 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                                     )
                                 })
                                 .collect();
+                            commands.extend(builtins::BUILTINS.iter().map(|b| {
+                                agent_client_protocol::v1::schema::AvailableCommand::new(
+                                    b.name, b.description,
+                                )
+                            }));
                             if !commands.is_empty() {
                                 let _ = connection.send_notification(
                                     agent_client_protocol::v1::schema::SessionNotification::new(
@@ -307,16 +324,54 @@ pub async fn serve(cfg: AppConfig) -> Result<()> {
                             let entry = {
                                 let sessions = state.sessions.lock().await;
                                 sessions.get(&session_id).map(|e| {
-                                    (Arc::clone(&e.agent), e.workdir.clone())
+                                    (
+                                        Arc::clone(&e.agent),
+                                        e.workdir.clone(),
+                                        Arc::clone(&e.config),
+                                    )
                                 })
                             };
-                            let Some((agent, workdir)) = entry else {
+                            let Some((agent, workdir, config)) = entry else {
                                 let _ = responder.respond_with_error(
                                     Error::invalid_params()
                                         .data(format!("unknown session {session_id}")),
                                 );
                                 return Ok(());
                             };
+
+                            // Carried built-ins run against agent state only —
+                            // no model turn: the reply ships as one chunk and
+                            // the round ends. Built-ins shadow project commands,
+                            // matching the TUI.
+                            if let Some((cmd, args)) = builtins::dispatch(&user_text) {
+                                let reply = builtins::run(
+                                    cmd,
+                                    &args,
+                                    builtins::Ctx {
+                                        agent: &agent,
+                                        workdir: &workdir,
+                                        cfg: &config,
+                                    },
+                                )
+                                .await;
+                                match reply {
+                                    Ok(text) => {
+                                        send_chunk(&task_conn, &session_id, &text, false)?;
+                                    }
+                                    Err(error) => {
+                                        let _ = responder.respond_with_error(
+                                            Error::internal_error()
+                                                .data(format!("{error:#}")),
+                                        );
+                                        return Ok(());
+                                    }
+                                }
+                                let guard = agent.lock().await;
+                                let _ = crate::session::save(&guard, &workdir);
+                                let _ = responder
+                                    .respond(PromptResponse::new(StopReason::EndTurn));
+                                return Ok(());
+                            }
 
                             // `/name args` expands through the same command
                             // table the TUI uses (project + user-global).
