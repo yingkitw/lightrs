@@ -625,3 +625,14 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Session-local config for `/model`**: `SessionEntry.config: Arc<Mutex<AppConfig>>` (clone of defaults at insert) — `/model` swaps the agent's `LlmClient` and the session view; the global config (and the TUI) are untouched. The TUI's numbered `/model <n>` picks need its fetched models list, so `resolve_model_args` keeps the digits branch TUI-only.
 - **`push_system` in both paths** keeps `ui_history` parity: the built-in reply lands as a system row (TUI replays it; ACP `session/load` skips system rows — same as tool/system output, accepted gap).
 - **Wire-verified**: `/cwd` → `agent_message_chunk "cwd: /tmp"` → `stopReason end_turn` with zero provider calls; `available_commands_update` lists all 13 built-ins even with an empty `.claude/commands` (probe: stdio driver against `lightrs acp`, v1).
+
+## Git transport on this machine (2026-11-24)
+
+- **lightrs stays on the HTTPS remote with the `gh` credential helper**:
+  the per-repo SSH deploy keys (`github.com-*` aliases) cover
+  lightdesktop/pdfrs/diagram but none has push rights to `lightrs`, and
+  `gh`'s token lacks `admin:public_key` scope (cannot add a deploy key).
+  HTTPS push works (`gh auth` supplies the credential) but the network is
+  flaky to github.com:443 — a push can time out *silently* (exit 0, no
+  output). After pushing, confirm with `git status -sb` (no "ahead") or
+  `git ls-remote origin main`; retry the push before assuming success.
