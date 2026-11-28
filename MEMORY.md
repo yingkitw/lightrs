@@ -32,6 +32,12 @@ _(Empty — add dated entries when you confirm behavior against live or fixture 
 - **Backups**: `write_file`/`patch_file` snapshot prior bytes to `.lightrs/backups/<rel>_<ts>.bak` under workdir.
 - **CLI**: `lightrs exec -p` (optional `--json`, `--approve-shell`); `lightrs doctor --check` for setup health.
 
+## Formal verification (2026-11-28)
+
+- **`src/verify/`** — Kani proofs (`#[cfg(kani)]`, `cargo kani`) on pure helpers: `truncate_bytes`, `escape_controls`, `strip_ansi`, `metadata_host_denied`, redact shape; **proptest** (`cargo test verify::`) for the same plus tempdir path sandbox.
+- **`docs/verify.md`** — invariant list and commands. `Cargo.toml` declares `check-cfg` for `cfg(kani)`; `proptest` is dev-only.
+- Path I/O stays in proptest + existing `config` unit tests — Kani cannot model `canonicalize` soundly.
+
 ## Tools & security
 
 - Paths must stay under `workdir` after `canonicalize` (`config::validate_work_path` for reads).

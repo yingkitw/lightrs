@@ -21,6 +21,9 @@ pub mod skills;
 pub mod tools;
 pub mod tui;
 
+#[cfg(any(test, kani))]
+pub mod verify;
+
 use anyhow::Result;
 
 use crate::cli::{Cli, Command, ImportSource};

@@ -1,6 +1,6 @@
 //! Redact likely secrets in tool output before it is sent to the model.
 
-const REDACTED: &str = "[REDACTED]";
+pub(crate) const REDACTED: &str = "[REDACTED]";
 
 /// Scrub common secret shapes from tool result text (API history path).
 pub fn scrub_tool_output(text: &str) -> String {

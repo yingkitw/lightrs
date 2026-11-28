@@ -26,19 +26,22 @@ pub(crate) const MAX_BYTES: usize = 64 * 1024;
 /// too — an allowed URL bouncing to a metadata host is the same leak.
 /// Residual: a hostile hostname resolving to the link-local IP (DNS rebind)
 /// needs resolved-IP checks — deeper machinery, documented limit.
-const DENIED_HOSTS: &[&str] = &[
+/// Cloud metadata hostnames — exposed for formal verification (`verify` / Kani).
+pub(crate) const DENIED_METADATA_HOSTS: &[&str] = &[
     "169.254.169.254",          // AWS / Azure / GCP / DigitalOcean link-local
     "fd00:ec2::254",            // AWS IPv6 metadata
     "metadata.google.internal", // GCP
     "100.100.100.200",          // Alibaba
 ];
 
+/// Pure host check (bracketed IPv6 accepted) — shared by fetch + redirect policy.
+pub(crate) fn metadata_host_denied(host: &str) -> bool {
+    let h = host.trim_start_matches('[').trim_end_matches(']');
+    DENIED_METADATA_HOSTS.contains(&h)
+}
+
 fn denied_host(url: &reqwest::Url) -> bool {
-    url.host_str().is_some_and(|h| {
-        // IPv6 hosts come back bracketed (`[fd00:ec2::254]`).
-        let h = h.trim_start_matches('[').trim_end_matches(']');
-        DENIED_HOSTS.contains(&h)
-    })
+    url.host_str().is_some_and(metadata_host_denied)
 }
 
 /// Shared timeouts + a redirect policy that refuses hops to denied hosts.
